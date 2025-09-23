@@ -1,0 +1,230 @@
+# Data API Gateway - Unified Access to All Collected Data
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-api-gateway
+  namespace: crypto-data-collection
+  labels:
+    app: data-api-gateway
+    component: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: data-api-gateway
+  template:
+    metadata:
+      labels:
+        app: data-api-gateway
+        component: api
+    spec:
+      containers:
+      - name: api-gateway
+        image: crypto-data-api-gateway:latest
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        # Database Configuration
+        - name: MYSQL_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: data-collection-config
+              key: MYSQL_HOST
+        - name: MYSQL_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: data-collection-config
+              key: MYSQL_PORT
+        - name: MYSQL_DATABASE
+          valueFrom:
+            configMapKeyRef:
+              name: data-collection-config
+              key: MYSQL_DATABASE
+        - name: MYSQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: MYSQL_USER
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: MYSQL_PASSWORD
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: data-collection-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: data-collection-config
+              key: REDIS_PORT
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: REDIS_PASSWORD
+        
+        # API Configuration
+        - name: PORT
+          valueFrom:
+            configMapKeyRef:
+              name: api-gateway-config
+              key: PORT
+        - name: WORKERS
+          valueFrom:
+            configMapKeyRef:
+              name: api-gateway-config
+              key: WORKERS
+        - name: JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-security
+              key: JWT_SECRET_KEY
+        - name: API_KEY_MASTER
+          valueFrom:
+            secretKeyRef:
+              name: api-security
+              key: API_KEY_MASTER
+        - name: API_KEY_TRADING
+          valueFrom:
+            secretKeyRef:
+              name: api-security
+              key: API_KEY_TRADING
+        
+        # CORS Configuration
+        - name: CORS_ORIGINS
+          valueFrom:
+            configMapKeyRef:
+              name: api-gateway-config
+              key: CORS_ORIGINS
+        - name: CORS_METHODS
+          valueFrom:
+            configMapKeyRef:
+              name: api-gateway-config
+              key: CORS_METHODS
+        
+        # Rate Limiting
+        - name: RATE_LIMIT_REQUESTS
+          valueFrom:
+            configMapKeyRef:
+              name: api-gateway-config
+              key: RATE_LIMIT_REQUESTS
+        - name: RATE_LIMIT_WINDOW
+          valueFrom:
+            configMapKeyRef:
+              name: api-gateway-config
+              key: RATE_LIMIT_WINDOW
+        
+        resources:
+          requests:
+            cpu: 1
+            memory: 2Gi
+          limits:
+            cpu: 2
+            memory: 4Gi
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        
+        volumeMounts:
+        - name: logs
+          mountPath: /app/logs
+        
+      volumes:
+      - name: logs
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-api-gateway
+  namespace: crypto-data-collection
+  labels:
+    app: data-api-gateway
+    component: api
+spec:
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+    name: http
+  selector:
+    app: data-api-gateway
+  type: ClusterIP
+---
+# Horizontal Pod Autoscaler for API Gateway
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: data-api-gateway-hpa
+  namespace: crypto-data-collection
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: data-api-gateway
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+---
+# Network Policy for API Gateway
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: data-api-gateway-netpol
+  namespace: crypto-data-collection
+spec:
+  podSelector:
+    matchLabels:
+      app: data-api-gateway
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: crypto-trading  # Allow trading system access
+    - namespaceSelector:
+        matchLabels:
+          name: crypto-monitoring  # Allow monitoring access
+    ports:
+    - protocol: TCP
+      port: 8000
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          component: database
+    ports:
+    - protocol: TCP
+      port: 3306  # MySQL
+    - protocol: TCP
+      port: 6379  # Redis
+  - to: []  # Allow external API calls for data validation
