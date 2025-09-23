@@ -34,7 +34,7 @@ The data collection system supports multiple deployment scenarios:
 - **Network**: Low latency, high bandwidth (1Gbps+)
 
 ### **External Services**
-- **Windows MySQL Server**: Accessible via network
+- **Windows MySQL Server**: Accessible via network ⚠️ **CRITICAL: MySQL must ONLY run on Windows host, NOT in Kubernetes**
 - **API Keys**: CoinGecko Premium, FRED, Guardian, OpenAI
 - **Network Access**: Outbound HTTPS (443) for external APIs
 
@@ -125,6 +125,8 @@ kubectl get nodes --show-labels
 ```
 
 #### **1.2 Database Connectivity Test**
+
+⚠️ **IMPORTANT**: MySQL should ONLY run on Windows host, NOT in Kubernetes cluster.
 
 ```bash
 # Test MySQL connectivity from Kubernetes

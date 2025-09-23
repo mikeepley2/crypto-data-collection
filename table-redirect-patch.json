@@ -1,0 +1,18 @@
+[
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {
+      "name": "CRYPTO_PRICES_TABLE",
+      "value": "crypto_prices_compat"
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {
+      "name": "PRICE_DATA_TABLE",
+      "value": "crypto_prices_compat"
+    }
+  }
+]

@@ -1,0 +1,21 @@
+[
+  {
+    "op": "replace",
+    "path": "/spec/template/spec/containers/0/command",
+    "value": ["python", "-c", "import time; print('Social collector starting...'); time.sleep(30); print('Social collector mock run completed')"]
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/resources",
+    "value": {
+      "limits": {
+        "cpu": "500m",
+        "memory": "512Mi"
+      },
+      "requests": {
+        "cpu": "100m",
+        "memory": "128Mi"
+      }
+    }
+  }
+]

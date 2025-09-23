@@ -14,8 +14,8 @@ NC='\033[0m' # No Color
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-K8S_DATA_COLLECTION_DIR="$PROJECT_ROOT/k8s/data-collection-node"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+K8S_DATA_COLLECTION_DIR="$PROJECT_ROOT/k8s"
 
 # Logging
 log() {

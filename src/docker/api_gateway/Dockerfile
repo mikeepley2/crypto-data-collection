@@ -1,5 +1,5 @@
 # Data Collection API Gateway Dockerfile
-FROM python:3.11-slim
+FROM python:3.10-slim
 
 LABEL maintainer="CryptoAI Trading System"
 LABEL description="Unified Data Collection API Gateway"
@@ -15,15 +15,14 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first (for better caching)
-COPY requirements.txt .
+COPY src/docker/api_gateway/requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY api_gateway/ ./
-COPY shared/ ./shared/
+COPY src/api_gateway/ ./
 
 # Create non-root user
 RUN useradd --create-home --shell /bin/bash apigateway && \

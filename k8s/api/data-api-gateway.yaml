@@ -20,7 +20,8 @@ spec:
     spec:
       containers:
       - name: api-gateway
-        image: crypto-data-api-gateway:latest
+        image: crypto-data-collection/api-gateway:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
           name: http
@@ -147,6 +148,8 @@ spec:
       volumes:
       - name: logs
         emptyDir: {}
+      
+      restartPolicy: Always
 ---
 apiVersion: v1
 kind: Service

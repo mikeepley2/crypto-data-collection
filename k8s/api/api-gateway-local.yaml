@@ -1,0 +1,44 @@
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: api-gateway-local
+  namespace: crypto-data-collection
+  labels:
+    app: api-gateway-local
+spec:
+  containers:
+  - name: api-gateway
+    image: python:3.10-slim
+    command: ["/bin/bash"]
+    args: ["-c", "while true; do echo 'API Gateway would run here'; sleep 30; done"]
+    ports:
+    - containerPort: 8000
+    env:
+    - name: MYSQL_HOST
+      value: "mysql"
+    - name: MYSQL_PORT
+      value: "3306"
+    - name: MYSQL_USER
+      valueFrom:
+        secretKeyRef:
+          name: crypto-secrets
+          key: mysql-user
+    - name: MYSQL_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: crypto-secrets
+          key: mysql-password
+    - name: MYSQL_DATABASE
+      value: "crypto_prices"
+    - name: REDIS_HOST
+      value: "redis"
+    - name: REDIS_PORT
+      value: "6379"
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"

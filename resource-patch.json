@@ -1,0 +1,36 @@
+[
+  {
+    "op": "replace",
+    "path": "/spec/template/spec/containers/0/resources",
+    "value": {
+      "limits": {
+        "cpu": "1000m",
+        "memory": "1Gi"
+      },
+      "requests": {
+        "cpu": "200m",
+        "memory": "256Mi"
+      }
+    }
+  },
+  {
+    "op": "replace",
+    "path": "/spec/template/spec/containers/0/livenessProbe/timeoutSeconds",
+    "value": 30
+  },
+  {
+    "op": "replace",
+    "path": "/spec/template/spec/containers/0/livenessProbe/periodSeconds",
+    "value": 60
+  },
+  {
+    "op": "replace",
+    "path": "/spec/template/spec/containers/0/readinessProbe/timeoutSeconds",
+    "value": 15
+  },
+  {
+    "op": "replace",
+    "path": "/spec/template/spec/containers/0/readinessProbe/periodSeconds",
+    "value": 30
+  }
+]

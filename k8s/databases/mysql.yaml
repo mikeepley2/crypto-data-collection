@@ -1,0 +1,117 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: crypto-data-collection
+  labels:
+    app: mysql
+spec:
+  ports:
+    - port: 3306
+      targetPort: 3306
+  selector:
+    app: mysql
+  clusterIP: None
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  namespace: crypto-data-collection
+spec:
+  serviceName: mysql
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:8.0
+        ports:
+        - containerPort: 3306
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: crypto-secrets
+              key: mysql-root-password
+        - name: MYSQL_DATABASE
+          value: crypto_prices
+        - name: MYSQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: crypto-secrets
+              key: mysql-user
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: crypto-secrets
+              key: mysql-password
+        volumeMounts:
+        - name: mysql-data
+          mountPath: /var/lib/mysql
+        - name: mysql-config
+          mountPath: /etc/mysql/conf.d
+        livenessProbe:
+          exec:
+            command:
+            - mysqladmin
+            - ping
+            - -h
+            - localhost
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - mysqladmin
+            - ping
+            - -h
+            - localhost
+          initialDelaySeconds: 5
+          periodSeconds: 2
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+      volumes:
+      - name: mysql-config
+        configMap:
+          name: mysql-config
+  volumeClaimTemplates:
+  - metadata:
+      name: mysql-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 10Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-config
+  namespace: crypto-data-collection
+data:
+  my.cnf: |
+    [mysqld]
+    bind-address = 0.0.0.0
+    max_connections = 200
+    innodb_buffer_pool_size = 512M
+    innodb_log_file_size = 128M
+    character-set-server = utf8mb4
+    collation-server = utf8mb4_unicode_ci
+    
+    # Performance tuning
+    slow_query_log = 1
+    slow_query_log_file = /var/log/mysql/mysql-slow.log
+    long_query_time = 2
