@@ -1,0 +1,56 @@
+# Dockerfile for Sentiment Analysis Plugin
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy pip.conf for longer timeouts and retries
+COPY pip.conf /etc/pip.conf
+
+# Copy requirements first for better caching
+COPY requirements.txt requirements.txt
+
+# Install Python dependencies in chunks to avoid timeouts
+RUN pip install --no-cache-dir fastapi==0.104.1 uvicorn[standard]==0.24.0 pydantic==2.5.0
+RUN pip install --no-cache-dir torch transformers sentencepiece
+RUN pip install --no-cache-dir scikit-learn numpy aiohttp requests
+RUN pip install --no-cache-dir mysql-connector-python==8.2.0
+RUN pip install --no-cache-dir boto3 botocore openai
+RUN pip install --no-cache-dir pytest pytest-asyncio httpx
+
+# Copy sentiment analysis code
+COPY sentiment.py .
+COPY mocks.py .
+COPY mock_dynamo.py .
+COPY model_cache/ ./model_cache/
+# Copy core module for imports (now local copy)
+COPY core/ ./core/
+
+# Set PYTHONPATH so /app/core is importable
+ENV PYTHONPATH="/app:/app/core"
+
+# Create non-root user
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
+# Set environment variables for microservice mode
+ENV RUN_MODE=microservice
+ENV PORT=8000
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run the application
+CMD ["python", "sentiment.py"]

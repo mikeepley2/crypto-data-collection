@@ -33,19 +33,19 @@
       },
       {
         "name": "HIGH_COLUMN",
-        "value": "high_24h"
+        "value": "high"
       },
       {
         "name": "LOW_COLUMN",
-        "value": "low_24h"
+        "value": "low"
       },
       {
         "name": "OPEN_COLUMN",
-        "value": "open_24h"
+        "value": "open"
       },
       {
         "name": "VOLUME_COLUMN",
-        "value": "volume_usd_24h"
+        "value": "volume"
       },
       {
         "name": "USE_DIRECT_TABLE_INSERT",

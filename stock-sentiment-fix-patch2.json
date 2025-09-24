@@ -1,0 +1,18 @@
+[
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {
+      "name": "MICROSERVICE_HOST", 
+      "value": "stock-sentiment-microservice.crypto-collectors.svc.cluster.local"
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {
+      "name": "MICROSERVICE_PORT", 
+      "value": "8000"
+    }
+  }
+]
