@@ -1,0 +1,122 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: technical-indicators
+  namespace: crypto-collectors
+  labels:
+    app: technical-indicators
+    app.kubernetes.io/name: technical-indicators
+    app.kubernetes.io/part-of: crypto-ai-system
+    component: data-collector
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: technical-indicators
+  template:
+    metadata:
+      labels:
+        app: technical-indicators
+        component: data-collector
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: solution-area
+                operator: In
+                values:
+                - data-platform
+      containers:
+      - name: technical-indicators
+        image: aitest-technical-indicators:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        env:
+        - name: MYSQL_HOST
+          value: host.docker.internal
+        - name: MYSQL_USER
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: crypto-db-secrets
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              key: password
+              name: crypto-db-secrets
+        - name: MYSQL_DATABASE
+          value: crypto_prices
+        - name: DATABASE_HOST
+          value: host.docker.internal
+        - name: DATABASE_USER
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: crypto-db-secrets
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              key: password
+              name: crypto-db-secrets
+        - name: REDIS_HOST
+          value: redis.crypto-collectors.svc.cluster.local
+        - name: MANAGER_URL
+          value: http://collector-manager.crypto-collectors.svc.cluster.local:8000
+        # Performance and stability optimizations
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: PYTHONDONTWRITEBYTECODE
+          value: "1"
+        - name: MAX_WORKERS
+          value: "2"
+        resources:
+          requests:
+            cpu: 300m      # Increased from 200m
+            memory: 512Mi  # Increased from 256Mi
+          limits:
+            cpu: 2         # Increased from 1
+            memory: 2Gi    # Increased from 1Gi
+        # Optimized health checks for async processing
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+            scheme: HTTP
+          initialDelaySeconds: 60    # Increased from 45s to allow startup
+          periodSeconds: 90          # Increased from 60s to reduce frequency
+          timeoutSeconds: 45         # Increased from 30s for slow responses
+          failureThreshold: 5        # Increased from 3 to be more tolerant
+          successThreshold: 1
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+            scheme: HTTP
+          initialDelaySeconds: 30    # Increased from 15s
+          periodSeconds: 45          # Increased from 30s to reduce load
+          timeoutSeconds: 30         # Increased from 15s for slow responses
+          failureThreshold: 5        # Increased from 3 to be more tolerant
+          successThreshold: 1
+        # Health check for startup (separate from readiness)
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8000
+            scheme: HTTP
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 30
+          failureThreshold: 12       # Allow up to 2 minutes for startup
+          successThreshold: 1
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 45
+      tolerations:
+      - effect: NoSchedule
+        key: data-platform
+        operator: Equal
+        value: "true"

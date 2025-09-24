@@ -254,31 +254,35 @@ curl -H "Authorization: Bearer YOUR_API_KEY" \
 
 ## 📈 **Monitoring & Operations**
 
-### **Health Monitoring**
-```bash
-# Check all service health
-kubectl get pods -n crypto-data-collection
+> **🔍 Node/Pod Health Visibility**: All infrastructure monitoring (node health, pod status, resource usage) is handled by our dedicated **Analytics/Observability Solution**. See [Monitoring & Observability Guide](docs/MONITORING_OBSERVABILITY.md) for complete setup and dashboard access.
 
-# Check API Gateway health
+### **Quick Health Checks**
+```bash
+# Service-level health (application status)
 curl http://localhost:8000/health
-
-# View collection statistics
 curl http://localhost:8000/api/v1/stats/collectors
+
+# For infrastructure monitoring (nodes/pods/resources):
+# → Use Analytics Node Grafana dashboards
+# → See docs/MONITORING_OBSERVABILITY.md
 ```
 
-### **Logging**
-```bash
-# View API Gateway logs
-kubectl logs -f deployment/data-api-gateway -n crypto-data-collection
+### **Centralized Observability Stack**
+- **📊 Grafana Dashboards**: Node health, pod metrics, resource utilization
+- **📈 Prometheus**: Infrastructure and application metrics collection  
+- **🔍 Elasticsearch/Kibana**: Centralized log aggregation and analysis
+- **🚨 Alertmanager**: Proactive alerts for node/pod/service issues
+- **📍 Jaeger**: Distributed tracing across services
 
-# View specific collector logs
-kubectl logs -f deployment/crypto-prices-collector -n crypto-data-collection
-```
-
-### **Metrics**
-- **Prometheus**: Metrics collection enabled
-- **Grafana**: Dashboard available for monitoring
-- **Alerts**: Configurable alerts for collection failures
+### **Where to Find What**
+| **Monitoring Need** | **Solution Location** |
+|---------------------|----------------------|
+| **Node CPU/Memory** | Analytics Node → Grafana → "Kubernetes Infrastructure" dashboard |
+| **Pod Health/Status** | Analytics Node → Grafana → "Pod Health Overview" dashboard |
+| **Service Logs** | Analytics Node → Kibana → "Crypto Data Collection" index |
+| **API Performance** | Analytics Node → Grafana → "Data Collection Services" dashboard |
+| **Database Metrics** | Analytics Node → Grafana → "Database Performance" dashboard |
+| **Alert Configuration** | Analytics Node → Alertmanager → `/etc/alertmanager/config.yml` |
 
 ## 🧪 **Testing**
 

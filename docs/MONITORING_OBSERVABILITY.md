@@ -1,6 +1,18 @@
 # Data Collection System Monitoring & Observability
 
-This guide provides comprehensive monitoring and observability practices for the crypto data collection system, including Grafana dashboards, Prometheus metrics, alerting, and operational procedures.
+> **🏗️ Architecture Note**: This system integrates with the **Analytics Node** for comprehensive infrastructure monitoring. The Data Collection Node focuses on **service-level observability** while the Analytics Node handles **infrastructure monitoring** (node health, pod status, resource utilization).
+
+## 📋 **Monitoring Separation of Concerns**
+
+| **Monitoring Type** | **Responsible Node** | **Tools Used** | **Access Method** |
+|---------------------|---------------------|----------------|-------------------|
+| **Infrastructure** (Node/Pod Health) | Analytics Node | Grafana + Prometheus | `http://analytics-node:3000` |
+| **Application** (Service Health) | Data Collection Node | Service health endpoints | `http://data-node:8000/health` |
+| **Logs** (Centralized) | Analytics Node | Elasticsearch + Kibana | `http://analytics-node:5601` |
+| **Traces** (Distributed) | Analytics Node | Jaeger | `http://analytics-node:16686` |
+| **Alerts** (All Types) | Analytics Node | Alertmanager | `http://analytics-node:9093` |
+
+This guide provides comprehensive monitoring and observability practices for the crypto data collection system, including service-level metrics, application logs, and integration points with the Analytics Node observability stack.
 
 ## 🎯 **Observability Strategy**
 
