@@ -1,0 +1,150 @@
+# Service Health Management Strategy
+# ====================================
+
+## 1. HEALTH PROBES ENHANCEMENT
+
+# Add standardized health checks to all services
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: health-probe-config
+  namespace: crypto-collectors
+data:
+  standard-health-probe.yaml: |
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 3
+      successThreshold: 1
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 15
+      periodSeconds: 15
+      timeoutSeconds: 5
+      failureThreshold: 3
+      successThreshold: 1
+    startupProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 30  # Allow 5 minutes for startup
+      successThreshold: 1
+
+---
+## 2. RESOURCE MANAGEMENT
+
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: crypto-collectors-quota
+  namespace: crypto-collectors
+spec:
+  hard:
+    requests.cpu: "10"      # Total CPU requests
+    requests.memory: 20Gi   # Total Memory requests
+    limits.cpu: "20"        # Total CPU limits
+    limits.memory: 40Gi     # Total Memory limits
+    pods: "50"              # Maximum pods
+    persistentvolumeclaims: "5"
+
+---
+## 3. POD DISRUPTION BUDGETS
+
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: crypto-collectors-pdb
+  namespace: crypto-collectors
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      component: data-collector
+
+---
+## 4. HORIZONTAL POD AUTOSCALER TEMPLATE
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: enhanced-crypto-prices-hpa
+  namespace: crypto-collectors
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: enhanced-crypto-prices
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+---
+## 5. CLEANUP CRONJOB FOR FAILED PODS
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pod-cleanup
+  namespace: crypto-collectors
+spec:
+  schedule: "0 */6 * * *"  # Every 6 hours
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: pod-cleanup-sa
+          containers:
+          - name: kubectl
+            image: bitnami/kubectl:latest
+            command:
+            - /bin/bash
+            - -c
+            - |
+              echo "🧹 Starting pod cleanup..."
+              
+              # Delete failed pods older than 1 hour
+              kubectl delete pods --field-selector=status.phase=Failed -n crypto-collectors \
+                --ignore-not-found=true
+              
+              # Delete completed jobs older than 24 hours
+              kubectl get jobs -n crypto-collectors -o json | \
+                jq -r '.items[] | select(.status.conditions[]?.type=="Complete" and .status.conditions[]?.status=="True" and (now - (.status.conditions[]?.lastTransitionTime | fromdateiso8601) > 86400)) | .metadata.name' | \
+                xargs -r kubectl delete job -n crypto-collectors
+              
+              # Delete pods stuck in Pending state for more than 30 minutes
+              kubectl get pods -n crypto-collectors --field-selector=status.phase=Pending -o json | \
+                jq -r '.items[] | select((now - (.metadata.creationTimestamp | fromdateiso8601)) > 1800) | .metadata.name' | \
+                xargs -r kubectl delete pod -n crypto-collectors
+              
+              echo "✅ Pod cleanup complete"
+          restartPolicy: OnFailure
+          nodeSelector:
+            solution-area: data-platform
+          tolerations:
+          - effect: NoSchedule
+            key: data-platform
+            operator: Equal
+            value: "true"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
