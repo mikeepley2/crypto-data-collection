@@ -1,92 +1,49 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
+# Large Files & Models
+*.safetensors
+*.bin
+*.tar
+*.tar.gz
+*.zip
+*.7z
+*.rar
 
-# C extensions
-*.so
+# ML Models & Caches
+model_cache/
+models/
+*.model
+*.pkl
+*.h5
+*.pt
+*.pth
 
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# PyInstaller
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-
-# Virtual environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# VSCode
-.vscode/
-*.code-workspace
-
-# PyCharm
-.idea/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# Environment variables
-.env
-.env.local
-.env.production
-.env.test
-
-# Database
-*.db
-*.sqlite3
+# Docker Images
+*.tar
+*-image.tar
+sentiment-image.tar
 
 # Logs
 *.log
 logs/
+__pycache__/
+*.pyc
+*.pyo
 
-# OS generated files
+# Environment & Credentials
+.env
+.env.local
+.env.production
+secrets.yaml
+*.key
+*.pem
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS Generated
 .DS_Store
 .DS_Store?
 ._*
@@ -95,44 +52,35 @@ logs/
 ehthumbs.db
 Thumbs.db
 
-# Kubernetes secrets (real values)
-**/secrets.yaml
-**/secret-*.yaml
+# Node modules (if any)
+node_modules/
 
-# API keys and credentials
-api-keys.yaml
-credentials.yaml
-config/secrets/
+# Python
+venv/
+env/
+.pytest_cache/
 
-# Docker
-.dockerignore
+# Kubernetes Secrets
+*-secret.yaml
+*-secrets.yaml
+
+# Database dumps
+*.sql
+*.dump
+
+# Backup files
+*.backup
+*.bak
+*~
+
+# Large data files
+*.csv
+*.json
+*.parquet
+data/
+datasets/
 
 # Temporary files
 tmp/
 temp/
 *.tmp
-*.temp
-
-# Node modules (if any)
-node_modules/
-
-# Python cache
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pytest
-.pytest_cache/
-
-# Coverage
-.coverage
-htmlcov/
-
-# Data files
-*.csv
-*.json.bak
-*.parquet
-
-# Local configuration overrides
-local-config.yaml
-docker-compose.override.yml
