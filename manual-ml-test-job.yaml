@@ -1,0 +1,49 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: manual-ml-ohlc-test
+  namespace: crypto-collectors
+spec:
+  template:
+    metadata:
+      labels:
+        app: manual-ml-update
+    spec:
+      restartPolicy: OnFailure
+      tolerations:
+      - effect: NoSchedule
+        key: data-platform
+        operator: Equal
+        value: "true"
+      containers:
+      - name: ml-updater
+        image: aitest-materialized-updater:mysql-fix
+        imagePullPolicy: Never
+        command:
+        - python
+        - materialized_updater_fixed.py
+        - --interval
+        - "1"
+        - --insert-only
+        env:
+        - name: MYSQL_HOST
+          value: host.docker.internal
+        - name: MYSQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: crypto-db-secrets
+              key: username
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: crypto-db-secrets
+              key: password
+        - name: MYSQL_DATABASE
+          value: crypto_prices
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi

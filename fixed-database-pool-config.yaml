@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: database-pool-config
+  namespace: crypto-collectors
+data:
+  DB_POOL_SIZE: "15"
+  MYSQL_DATABASE: crypto_prices
+  MYSQL_HOST: 192.168.230.162
+  MYSQL_PASSWORD: 99Rules!
+  MYSQL_USER: news_collector

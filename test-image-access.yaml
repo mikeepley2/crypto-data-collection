@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-image-access
+  namespace: crypto-collectors
+spec:
+  restartPolicy: Never
+  containers:
+  - name: test
+    image: aitest-materialized-updater:dxy-fix
+    imagePullPolicy: Never
+    command: ["python", "--version"]

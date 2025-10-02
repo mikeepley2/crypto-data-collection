@@ -3,13 +3,16 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Copy requirements first for better Docker layer caching
-COPY requirements.txt .
+COPY src/docker/enhanced_crypto_prices/requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy shared database pool module
+COPY src/shared /app/shared
+
 # Copy application code
-COPY main.py .
+COPY src/docker/enhanced_crypto_prices/main.py .
 
 # Expose port
 EXPOSE 8000

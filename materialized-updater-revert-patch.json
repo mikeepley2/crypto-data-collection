@@ -1,0 +1,46 @@
+{
+  "spec": {
+    "jobTemplate": {
+      "spec": {
+        "template": {
+          "spec": {
+            "containers": [
+              {
+                "name": "materialized-updater",
+                "image": "aitest-materialized-updater:latest",
+                "env": [
+                  {
+                    "name": "MYSQL_HOST",
+                    "value": "host.docker.internal"
+                  },
+                  {
+                    "name": "MYSQL_USER",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "username",
+                        "name": "crypto-db-secrets"
+                      }
+                    }
+                  },
+                  {
+                    "name": "MYSQL_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "password",
+                        "name": "crypto-db-secrets"
+                      }
+                    }
+                  },
+                  {
+                    "name": "MYSQL_DATABASE",
+                    "value": "crypto_prices"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

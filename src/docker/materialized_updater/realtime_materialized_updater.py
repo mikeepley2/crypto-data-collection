@@ -7,6 +7,12 @@ from collections import defaultdict
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.responses import JSONResponse, PlainTextResponse
 import uvicorn
+import sys
+import os
+
+# Import shared database pool
+sys.path.append('/app/shared')
+from shared.database_pool import get_connection_context, execute_query
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -15,8 +21,10 @@ logger = logging.getLogger(__name__)
 class RealTimeMaterializedTableUpdater:
 
     def get_db_connection(self):
-        """Create and return a new MySQL database connection using self.db_config."""
-        return mysql.connector.connect(**self.db_config)
+        """Get database connection from shared pool."""
+        # This method is kept for compatibility but now uses shared pool
+        from shared.database_pool import get_connection
+        return get_connection()
     def get_symbols_with_social_sentiment(self):
         """Return list of canonical symbols (from crypto_assets) that are referenced in social_sentiment_data, using robust alias/name mapping."""
         import json
@@ -266,7 +274,7 @@ class RealTimeMaterializedTableUpdater:
             score += 10
         if record.get('ema_12'):
             score += 10
-        if record.get('macd_line'):
+        if record.get('macd'):
             score += 10
         # Sentiment data (20 points)
         if record.get('avg_cryptobert_score'):
@@ -298,7 +306,7 @@ class RealTimeMaterializedTableUpdater:
                 record['data_quality_score'] = self.calculate_data_quality_score(record)
                 required_fields = [
                     'rsi_14', 'sma_20', 'sma_50', 'ema_12', 'ema_26',
-                    'macd_line', 'macd_signal', 'macd_histogram',
+                    'macd', 'macd_signal', 'macd_histogram',
                     'bb_upper', 'bb_middle', 'bb_lower', 'stoch_k', 'stoch_d', 'atr_14', 'vwap',
                     'vix', 'spx', 'dxy', 'tnx', 'fed_funds_rate',
                     'crypto_sentiment_count', 'avg_cryptobert_score', 'avg_vader_score',
@@ -329,7 +337,7 @@ class RealTimeMaterializedTableUpdater:
                     price_change_24h, price_change_percentage_24h,
                     open_price, high_price, low_price, close_price, ohlc_volume, ohlc_source,
                     rsi_14, sma_20, sma_50, ema_12, ema_26,
-                    macd_line, macd_signal, macd_histogram,
+                    macd, macd_signal, macd_histogram,
                     bb_upper, bb_middle, bb_lower, stoch_k, stoch_d, atr_14, vwap,
                     vix, spx, dxy, tnx, fed_funds_rate,
                     crypto_sentiment_count, avg_cryptobert_score, avg_vader_score,
@@ -349,7 +357,7 @@ class RealTimeMaterializedTableUpdater:
                     %(price_change_24h)s, %(price_change_percentage_24h)s,
                     %(open_price)s, %(high_price)s, %(low_price)s, %(close_price)s, %(ohlc_volume)s, %(ohlc_source)s,
                     %(rsi_14)s, %(sma_20)s, %(sma_50)s, %(ema_12)s, %(ema_26)s,
-                    %(macd_line)s, %(macd_signal)s, %(macd_histogram)s,
+                    %(macd)s, %(macd_signal)s, %(macd_histogram)s,
                     %(bb_upper)s, %(bb_middle)s, %(bb_lower)s, %(stoch_k)s, %(stoch_d)s, %(atr_14)s, %(vwap)s,
                     %(vix)s, %(spx)s, %(dxy)s, %(tnx)s, %(fed_funds_rate)s,
                     %(crypto_sentiment_count)s, %(avg_cryptobert_score)s, %(avg_vader_score)s,
@@ -505,17 +513,17 @@ class RealTimeMaterializedTableUpdater:
             tech_cursor = tech_conn.cursor(dictionary=True)
             tech_query = """
             SELECT 
-                symbol, datetime_utc,
-                rsi_14, sma_20, sma_50, ema_12, ema_26,
-                macd_line, macd_signal, macd_histogram,
+                symbol, timestamp_iso,
+                rsi_14, sma_20, sma_50, sma_30, sma_200, ema_12, ema_20, ema_26, ema_50, ema_200,
+                macd, macd_signal, macd_histogram,
                 bb_upper, bb_middle, bb_lower, stoch_k, stoch_d, atr_14, vwap
-            FROM crypto_news.technical_indicators 
+            FROM technical_indicators 
             WHERE symbol = %s 
-            AND DATE(datetime_utc) >= %s AND DATE(datetime_utc) <= %s
+            AND DATE(timestamp_iso) >= %s AND DATE(timestamp_iso) <= %s
             """
-            tech_cursor.execute(tech_query, (f"{symbol}-USD", start_time, end_time))
+            tech_cursor.execute(tech_query, (symbol, start_time, end_time))
             for row in tech_cursor.fetchall():
-                key = (row['datetime_utc'].date(), row['datetime_utc'].hour)
+                key = (row['timestamp_iso'].date(), row['timestamp_iso'].hour)
                 tech_lookup[key] = row
             tech_cursor.close()
             tech_conn.close()
@@ -831,8 +839,31 @@ class RealTimeMaterializedTableUpdater:
                 t0 = _time.time()
                 tech_data = tech_lookup.get((timestamp_iso.date(), timestamp_iso.hour))
                 logger.info(f"⏱️ Technical indicators fetch: {(_time.time()-t0):.3f}s for {symbol} {timestamp_iso} (batch lookup)")
-                if (not existing or any((existing or {}).get(f) is None for f in ['rsi_14','sma_20','sma_50','ema_12','ema_26','macd_line','macd_signal','macd_histogram','bb_upper','bb_middle','bb_lower','stoch_k','stoch_d','atr_14','vwap'])) and tech_data:
-                    record.update({k: tech_data[k] for k in ['rsi_14','sma_20','sma_50','ema_12','ema_26','macd_line','macd_signal','macd_histogram','bb_upper','bb_middle','bb_lower','stoch_k','stoch_d','atr_14','vwap']})
+                # Map technical indicators from source to destination columns
+                tech_fields_mapping = {
+                    'rsi_14': 'rsi_14',
+                    'sma_20': 'sma_20', 
+                    'sma_50': 'sma_50',
+                    'ema_12': 'ema_12',
+                    'ema_26': 'ema_26',
+                    'macd': 'macd_line',  # Map macd to macd_line in ml_features
+                    'macd_signal': 'macd_signal',
+                    'macd_histogram': 'macd_histogram',
+                    'bb_upper': 'bb_upper',
+                    'bb_middle': 'bb_middle',
+                    'bb_lower': 'bb_lower',
+                    'stoch_k': 'stoch_k',
+                    'stoch_d': 'stoch_d',
+                    'atr_14': 'atr_14',
+                    'vwap': 'vwap'
+                }
+                
+                tech_fields = list(tech_fields_mapping.keys())
+                if (not existing or any((existing or {}).get(tech_fields_mapping[f]) is None for f in tech_fields)) and tech_data:
+                    # Map fields from technical_indicators to ml_features_materialized column names
+                    for source_field, dest_field in tech_fields_mapping.items():
+                        if source_field in tech_data and tech_data[source_field] is not None:
+                            record[dest_field] = tech_data[source_field]
                     need_update = True
                 t1 = _time.time()
                 # Macro indicators (batch lookup)
@@ -943,13 +974,7 @@ class RealTimeMaterializedTableUpdater:
     """Service to continuously update ml_features_materialized table with new data"""
     
     def __init__(self):
-        self.db_config = {
-            'host': 'host.docker.internal',
-            'user': 'news_collector',
-            'password': '99Rules!',
-            'database': 'crypto_prices',
-            'autocommit': True
-        }
+        # Database config removed - using shared connection pool
         self.symbols = self.load_symbols_from_db()
         self.running = True
         self.last_processed_timestamps = {}

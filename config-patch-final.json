@@ -1,0 +1,6 @@
+{
+  "data": {
+    "REDIS_HOST": "redis.crypto-data-collection.svc.cluster.local",
+    "MYSQL_HOST": "192.168.230.162"
+  }
+}

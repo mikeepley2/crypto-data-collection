@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-integration-client
+  namespace: crypto-collectors
+  labels:
+    app: llm-integration-client
+    component: data-enhancement
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llm-integration-client
+  template:
+    metadata:
+      labels:
+        app: llm-integration-client
+        component: data-enhancement
+    spec:
+      containers:
+      - name: llm-integration-client
+        image: llm-integration-client:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8040
+          name: http
+        env:
+        - name: AITEST_OLLAMA_ENDPOINT
+          value: "http://ollama-llm-service.crypto-trading.svc.cluster.local:8050"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8040
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8040
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-integration-client
+  namespace: crypto-collectors
+  labels:
+    app: llm-integration-client
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8040
+    targetPort: 8040
+    protocol: TCP
+    name: http
+  selector:
+    app: llm-integration-client

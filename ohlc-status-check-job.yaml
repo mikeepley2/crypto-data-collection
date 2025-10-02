@@ -1,0 +1,51 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ohlc-status-check
+  namespace: crypto-collectors
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      tolerations:
+      - key: "data-platform"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      containers:
+      - name: status-check
+        image: ohlc-backfill:latest
+        imagePullPolicy: Never
+        command: ["python", "-c"]
+        args:
+        - |
+          import mysql.connector
+          conn = mysql.connector.connect(
+              host='host.docker.internal',
+              user='news_collector',
+              password='99Rules!',
+              database='crypto_prices'
+          )
+          cursor = conn.cursor()
+          cursor.execute('SELECT COUNT(*) FROM ml_features_materialized WHERE open_price IS NOT NULL')
+          with_ohlc = cursor.fetchone()[0]
+          cursor.execute('SELECT COUNT(*) FROM ml_features_materialized')
+          total = cursor.fetchone()[0]
+          percentage = (with_ohlc * 100.0 / total) if total > 0 else 0
+          print(f'OHLC Status: {with_ohlc:,}/{total:,} ({percentage:.2f}%)')
+          baseline = 231812
+          improvement = with_ohlc - baseline
+          improvement_pct = ((with_ohlc / baseline) - 1) * 100 if baseline > 0 else 0
+          print(f'Baseline: {baseline:,}')
+          print(f'Improvement: +{improvement:,} records ({improvement_pct:+.1f}%)')
+          conn.close()
+        env:
+        - name: MYSQL_HOST
+          value: host.docker.internal
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"

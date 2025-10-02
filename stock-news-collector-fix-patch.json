@@ -1,0 +1,39 @@
+{
+  "spec": {
+    "template": {
+      "spec": {
+        "containers": [
+          {
+            "name": "stock-news-collector",
+            "env": [
+              {
+                "name": "USER_AGENT",
+                "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+              },
+              {
+                "name": "REQUEST_DELAY",
+                "value": "3"
+              },
+              {
+                "name": "RETRY_ATTEMPTS",
+                "value": "3"
+              },
+              {
+                "name": "RSS_TIMEOUT",
+                "value": "30"
+              },
+              {
+                "name": "DATABASE_RETRY_ATTEMPTS",
+                "value": "5"
+              },
+              {
+                "name": "DATABASE_RETRY_DELAY",
+                "value": "2"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

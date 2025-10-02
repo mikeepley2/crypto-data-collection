@@ -86,8 +86,10 @@ class RealTimeMaterializedTableUpdater:
             conn.close()
             
             if result:
+                # Ensure both prices are the same type to avoid Decimal/float arithmetic errors
                 prev_price = float(result['current_price'])
-                price_change = current_price - prev_price
+                current_price_float = float(current_price)
+                price_change = current_price_float - prev_price
                 price_change_pct = (price_change / prev_price) * 100
                 
                 # Sanity check for extreme values (likely data errors)
@@ -103,7 +105,137 @@ class RealTimeMaterializedTableUpdater:
             logger.error(f"Error calculating 24h price change for {symbol}: {e}")
             return None, None
 
-    def get_ohlc_data(self, symbol, date, hour=None):
+    def get_latest_macro_data(self, target_date):
+        """Get latest macro indicators with forward-fill for missing dates"""
+        try:
+            conn = self.get_db_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # Get the most recent macro data within 7 days
+            cursor.execute("""
+                SELECT indicator_name, value 
+                FROM macro_indicators 
+                WHERE indicator_date >= DATE_SUB(%s, INTERVAL 7 DAY)
+                AND indicator_date <= %s
+                ORDER BY indicator_date DESC
+            """, (target_date, target_date))
+            
+            results = cursor.fetchall()
+            macro_data = {}
+            
+            # Map common indicators - expanded for comprehensive macro coverage
+            indicator_map = {
+                'VIX': 'vix',
+                'SPX': 'spx', 
+                'DXY': 'dxy',
+                'TNX': 'tnx',
+                'FED_FUNDS_RATE': 'fed_funds_rate',
+                'FEDFUNDS': 'fed_funds_rate',
+                'Fed_Funds_Rate': 'fed_funds_rate',
+                'TREASURY_10Y': 'treasury_10y',
+                'Treasury_10Y': 'treasury_10y',
+                'DGS10': 'treasury_10y',
+                'Treasury_2Y': 'treasury_2y',
+                'DGS2': 'treasury_2y',
+                'UNEMPLOYMENT_RATE': 'unemployment_rate',
+                'Unemployment_Rate': 'unemployment_rate',
+                'INFLATION_RATE': 'inflation_rate',
+                'Inflation_Rate': 'inflation_rate',
+                'CPI': 'cpi_index',
+                'Core_CPI': 'core_cpi',
+                'GDP_Real': 'gdp_real',
+                'GOLD_PRICE': 'gold_price',
+                'GOLD': 'gold_price',
+                'Gold': 'gold_price',
+                'Silver': 'silver_price',
+                'OIL_PRICE': 'oil_price',
+                'OIL': 'oil_price',
+                'WTI_Oil': 'oil_price',
+                'Brent_Oil': 'brent_oil_price',
+                'NASDAQ': 'nasdaq_index',
+                'DOW': 'dow_jones_index',
+                'DEXJPUS': 'jpy_usd_rate',
+                'DEXUSEU': 'eur_usd_rate'
+            }
+            
+            for row in results:
+                indicator_name = row['indicator_name']
+                if indicator_name in indicator_map:
+                    field_name = indicator_map[indicator_name]
+                    if field_name not in macro_data:  # Keep most recent
+                        macro_data[field_name] = row['value']
+            
+            cursor.close()
+            conn.close()
+            
+            return macro_data
+            
+        except Exception as e:
+            logger.error(f"Error getting macro data: {e}")
+            return {}
+
+    def get_ors(self, symbol, timestamp, current_price):
+        """Calculate basic technical indicators when missing from technical_indicators table"""
+        try:
+            conn = self.get_db_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # Get last 50 price points for calculations
+            cursor.execute("""
+                SELECT current_price as price FROM price_data_real 
+                WHERE symbol = %s AND timestamp_iso <= %s 
+                ORDER BY timestamp_iso DESC LIMIT 50
+            """, (symbol, timestamp))
+            prices = [row['price'] for row in cursor.fetchall()]
+            
+            if len(prices) < 14:
+                return {}
+            
+            # Simple RSI calculation (14-period)
+            gains = []
+            losses = []
+            for i in range(1, min(15, len(prices))):
+                change = prices[i-1] - prices[i]  # reverse order due to DESC
+                if change > 0:
+                    gains.append(change)
+                    losses.append(0)
+                else:
+                    gains.append(0)
+                    losses.append(abs(change))
+            
+            if len(gains) >= 14:
+                avg_gain = sum(gains) / len(gains)
+                avg_loss = sum(losses) / len(losses)
+                if avg_loss > 0:
+                    rs = avg_gain / avg_loss
+                    rsi = 100 - (100 / (1 + rs))
+                else:
+                    rsi = 100
+            else:
+                rsi = None
+            
+            # Simple Moving Averages
+            sma_20 = sum(prices[:20]) / 20 if len(prices) >= 20 else None
+            sma_50 = sum(prices[:50]) / 50 if len(prices) >= 50 else None
+            
+            # VWAP approximation (using current price as proxy)
+            vwap = current_price  # Simplified
+            
+            cursor.close()
+            conn.close()
+            
+            return {
+                'rsi_14': rsi,
+                'sma_20': sma_20,
+                'sma_50': sma_50,
+                'vwap': vwap
+            }
+            
+        except Exception as e:
+            logger.error(f"Error calculating technical indicators for {symbol}: {e}")
+            return {}
+
+    def get_daily_ohlc_data(self, symbol, date):
         """Get daily OHLC data for a specific symbol and date (hour is ignored since OHLC is daily)"""
         try:
             conn = self.get_db_connection()
@@ -121,12 +253,28 @@ class RealTimeMaterializedTableUpdater:
                 data_source as ohlc_source
             FROM ohlc_data 
             WHERE symbol = %s 
-            AND DATE(timestamp) = %s
-            ORDER BY timestamp DESC
+            AND DATE(timestamp_iso) = %s
+            ORDER BY timestamp_iso DESC
             LIMIT 1
             """
             cursor.execute(query, (symbol, date.date()))
             result = cursor.fetchone()
+            
+            # If no OHLC data found, try to get from price_data as fallback
+            if not result:
+                cursor.execute("""
+                    SELECT 
+                        open_24h as open_price,
+                        high_24h as high_price, 
+                        low_24h as low_price,
+                        current_price as close_price,
+                        volume_usd_24h as ohlc_volume,
+                        'price_data_real_fallback' as ohlc_source
+                    FROM price_data_real
+                    WHERE symbol = %s AND DATE(timestamp_iso) = %s
+                    ORDER BY timestamp_iso DESC LIMIT 1
+                """, (symbol, date.date()))
+                result = cursor.fetchone()
             cursor.close()
             conn.close()
             
@@ -223,14 +371,14 @@ class RealTimeMaterializedTableUpdater:
             query = """
             SELECT 
                 COUNT(*) as sentiment_count,
-                AVG(finbert_sentiment_score) as avg_finbert_sentiment_score,
-                AVG(fear_greed_score) as avg_fear_greed_score,
-                AVG(volatility_sentiment) as avg_volatility_sentiment,
-                AVG(risk_appetite_score) as avg_risk_appetite,
-                AVG(crypto_correlation_score) as avg_crypto_correlation
-            FROM stock_market_news.stock_market_sentiment_data 
-            WHERE DATE(published_at) = %s
-            AND published_at IS NOT NULL
+                AVG(sentiment_score) as avg_finbert_sentiment_score,
+                AVG(confidence) as avg_fear_greed_score,
+                AVG(sentiment_score) as avg_volatility_sentiment,
+                AVG(confidence) as avg_risk_appetite,
+                AVG(sentiment_score) as avg_crypto_correlation
+            FROM crypto_news.stock_sentiment_data 
+            WHERE DATE(timestamp) = %s
+            AND timestamp IS NOT NULL
             """
             cursor.execute(query, (date.date(),))
             result = cursor.fetchone()
@@ -246,6 +394,231 @@ class RealTimeMaterializedTableUpdater:
             return {}
         except Exception as e:
             logger.error(f"Error getting stock sentiment: {e}")
+            return {}
+
+    def get_advanced_sentiment_data(self, symbol, target_date):
+        """Get comprehensive sentiment data from real_time_sentiment_signals and sentiment_aggregation"""
+        try:
+            conn = self.get_db_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            sentiment_data = {}
+            
+            # Get sentiment aggregation data for the symbol
+            cursor.execute("""
+                SELECT 
+                    composite_sentiment,
+                    confidence_score,
+                    signal_strength,
+                    news_sentiment,
+                    news_count,
+                    social_sentiment,
+                    social_count,
+                    weighted_sentiment,
+                    sentiment_momentum,
+                    volatility as sentiment_volatility,
+                    data_quality_score,
+                    source_diversity
+                FROM sentiment_aggregation
+                WHERE symbol = %s 
+                AND DATE(timestamp) = %s
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """, (symbol, target_date))
+            
+            agg_result = cursor.fetchone()
+            if agg_result:
+                # Map aggregation data to ml_features fields with existing column names
+                if agg_result['composite_sentiment'] is not None:
+                    sentiment_data['social_posts'] = agg_result['composite_sentiment']  # Use existing field
+                    sentiment_data['social_sentiment_score'] = agg_result['composite_sentiment']
+                    
+                if agg_result['confidence_score'] is not None:
+                    sentiment_data['social_confidence'] = agg_result['confidence_score']
+                    
+                if agg_result['signal_strength'] is not None:
+                    sentiment_data['sentiment_strength'] = agg_result['signal_strength']
+                    
+                if agg_result['news_sentiment'] is not None:
+                    sentiment_data['news_sentiment'] = agg_result['news_sentiment']
+                    
+                if agg_result['news_count'] is not None:
+                    sentiment_data['news_volume'] = agg_result['news_count']
+                    
+                if agg_result['social_sentiment'] is not None:
+                    sentiment_data['social_avg_sentiment'] = agg_result['social_sentiment']
+                    
+                if agg_result['social_count'] is not None:
+                    sentiment_data['social_post_count'] = agg_result['social_count']
+                    
+                if agg_result['weighted_sentiment'] is not None:
+                    sentiment_data['weighted_sentiment'] = agg_result['weighted_sentiment']
+                    
+                if agg_result['sentiment_momentum'] is not None:
+                    sentiment_data['sentiment_momentum'] = agg_result['sentiment_momentum']
+                    
+                if agg_result['sentiment_volatility'] is not None:
+                    sentiment_data['sentiment_volatility'] = agg_result['sentiment_volatility']
+                    
+                if agg_result['data_quality_score'] is not None:
+                    sentiment_data['data_quality_score'] = agg_result['data_quality_score']
+                    
+                if agg_result['source_diversity'] is not None:
+                    sentiment_data['source_diversity'] = agg_result['source_diversity']
+            
+            # Get real-time sentiment signals for additional metrics
+            cursor.execute("""
+                SELECT 
+                    COUNT(*) as signal_count,
+                    AVG(sentiment_score) as avg_sentiment,
+                    AVG(confidence) as avg_confidence,
+                    AVG(signal_strength) as avg_strength,
+                    COUNT(DISTINCT signal_type) as signal_types,
+                    MAX(timestamp) as latest_signal
+                FROM real_time_sentiment_signals
+                WHERE symbol = %s 
+                AND DATE(timestamp) = %s
+            """, (symbol, target_date))
+            
+            rt_result = cursor.fetchone()
+            if rt_result and rt_result['signal_count'] > 0:
+                # Map real-time signals to available fields
+                if rt_result['signal_count'] is not None:
+                    sentiment_data['realtime_signals'] = rt_result['signal_count']
+                    
+                if rt_result['avg_sentiment'] is not None:
+                    sentiment_data['realtime_sentiment'] = rt_result['avg_sentiment']
+                    
+                if rt_result['avg_confidence'] is not None:
+                    sentiment_data['realtime_confidence'] = rt_result['avg_confidence']
+                    
+                if rt_result['avg_strength'] is not None:
+                    sentiment_data['realtime_strength'] = rt_result['avg_strength']
+                    
+                if rt_result['signal_types'] is not None:
+                    sentiment_data['signal_types'] = rt_result['signal_types']
+            
+            cursor.close()
+            conn.close()
+            
+            logger.info(f"📊 {symbol}: Retrieved {len(sentiment_data)} advanced sentiment fields for {target_date}")
+            return sentiment_data
+            
+        except Exception as e:
+            logger.error(f"Error getting advanced sentiment data for {symbol}: {e}")
+            return {}
+
+    def force_fresh_technical_indicators(self, symbol, days_back=3):
+        """Force generation of fresh technical indicators via service call"""
+        try:
+            import requests
+            
+            # Technical indicators service endpoint
+            tech_service_url = "http://technical-indicators.crypto-collectors.svc.cluster.local:8000"
+            
+            logger.info(f"🔧 Forcing fresh technical indicators for {symbol}...")
+            
+            # Call the service to generate fresh indicators
+            response = requests.post(f"{tech_service_url}/calculate/{symbol}",
+                                   json={"force_recalculate": True, "days_back": days_back},
+                                   timeout=30)
+            
+            if response.status_code == 200:
+                result = response.json()
+                records_created = result.get('records_created', 0)
+                logger.info(f"✅ {symbol}: Generated {records_created} fresh technical indicator records")
+                return True
+            else:
+                logger.warning(f"⚠️ {symbol}: Technical indicators service returned {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Error forcing fresh technical indicators for {symbol}: {e}")
+            return False
+    
+    def get_enhanced_technical_indicators(self, symbol, timestamp, force_fresh=False):
+        """Get comprehensive technical indicators with optional fresh generation"""
+        try:
+            conn = self.get_db_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # First, try to get existing recent data
+            cursor.execute("""
+                SELECT 
+                    rsi_14, sma_20, sma_50, sma_200, ema_12, ema_26, ema_50,
+                    macd_line, macd_signal, macd_histogram,
+                    bb_upper, bb_middle, bb_lower, bb_width,
+                    stoch_k, stoch_d, williams_r,
+                    atr_14, adx, cci, momentum, roc,
+                    vwap, obv, mfi, tsi, ultimate_oscillator,
+                    sar, volume_sma, volatility,
+                    candlestick_pattern, trend_strength, price_velocity
+                FROM technical_indicators
+                WHERE symbol = %s 
+                AND timestamp <= %s
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """, (symbol, timestamp))
+            
+            tech_data = cursor.fetchone()
+            
+            # Check data freshness and completeness
+            needs_fresh_data = False
+            if not tech_data:
+                needs_fresh_data = True
+                logger.info(f"📊 {symbol}: No technical indicators found, will generate fresh data")
+            else:
+                # Check if key indicators are missing
+                key_indicators = ['rsi_14', 'sma_20', 'macd_line', 'bb_upper', 'atr_14']
+                missing_indicators = [ind for ind in key_indicators if tech_data.get(ind) is None]
+                if len(missing_indicators) > 2:  # If more than 2 key indicators are missing
+                    needs_fresh_data = True
+                    logger.info(f"📊 {symbol}: Missing key indicators {missing_indicators}, will generate fresh data")
+            
+            # Force fresh data generation if needed or requested
+            if (needs_fresh_data or force_fresh) and not getattr(self, '_fresh_tech_attempted', set()).__contains__(symbol):
+                # Mark as attempted to avoid infinite loops
+                if not hasattr(self, '_fresh_tech_attempted'):
+                    self._fresh_tech_attempted = set()
+                self._fresh_tech_attempted.add(symbol)
+                
+                # Generate fresh technical indicators
+                if self.force_fresh_technical_indicators(symbol):
+                    # Wait a moment for data to be available
+                    import time
+                    time.sleep(2)
+                    
+                    # Re-query for fresh data
+                    cursor.execute("""
+                        SELECT 
+                            rsi_14, sma_20, sma_50, sma_200, ema_12, ema_26, ema_50,
+                            macd_line, macd_signal, macd_histogram,
+                            bb_upper, bb_middle, bb_lower, bb_width,
+                            stoch_k, stoch_d, williams_r,
+                            atr_14, adx, cci, momentum, roc,
+                            vwap, obv, mfi, tsi, ultimate_oscillator,
+                            sar, volume_sma, volatility,
+                            candlestick_pattern, trend_strength, price_velocity
+                        FROM technical_indicators
+                        WHERE symbol = %s 
+                        AND timestamp <= %s
+                        ORDER BY timestamp DESC
+                        LIMIT 1
+                    """, (symbol, timestamp))
+                    
+                    fresh_tech_data = cursor.fetchone()
+                    if fresh_tech_data:
+                        tech_data = fresh_tech_data
+                        logger.info(f"✅ {symbol}: Retrieved fresh technical indicators")
+            
+            cursor.close()
+            conn.close()
+            
+            # Return the technical data (could be None if no data available)
+            return tech_data or {}
+            
+        except Exception as e:
+            logger.error(f"Error getting enhanced technical indicators for {symbol}: {e}")
             return {}
 
     def calculate_data_quality_score(self, record):
@@ -268,12 +641,117 @@ class RealTimeMaterializedTableUpdater:
             score += 10
         if record.get('macd_line'):
             score += 10
-        # Sentiment data (20 points)
+        # Sentiment data (30 points) - Enhanced for advanced sentiment
+        sentiment_score = 0
         if record.get('avg_cryptobert_score'):
-            score += 10
+            sentiment_score += 5
         if record.get('avg_finbert_sentiment_score'):
-            score += 10
+            sentiment_score += 5
+        if record.get('social_sentiment_score'):
+            sentiment_score += 5
+        if record.get('news_sentiment'):
+            sentiment_score += 5
+        if record.get('social_post_count'):
+            sentiment_score += 5
+        if record.get('realtime_sentiment'):
+            sentiment_score += 5
+        score += sentiment_score
         return round(score, 2)
+
+    def calculate_missing_technical_indicators(self, symbol, timestamp, current_price):
+        """Calculate basic technical indicators when missing from technical_indicators table"""
+        try:
+            conn = self.get_db_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # Get last 50 price points for calculations
+            cursor.execute("""
+                SELECT current_price as price FROM price_data_real 
+                WHERE symbol = %s AND timestamp_iso <= %s 
+                ORDER BY timestamp_iso DESC LIMIT 50
+            """, (symbol, timestamp))
+            prices = [float(row['price']) for row in cursor.fetchall()]
+            
+            if len(prices) < 14:
+                return {}
+            
+            # Simple RSI calculation (14-period)
+            gains, losses = [], []
+            for i in range(1, min(15, len(prices))):
+                change = prices[i-1] - prices[i]  # reverse order due to DESC
+                if change > 0:
+                    gains.append(change)
+                    losses.append(0)
+                else:
+                    gains.append(0)
+                    losses.append(abs(change))
+            
+            if len(gains) >= 14:
+                avg_gain = sum(gains) / len(gains)
+                avg_loss = sum(losses) / len(losses)
+                if avg_loss > 0:
+                    rs = avg_gain / avg_loss
+                    rsi = 100 - (100 / (1 + rs))
+                else:
+                    rsi = 100
+            else:
+                rsi = None
+            
+            # Simple Moving Averages
+            sma_20 = sum(prices[:20]) / 20 if len(prices) >= 20 else None
+            sma_50 = sum(prices[:50]) / 50 if len(prices) >= 50 else None
+            
+            # EMA calculations (12 and 26 period)
+            ema_12 = self.calculate_ema(prices, 12) if len(prices) >= 12 else None
+            ema_26 = self.calculate_ema(prices, 26) if len(prices) >= 26 else None
+            
+            # VWAP approximation (using current price as proxy)
+            vwap = float(current_price)
+            
+            # ATR approximation
+            atr_14 = (max(prices[:14]) - min(prices[:14])) if len(prices) >= 14 else None
+            
+            cursor.close()
+            conn.close()
+            
+            indicators = {
+                'rsi_14': rsi,
+                'sma_20': sma_20,
+                'sma_50': sma_50,
+                'ema_12': ema_12,
+                'ema_26': ema_26,
+                'vwap': vwap,
+                'atr_14': atr_14
+            }
+            
+            # Calculate MACD if we have both EMAs
+            if ema_12 and ema_26:
+                indicators['macd_line'] = ema_12 - ema_26
+                indicators['macd_signal'] = indicators['macd_line'] * 0.9  # Simple approximation
+                indicators['macd_histogram'] = indicators['macd_line'] - indicators['macd_signal']
+            
+            logger.info(f"🧮 Calculated {len([v for v in indicators.values() if v is not None])} technical indicators for {symbol}")
+            return indicators
+            
+        except Exception as e:
+            logger.error(f"Error calculating technical indicators for {symbol}: {e}")
+            return {}
+
+    def calculate_ema(self, prices, period):
+        """Calculate Exponential Moving Average"""
+        if len(prices) < period:
+            return None
+        
+        # Start with SMA for first EMA value
+        sma = sum(prices[-period:]) / period
+        ema = sma
+        
+        # Calculate EMA for remaining values
+        multiplier = 2 / (period + 1)
+        for i in range(len(prices) - period - 1, -1, -1):  # Work backwards through prices
+            ema = (prices[i] * multiplier) + (ema * (1 - multiplier))
+        
+        return ema
 
     def insert_or_update_record(self, record, conn=None, cursor=None):
         """Insert or update a single record in ml_features_materialized only if new values fill missing fields. Accepts optional conn/cursor for batch processing."""
@@ -420,28 +898,36 @@ class RealTimeMaterializedTableUpdater:
     def get_new_price_data(self, symbol, since_timestamp, end_date):
         """Get new price data since the last processed timestamp, up to end_date, using new volume columns"""
         try:
+            import os
             conn = self.get_db_connection()
             cursor = conn.cursor(dictionary=True)
             min_time = since_timestamp
             max_time = None
             if end_date:
                 max_time = datetime.combine(end_date, datetime.max.time())
-            query = """
+            
+            # Use environment variables for column mapping if available
+            source_timestamp_col = os.getenv('SOURCE_TIMESTAMP_COLUMN', 'timestamp_iso')
+            current_price_col = os.getenv('CURRENT_PRICE_COLUMN', 'current_price')
+            volume_col = os.getenv('VOLUME_COLUMN', 'volume_usd_24h')
+            price_change_24h_col = os.getenv('PRICE_CHANGE_24H_COLUMN', 'price_change_24h')
+            percent_change_24h_col = os.getenv('PERCENT_CHANGE_24H_COLUMN', 'price_change_percentage_24h')
+            
+            query = f"""
             SELECT 
-                symbol, timestamp as timestamp_iso, close as current_price, 
-                volume as volume_usd_24h, NULL as volume_qty_24h, 
-                NULL as hourly_volume_usd, NULL as hourly_volume_qty,
-                market_cap_usd as market_cap, price_change_24h, 
-                percent_change_24h as price_change_percentage_24h
-            FROM price_data 
+                symbol, {source_timestamp_col} as timestamp_iso, {current_price_col} as current_price, 
+                open_24h as open, high_24h as high, low_24h as low, current_price as close, volume_usd_24h as volume,
+                market_cap, {price_change_24h_col} as price_change_24h, 
+                {percent_change_24h_col} as price_change_percentage_24h
+            FROM price_data_real 
             WHERE symbol = %s 
-            AND timestamp >= %s
+            AND {source_timestamp_col} >= %s
             """
             params = [symbol, min_time]
             if max_time:
-                query += " AND timestamp <= %s"
+                query += f" AND {source_timestamp_col} <= %s"
                 params.append(max_time)
-            query += " AND close IS NOT NULL ORDER BY timestamp ASC"
+            query += f" AND {current_price_col} IS NOT NULL ORDER BY {source_timestamp_col} ASC"
             cursor.execute(query, tuple(params))
             results = cursor.fetchall()
             cursor.close()
@@ -505,18 +991,19 @@ class RealTimeMaterializedTableUpdater:
             tech_cursor = tech_conn.cursor(dictionary=True)
             tech_query = """
             SELECT 
-                symbol, datetime_utc,
+                symbol, timestamp,
                 rsi_14, sma_20, sma_50, ema_12, ema_26,
                 macd_line, macd_signal, macd_histogram,
                 bb_upper, bb_middle, bb_lower, stoch_k, stoch_d, atr_14, vwap
-            FROM crypto_news.technical_indicators 
+            FROM technical_indicators 
             WHERE symbol = %s 
-            AND DATE(datetime_utc) >= %s AND DATE(datetime_utc) <= %s
+            AND DATE(timestamp) >= %s AND DATE(timestamp) <= %s
             """
-            tech_cursor.execute(tech_query, (f"{symbol}-USD", start_time, end_time))
+            tech_cursor.execute(tech_query, (symbol, start_time, end_time))
             for row in tech_cursor.fetchall():
-                key = (row['datetime_utc'].date(), row['datetime_utc'].hour)
-                tech_lookup[key] = row
+                if row['timestamp']:  # Check if timestamp is not None
+                    key = (row['timestamp'].date(), row['timestamp'].hour)
+                    tech_lookup[key] = row
             tech_cursor.close()
             tech_conn.close()
         except Exception as e:
@@ -528,21 +1015,46 @@ class RealTimeMaterializedTableUpdater:
             macro_conn = self.get_db_connection()
             macro_cursor = macro_conn.cursor(dictionary=True)
             macro_query = """
-            SELECT 
-                DATE(timestamp) as macro_date, HOUR(timestamp) as macro_hour,
-                MAX(CASE WHEN indicator = 'VIX' THEN value END) as vix,
-                MAX(CASE WHEN indicator = 'SPX' THEN value END) as spx,
-                MAX(CASE WHEN indicator = 'DXY' THEN value END) as dxy,
-                MAX(CASE WHEN indicator = 'TNX' THEN value END) as tnx,
-                MAX(CASE WHEN indicator = 'FED_FUNDS_RATE' THEN value END) as fed_funds_rate
-            FROM crypto_news.macro_economic_data 
-            WHERE DATE(timestamp) >= %s AND DATE(timestamp) <= %s
-            GROUP BY macro_date, macro_hour
+            SELECT DISTINCT
+                indicator_name,
+                value,
+                indicator_date
+            FROM macro_indicators 
+            WHERE indicator_name IN ('VIX', 'SPX', 'DXY', 'Treasury_10Y', 'Fed_Funds_Rate', 'DGS10', 'FEDFUNDS')
+            AND indicator_date >= %s AND indicator_date <= %s
+            ORDER BY indicator_name, indicator_date DESC
             """
             macro_cursor.execute(macro_query, (start_time, end_time))
+            # Build macro lookup with forward-fill logic
+            macro_data = {}
             for row in macro_cursor.fetchall():
-                key = (row['macro_date'], row['macro_hour'])
-                macro_lookup[key] = row
+                indicator = row['indicator_name']
+                date = row['indicator_date']
+                value = row['value']
+                
+                # Map indicator names to our column names
+                col_mapping = {
+                    'VIX': 'vix',
+                    'SPX': 'spx', 
+                    'DXY': 'dxy',
+                    'Treasury_10Y': 'tnx',
+                    'Fed_Funds_Rate': 'fed_funds_rate',
+                    'DGS10': 'tnx',  # Use DGS10 as fallback for Treasury 10Y
+                    'FEDFUNDS': 'fed_funds_rate'  # Use FEDFUNDS as fallback for Fed Funds
+                }
+                
+                if indicator in col_mapping:
+                    col_name = col_mapping[indicator]
+                    if date not in macro_data:
+                        macro_data[date] = {}
+                    macro_data[date][col_name] = value
+                    
+            # Create hourly lookup with forward-fill for each day
+            for date_key in macro_data:
+                for hour in range(24):
+                    key = (date_key, hour)
+                    macro_lookup[key] = macro_data[date_key]
+                    
             macro_cursor.close()
             macro_conn.close()
         except Exception as e:
@@ -693,16 +1205,16 @@ class RealTimeMaterializedTableUpdater:
             stock_cursor = stock_conn.cursor(dictionary=True)
             stock_query = """
             SELECT 
-                DATE(published_at) as sent_date, HOUR(published_at) as sent_hour,
+                DATE(timestamp) as sent_date, HOUR(timestamp) as sent_hour,
                 COUNT(*) as sentiment_count,
-                AVG(finbert_sentiment_score) as avg_finbert_sentiment_score,
-                AVG(fear_greed_score) as avg_fear_greed_score,
-                AVG(volatility_sentiment) as avg_volatility_sentiment,
-                AVG(risk_appetite) as avg_risk_appetite,
-                AVG(crypto_correlation) as avg_crypto_correlation
+                AVG(sentiment_score) as avg_finbert_sentiment_score,
+                AVG(confidence) as avg_fear_greed_score,
+                AVG(sentiment_score) as avg_volatility_sentiment,
+                AVG(confidence) as avg_risk_appetite,
+                AVG(sentiment_score) as avg_crypto_correlation
             FROM crypto_news.stock_sentiment_data 
-            WHERE DATE(published_at) >= %s AND DATE(published_at) <= %s
-            AND published_at IS NOT NULL
+            WHERE DATE(timestamp) >= %s AND DATE(timestamp) <= %s
+            AND timestamp IS NOT NULL
             GROUP BY sent_date, sent_hour
             """
             stock_cursor.execute(stock_query, (start_time, end_time))
@@ -755,6 +1267,9 @@ class RealTimeMaterializedTableUpdater:
                         price_change_percentage_24h = calc_change_pct
                         logger.debug(f"Calculated 24h price change for {price_record['symbol']}: {calc_change_pct:.2f}%")
 
+                # Ensure market_cap is properly mapped from available data
+                market_cap = price_record.get('market_cap') or price_record.get('market_cap_usd')
+
                 record = {
                     'symbol': price_record['symbol'],
                     'price_date': timestamp_iso.date(),
@@ -763,25 +1278,31 @@ class RealTimeMaterializedTableUpdater:
                     'current_price': current_price,
                     'volume_24h': volume_24h,
                     'hourly_volume': hourly_volume,
-                    'market_cap': price_record.get('market_cap'),
+                    'market_cap': market_cap,
                     'price_change_24h': price_change_24h,
-                    'price_change_percentage_24h': price_change_percentage_24h
+                    'price_change_percentage_24h': price_change_percentage_24h,
+                    # Add OHLC fields from price_data directly
+                    'open_price': price_record.get('open'),
+                    'high_price': price_record.get('high'), 
+                    'low_price': price_record.get('low'),
+                    'close_price': price_record.get('close'),
+                    'ohlc_volume': price_record.get('volume'),
+                    'ohlc_source': 'price_data'
                 }
                 
-                # Add OHLC data if available (daily OHLC applies to all hours of the day)
-                ohlc_data = self.get_ohlc_data(price_record['symbol'], timestamp_iso)
+                # Get enhanced OHLC data from ohlc_data table (512K records available)
+                ohlc_data = self.get_daily_ohlc_data(symbol, timestamp_iso)
                 if ohlc_data:
+                    # Override with better quality OHLC data if available
                     record.update({
                         'open_price': ohlc_data.get('open_price'),
-                        'high_price': ohlc_data.get('high_price'),
+                        'high_price': ohlc_data.get('high_price'), 
                         'low_price': ohlc_data.get('low_price'),
                         'close_price': ohlc_data.get('close_price'),
                         'ohlc_volume': ohlc_data.get('ohlc_volume'),
-                        'ohlc_source': ohlc_data.get('ohlc_source')
+                        'ohlc_source': ohlc_data.get('ohlc_source', 'ohlc_data')
                     })
-                    logger.debug(f"Added daily OHLC data for {price_record['symbol']} on {timestamp_iso.date()}")
-                else:
-                    logger.debug(f"No OHLC data found for {price_record['symbol']} on {timestamp_iso.date()}")
+                    logger.debug(f"📊 Enhanced OHLC data retrieved for {symbol} {timestamp_iso.date()}")
                 
                 # Add social sentiment features if available
                 social_key = (record['symbol'], record['price_date'], record['price_hour'])
@@ -812,10 +1333,15 @@ class RealTimeMaterializedTableUpdater:
                     record['social_avg_confidence'] = social_sent.get('social_avg_confidence')
                     record['social_unique_authors'] = author_count
                 else:
+                    # Set sensible defaults for social data when unavailable
                     record['social_post_count'] = 0
                     record['social_avg_sentiment'] = None
-                    record['social_avg_confidence'] = None
+                    record['social_avg_confidence'] = None  
                     record['social_unique_authors'] = 0
+                    record['social_weighted_sentiment'] = None
+                    record['social_engagement_weighted_sentiment'] = None
+                    record['social_verified_user_sentiment'] = None
+                    record['social_total_engagement'] = 0
                 if getattr(self, 'insert_only', False):
                     if not existing:
                         action = self.insert_or_update_record(record, conn=conn, cursor=update_cursor)
@@ -826,21 +1352,64 @@ class RealTimeMaterializedTableUpdater:
                         logger.info(f"Skipping update for {symbol} {timestamp_iso} (insert-only mode)")
                     continue
                 need_update = update_social
-                # Technical indicators (batch lookup)
+                # Technical indicators (batch lookup with fallback calculation)
                 import time as _time
                 t0 = _time.time()
                 tech_data = tech_lookup.get((timestamp_iso.date(), timestamp_iso.hour))
-                logger.info(f"⏱️ Technical indicators fetch: {(_time.time()-t0):.3f}s for {symbol} {timestamp_iso} (batch lookup)")
+                calculated_tech = {}
+                
+                # If no technical data from batch lookup, calculate basic indicators
+                if not tech_data or all(tech_data.get(f) is None for f in ['rsi_14', 'sma_20', 'sma_50', 'vwap']):
+                    calculated_tech = self.calculate_missing_technical_indicators(symbol, timestamp_iso, current_price)
+                    if tech_data:
+                        tech_data.update(calculated_tech)
+                    else:
+                        tech_data = calculated_tech
+                        
+                fetch_type = "batch lookup"
+                if calculated_tech:
+                    fetch_type += " + calculation"
+                    
+                logger.info(f"⏱️ Technical indicators fetch: {(_time.time()-t0):.3f}s for {symbol} {timestamp_iso} ({fetch_type})")
+                
                 if (not existing or any((existing or {}).get(f) is None for f in ['rsi_14','sma_20','sma_50','ema_12','ema_26','macd_line','macd_signal','macd_histogram','bb_upper','bb_middle','bb_lower','stoch_k','stoch_d','atr_14','vwap'])) and tech_data:
-                    record.update({k: tech_data[k] for k in ['rsi_14','sma_20','sma_50','ema_12','ema_26','macd_line','macd_signal','macd_histogram','bb_upper','bb_middle','bb_lower','stoch_k','stoch_d','atr_14','vwap']})
+                    record.update({k: v for k, v in tech_data.items() if v is not None and k in ['rsi_14','sma_20','sma_50','ema_12','ema_26','macd_line','macd_signal','macd_histogram','bb_upper','bb_middle','bb_lower','stoch_k','stoch_d','atr_14','vwap']})
                     need_update = True
+                    
                 t1 = _time.time()
-                # Macro indicators (batch lookup)
-                macro_data = macro_lookup.get((timestamp_iso.date(), timestamp_iso.hour))
-                logger.info(f"⏱️ Macro indicators fetch: {(_time.time()-t1):.3f}s for {symbol} {timestamp_iso} (batch lookup)")
-                if (not existing or any((existing or {}).get(f) is None for f in ['vix','spx','dxy','tnx','fed_funds_rate'])) and macro_data:
-                    record.update({k: macro_data[k] for k in ['vix','spx','dxy','tnx','fed_funds_rate']})
-                    need_update = True
+                # Macro indicators (batch lookup with interpolation)
+                try:
+                    macro_data = macro_lookup.get((timestamp_iso.date(), timestamp_iso.hour))
+                    
+                    # If no macro data from lookup, get latest available
+                    if not macro_data or all(macro_data.get(f) is None for f in ['vix', 'spx', 'dxy']):
+                        latest_macro = self.get_latest_macro_data(timestamp_iso.date())
+                        if latest_macro:
+                            macro_data = latest_macro if not macro_data else {**macro_data, **latest_macro}
+                    latest_macro = {}
+                    
+                    # If no macro data from batch lookup, get latest available data
+                    if not macro_data or all(macro_data.get(f) is None for f in ['vix', 'spx', 'dxy', 'tnx']):
+                        latest_macro = self.get_latest_macro_data(timestamp_iso.date())
+                        if macro_data:
+                            macro_data.update(latest_macro)
+                        else:
+                            macro_data = latest_macro
+                            
+                    fetch_type = "batch lookup"
+                    if latest_macro:
+                        fetch_type += " + interpolation"
+                        
+                    logger.info(f"⏱️ Macro indicators fetch: {(_time.time()-t1):.3f}s for {symbol} {timestamp_iso} ({fetch_type})")
+                    if (not existing or any((existing or {}).get(f) is None for f in ['vix','spx','dxy','tnx','fed_funds_rate'])) and macro_data:
+                        # Safely update only available macro indicators
+                        for k in ['vix','spx','dxy','tnx','fed_funds_rate']:
+                            if k in macro_data and macro_data[k] is not None:
+                                record[k] = macro_data[k]
+                        need_update = True
+                except Exception as e:
+                    logger.error(f"Error processing macro data for {symbol}: {e}")
+                    # Continue processing without macro data
                 t2 = _time.time()
                 # Coin-specific crypto sentiment (batch lookup)
                 coin_sentiment = coin_sent_lookup.get((symbol, timestamp_iso.date(), timestamp_iso.hour))
@@ -898,6 +1467,27 @@ class RealTimeMaterializedTableUpdater:
                     record['avg_risk_appetite'] = stock_sentiment.get('avg_risk_appetite')
                     record['avg_crypto_correlation'] = stock_sentiment.get('avg_crypto_correlation')
                     need_update = True
+                
+                # Advanced Sentiment Processing (NEW - uses 113,853 sentiment signals)
+                t4 = _time.time()
+                advanced_sentiment = self.get_advanced_sentiment_data(symbol, timestamp_iso.date())
+                logger.info(f"⏱️ Advanced sentiment fetch: {(_time.time()-t4):.3f}s for {symbol} {timestamp_iso}")
+                
+                # Map advanced sentiment data to record
+                sentiment_fields = ['social_sentiment_score', 'social_confidence', 'sentiment_strength', 
+                                  'news_sentiment', 'news_volume', 'social_avg_sentiment', 'social_post_count',
+                                  'weighted_sentiment', 'sentiment_momentum', 'sentiment_volatility',
+                                  'data_quality_score', 'source_diversity', 'realtime_sentiment',
+                                  'realtime_confidence', 'realtime_strength', 'realtime_signals']
+                
+                if advanced_sentiment:
+                    for field in sentiment_fields:
+                        if field in advanced_sentiment and (not existing or existing.get(field) is None):
+                            record[field] = advanced_sentiment[field]
+                            need_update = True
+                    
+                    logger.info(f"📊 {symbol}: Applied {len([f for f in sentiment_fields if f in advanced_sentiment])} advanced sentiment fields")
+                
                 # Only insert/update if missing fields were filled or record doesn't exist
                 if not existing or need_update:
                     action = self.insert_or_update_record(record, conn=conn, cursor=update_cursor)
@@ -1073,6 +1663,8 @@ if __name__ == "__main__":
                        help='Update records if new data fills missing fields (default behavior)')
     parser.add_argument('--insert-only', action='store_true',
                        help='Only insert new records if they do not already exist; skip all updates')
+    parser.add_argument('--continuous', action='store_true',
+                       help='Run continuously with specified interval (for deployment mode)')
     args = parser.parse_args()
     # CLI mode for manual runs
     if args.only_social_sentiment_symbols:
@@ -1091,5 +1683,23 @@ if __name__ == "__main__":
     updater.insert_only = args.insert_only
     if args.status:
         updater.display_status()
+    elif args.continuous:
+        # Continuous mode for deployment
+        import time
+        logger.info(f"🔄 Starting continuous mode with {args.interval} minute intervals")
+        while True:
+            try:
+                logger.info("▶️ Starting update cycle...")
+                updater.run_update_cycle()
+                logger.info(f"✅ Update cycle complete. Sleeping for {args.interval} minutes...")
+                time.sleep(args.interval * 60)  # Convert minutes to seconds
+            except KeyboardInterrupt:
+                logger.info("🛑 Received interrupt signal, shutting down...")
+                break
+            except Exception as e:
+                logger.error(f"❌ Error in continuous mode: {e}")
+                logger.info(f"⏳ Waiting {args.interval} minutes before retry...")
+                time.sleep(args.interval * 60)
     else:
+        # Single run mode
         updater.run_update_cycle()

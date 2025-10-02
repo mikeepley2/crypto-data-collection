@@ -8,6 +8,7 @@ pydantic==2.5.0
 # Database Drivers
 aiomysql==0.2.0
 aioredis==2.0.1
+mysql-connector-python==8.2.0
 
 # Data Processing (using compatible versions)
 pandas>=2.0.0

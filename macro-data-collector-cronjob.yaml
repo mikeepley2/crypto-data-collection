@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: macro-data-collector
+  namespace: crypto-collectors
+spec:
+  schedule: "0 */6 * * *"  # Every 6 hours
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: macro-collector
+            image: python:3.11-slim
+            command: ["/bin/sh"]
+            args: ["-c", "pip install yfinance mysql-connector-python && python /scripts/collect_macro.py"]
+            env:
+            - name: MYSQL_HOST
+              value: "host.docker.internal"
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: crypto-db-secrets
+                  key: username
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: crypto-db-secrets
+                  key: password
+            - name: MYSQL_DATABASE
+              value: "crypto_prices"
+            volumeMounts:
+            - name: macro-script
+              mountPath: /scripts
+              readOnly: true
+          volumes:
+          - name: macro-script
+            configMap:
+              name: macro-collection-script
+          restartPolicy: OnFailure

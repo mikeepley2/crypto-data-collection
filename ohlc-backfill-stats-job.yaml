@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ohlc-backfill-stats
+  namespace: crypto-collectors
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      tolerations:
+      - key: "data-platform"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      containers:
+      - name: ohlc-backfill
+        image: ohlc-backfill:latest
+        imagePullPolicy: Never
+        command: ["python", "ohlc_backfill.py", "--stats-only"]
+        env:
+        - name: MYSQL_HOST
+          value: host.docker.internal
+        - name: MYSQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: crypto-db-secrets
+              key: username
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: crypto-db-secrets
+              key: password
+        - name: MYSQL_DATABASE
+          value: crypto_prices
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"

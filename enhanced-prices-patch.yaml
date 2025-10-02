@@ -1,0 +1,19 @@
+
+spec:
+  template:
+    spec:
+      containers:
+      - name: enhanced-crypto-prices
+        env:
+        - name: CRYPTO_PRICES_TABLE
+          value: "hourly_data"
+        - name: HIGH_COLUMN
+          value: "high"
+        - name: LOW_COLUMN
+          value: "low"
+        - name: OPEN_COLUMN
+          value: "open"
+        - name: CLOSE_COLUMN
+          value: "close"
+        - name: VOLUME_COLUMN
+          value: "volume"

@@ -1,0 +1,6 @@
+{
+  "symbols": ["BTC-USD", "ETH-USD"], 
+  "indicators": ["sma", "rsi", "macd", "bollinger"],
+  "mode": "realtime",
+  "force_refresh": true
+}

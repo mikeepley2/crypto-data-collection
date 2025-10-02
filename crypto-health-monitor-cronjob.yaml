@@ -1,0 +1,84 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: crypto-health-monitor
+  namespace: crypto-collectors
+spec:
+  schedule: "0 */6 * * *"  # Every 6 hours
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: crypto-health-monitor
+        spec:
+          serviceAccountName: crypto-monitor-sa
+          containers:
+          - name: health-monitor
+            image: bitnami/kubectl:latest
+            command: ["/bin/bash"]
+            args:
+            - "-c"
+            - |
+              # Download and run the health monitor script
+              curl -s https://raw.githubusercontent.com/mikeepley2/crypto-data-collection/master/scripts/crypto-health-monitor.sh -o /tmp/health-monitor.sh
+              chmod +x /tmp/health-monitor.sh
+              /tmp/health-monitor.sh
+            env:
+            - name: NAMESPACE
+              value: "crypto-collectors"
+          restartPolicy: OnFailure
+          nodeSelector:
+            solution-area: data-platform
+          tolerations:
+          - effect: NoSchedule
+            key: data-platform
+            operator: Equal
+            value: "true"
+      backoffLimit: 2
+      activeDeadlineSeconds: 300  # 5 minute timeout
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: crypto-monitor-sa
+  namespace: crypto-collectors
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: crypto-collectors
+  name: crypto-monitor-role
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
+- apiGroups: ["batch"]
+  resources: ["cronjobs"]
+  verbs: ["get", "list"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: crypto-monitor-binding
+  namespace: crypto-collectors
+subjects:
+- kind: ServiceAccount
+  name: crypto-monitor-sa
+  namespace: crypto-collectors
+roleRef:
+  kind: Role
+  name: crypto-monitor-role
+  apiGroup: rbac.authorization.k8s.io

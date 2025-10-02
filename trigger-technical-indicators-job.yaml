@@ -1,0 +1,32 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: trigger-technical-indicators
+  namespace: crypto-data-collection
+spec:
+  template:
+    spec:
+      containers:
+      - name: trigger
+        image: curlimages/curl:latest
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Triggering technical indicators collection..."
+          response=$(curl -s -w "%{http_code}" -X POST http://technical-indicators.crypto-data-collection.svc.cluster.local:8000/collect)
+          http_code=$(echo "$response" | tail -c 4)
+          body=$(echo "$response" | head -c -4)
+          
+          echo "HTTP Status: $http_code"
+          echo "Response: $body"
+          
+          if [ "$http_code" = "200" ]; then
+            echo "✅ Technical indicators collection successful"
+          else
+            echo "❌ Technical indicators collection failed"
+            exit 1
+          fi
+      restartPolicy: Never
+  backoffLimit: 1

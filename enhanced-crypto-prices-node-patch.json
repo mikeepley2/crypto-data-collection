@@ -1,0 +1,10 @@
+[
+  {
+    "op": "remove",
+    "path": "/spec/template/spec/affinity"
+  },
+  {
+    "op": "remove", 
+    "path": "/spec/template/spec/tolerations"
+  }
+]

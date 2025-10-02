@@ -1,0 +1,95 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: test-materialized-runtime-patch
+  namespace: crypto-collectors
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: materialized-updater
+        image: aitest-materialized-updater:latest
+        command: ["python", "-c"]
+        args:
+        - |
+          import sys
+          import re
+          
+          # Read the original file
+          with open('/app/realtime_materialized_updater.py', 'r') as f:
+              content = f.read()
+          
+          # Patch the get_new_price_data method to use correct column names
+          old_query = '''query = """
+            SELECT
+                symbol, timestamp_iso, current_price,
+                volume_usd_24h, volume_qty_24h, hourly_volume_usd, hourly_volume_qty,
+                market_cap, price_change_24h, price_change_percentage_24h
+            FROM price_data
+            WHERE symbol = %s
+            AND timestamp_iso >= %s
+            """'''
+          
+          new_query = '''query = """
+            SELECT
+                symbol, timestamp as timestamp_iso, close as current_price,
+                volume as volume_usd_24h, NULL as volume_qty_24h, NULL as hourly_volume_usd, NULL as hourly_volume_qty,
+                market_cap_usd as market_cap, price_change_24h, percent_change_24h as price_change_percentage_24h
+            FROM price_data
+            WHERE symbol = %s
+            AND timestamp >= %s
+            """'''
+          
+          # Replace the query
+          patched_content = content.replace(old_query.strip(), new_query.strip())
+          
+          # Also fix the additional conditions
+          patched_content = patched_content.replace('AND timestamp_iso <= %s', 'AND timestamp <= %s')
+          patched_content = patched_content.replace('ORDER BY timestamp_iso ASC', 'ORDER BY timestamp ASC')
+          
+          # Write the patched file
+          with open('/app/realtime_materialized_updater_patched.py', 'w') as f:
+              f.write(patched_content)
+          
+          print("Patched materialized updater created")
+          
+          # Now run the patched version
+          sys.path.append('/app')
+          
+          # Import and run the patched version
+          exec(compile(open('/app/realtime_materialized_updater_patched.py').read(), 
+                      '/app/realtime_materialized_updater_patched.py', 'exec'))
+          
+          updater = RealTimeMaterializedTableUpdater()
+          updater.symbols = ['BTC', 'ETH']  # Test with just 2 symbols
+          result = updater.run_update_cycle()
+          print(f'Processed {result} records')
+        env:
+        - name: MYSQL_HOST
+          value: "host.docker.internal"
+        - name: MYSQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: crypto-db-secrets
+              key: username
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: crypto-db-secrets
+              key: password
+        - name: MYSQL_DATABASE
+          value: "crypto_prices"
+      tolerations:
+      - key: analytics-infrastructure
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+      - key: data-platform
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+      - key: trading-engine
+        operator: Equal
+        value: "true"
+        effect: NoSchedule

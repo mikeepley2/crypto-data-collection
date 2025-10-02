@@ -1,0 +1,29 @@
+
+# OHLC Collector Database Connection Pool Patch
+# 
+# File: unified_premium_ohlc_collector.py
+# 
+# 1. Add imports at the top:
+from mysql.connector import pooling
+import time
+
+# 2. In __init__, replace db_config with:
+self.pool_config = {
+    'pool_name': 'ohlc_pool',
+    'pool_size': 10,
+    'pool_reset_session': True,
+    'host': 'host.docker.internal',
+    'user': 'news_collector',
+    'password': '99Rules!',
+    'database': 'crypto_prices',
+    'autocommit': False,
+    'charset': 'utf8mb4',
+    'isolation_level': 'READ COMMITTED'
+}
+
+# Create connection pool
+self.pool = pooling.MySQLConnectionPool(**self.pool_config)
+
+# 3. Replace _store_ohlc_sync method with deadlock-resistant version
+# 4. Implement batch operations with retry logic
+# 5. Add proper transaction management

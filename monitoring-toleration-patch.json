@@ -1,0 +1,19 @@
+{
+  "spec": {
+    "template": {
+      "spec": {
+        "tolerations": [
+          {
+            "key": "analytics-infrastructure",
+            "operator": "Equal",
+            "value": "true",
+            "effect": "NoSchedule"
+          }
+        ],
+        "nodeSelector": {
+          "node-role": "analytics-monitoring"
+        }
+      }
+    }
+  }
+}

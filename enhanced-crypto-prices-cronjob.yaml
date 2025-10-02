@@ -1,0 +1,35 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: enhanced-crypto-prices-collector
+  namespace: crypto-collectors
+spec:
+  schedule: "*/5 * * * *"  # Every 5 minutes
+  concurrencyPolicy: Forbid  # Don't run concurrent jobs
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: crypto-price-collector
+            image: curlimages/curl:latest
+            command: ["curl"]
+            args: 
+            - "-X"
+            - "POST"
+            - "http://enhanced-crypto-prices.crypto-collectors.svc.cluster.local:8000/collect"
+            - "-m"
+            - "120"  # 2 minute timeout
+            - "-f"   # Fail on HTTP error status codes
+          restartPolicy: OnFailure
+          nodeSelector:
+            solution-area: data-platform
+          tolerations:
+          - effect: NoSchedule
+            key: data-platform
+            operator: Equal
+            value: "true"
+      backoffLimit: 1
+      activeDeadlineSeconds: 180  # 3 minute total timeout for job

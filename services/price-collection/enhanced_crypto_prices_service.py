@@ -385,7 +385,7 @@ class EnhancedCryptoPricesService:
         }
     
     def store_prices_to_mysql(self, prices_data: List[Dict]) -> int:
-        """Store price data to MySQL hourly_data table"""
+        """Store price data to MySQL price_data_real table"""
         if not prices_data:
             return 0
         
@@ -393,13 +393,13 @@ class EnhancedCryptoPricesService:
             db = mysql.connector.connect(**self.db_config)
             cursor = db.cursor()
             
-            # Store to price_data table (not hourly_data which is a view)
+            # Store to price_data_real table (the actual table that exists)
             current_time = datetime.now()
             unix_timestamp = int(current_time.timestamp())
             
             # Insert/update price data in the correct table
             insert_query = '''
-            INSERT INTO price_data (
+            INSERT INTO price_data_real (
                 symbol, coin_id, name, timestamp, timestamp_iso, 
                 current_price, data_source, collection_interval,
                 created_at
@@ -408,7 +408,8 @@ class EnhancedCryptoPricesService:
             ON DUPLICATE KEY UPDATE
                 current_price = VALUES(current_price),
                 timestamp_iso = VALUES(timestamp_iso),
-                timestamp = VALUES(timestamp)
+                timestamp = VALUES(timestamp),
+                created_at = VALUES(created_at)
             '''
             
             insert_data = []
@@ -437,7 +438,7 @@ class EnhancedCryptoPricesService:
                 db.commit()
                 inserted_count = cursor.rowcount
                 
-                logger.info(f"💾 Stored {inserted_count} price records to MySQL price_data table")
+                logger.info(f"Stored {inserted_count} records to DB")
             else:
                 inserted_count = 0
             

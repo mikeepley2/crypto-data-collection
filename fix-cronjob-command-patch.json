@@ -1,0 +1,11 @@
+[
+  {
+    "op": "replace",
+    "path": "/spec/jobTemplate/spec/template/spec/containers/0/command",
+    "value": ["python", "materialized_updater_enhanced.py", "2", "insert-only"]
+  },
+  {
+    "op": "remove", 
+    "path": "/spec/jobTemplate/spec/template/spec/containers/0/args"
+  }
+]

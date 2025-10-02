@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: schema-check
+  namespace: crypto-collectors
+spec:
+  containers:
+  - name: schema-check
+    image: enhanced-crypto-prices:mysql-fix-v2
+    command: ["/bin/sh"]
+    args: ["-c", "python -c \"
+import sys; sys.path.append('/app');
+from shared.database_pool import execute_query;
+result = execute_query('DESCRIBE price_data_real', fetch_results=True);
+print('Current price_data_real schema:');
+for row in result: print(f'Field: {row[0]}, Type: {row[1]}, Null: {row[2]}');
+change_result = execute_query('SELECT COLUMN_NAME, DATA_TYPE, NUMERIC_PRECISION, NUMERIC_SCALE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = \\'price_data_real\\' AND COLUMN_NAME = \\'price_change_24h\\'', fetch_results=True);
+print('price_change_24h column info:');
+for row in change_result: print(f'Column: {row[0]}, Type: {row[1]}, Precision: {row[2]}, Scale: {row[3]}')
+\""]
+  restartPolicy: Never

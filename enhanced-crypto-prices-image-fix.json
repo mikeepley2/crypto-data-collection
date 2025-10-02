@@ -1,0 +1,12 @@
+[
+  {
+    "op": "replace",
+    "path": "/spec/template/spec/containers/0/image",
+    "value": "enhanced-crypto-prices:v3-fixed"
+  },
+  {
+    "op": "replace", 
+    "path": "/spec/template/spec/containers/0/imagePullPolicy",
+    "value": "Never"
+  }
+]

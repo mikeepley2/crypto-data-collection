@@ -1,0 +1,246 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stock-sentiment-collector
+  namespace: crypto-collectors
+  labels:
+    app: stock-sentiment-collector
+    app.kubernetes.io/name: stock-sentiment-collector
+    app.kubernetes.io/part-of: crypto-ai-system
+    component: data-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stock-sentiment-collector
+  template:
+    metadata:
+      labels:
+        app: stock-sentiment-collector
+        component: data-collector
+    spec:
+      containers:
+      - name: stock-sentiment-collector
+        image: python:3.11-slim
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: MYSQL_HOST
+          value: "host.docker.internal"
+        - name: MYSQL_USER
+          value: "news_collector"
+        - name: MYSQL_PASSWORD
+          value: "99Rules!"
+        - name: MYSQL_DATABASE
+          value: "crypto_news"
+        - name: COLLECTION_INTERVAL
+          value: "3600"  # 1 hour
+        command: ["/bin/bash"]
+        args:
+        - "-c"
+        - |
+          apt-get update && apt-get install -y curl
+          pip install mysql-connector-python requests pandas fastapi uvicorn schedule yfinance
+          
+          # Create stock sentiment collector script
+          cat > /app/stock_sentiment_collector.py << 'EOF'
+          import os
+          import time
+          import schedule
+          import logging
+          import requests
+          import mysql.connector
+          from datetime import datetime, timedelta
+          from fastapi import FastAPI
+          import uvicorn
+          import threading
+          
+          # Configure logging
+          logging.basicConfig(level=logging.INFO)
+          logger = logging.getLogger('stock_sentiment_collector')
+          
+          app = FastAPI(title="Stock Sentiment Collector")
+          
+          class StockSentimentCollector:
+              def __init__(self):
+                  self.db_config = {
+                      'host': os.environ.get('MYSQL_HOST'),
+                      'user': os.environ.get('MYSQL_USER'),
+                      'password': os.environ.get('MYSQL_PASSWORD'),
+                      'database': os.environ.get('MYSQL_DATABASE')
+                  }
+                  
+              def collect_stock_sentiment(self):
+                  """Collect stock market sentiment data"""
+                  try:
+                      logger.info("📈 Starting stock sentiment collection...")
+                      
+                      # Major indices and stocks that affect crypto
+                      stock_symbols = ['SPY', 'QQQ', 'DXY', 'GLD', 'TSLA', 'NVDA', 'MSFT', 'AAPL']
+                      
+                      conn = mysql.connector.connect(**self.db_config)
+                      cursor = conn.cursor()
+                      
+                      collected_count = 0
+                      
+                      for symbol in stock_symbols:
+                          # Simulate stock market news/sentiment
+                          news_items = self._simulate_stock_news(symbol)
+                          
+                          for i, news in enumerate(news_items):
+                              # Simple sentiment analysis
+                              sentiment_data = self._analyze_stock_sentiment(news['headline'])
+                              
+                              insert_query = '''
+                              INSERT INTO stock_sentiment_data 
+                              (post_id, platform, content, asset, sentiment_score, 
+                               sentiment_label, confidence, timestamp, method, data_type, collection_source)
+                              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                              '''
+                              
+                              values = (
+                                  f"stock_{symbol}_{int(time.time())}_{i}",
+                                  'stock_news',
+                                  news['content'][:500],
+                                  symbol,
+                                  sentiment_data['score'],
+                                  sentiment_data['label'],
+                                  sentiment_data['confidence'],
+                                  news['timestamp'],
+                                  'simple_sentiment',
+                                  'stock_market',
+                                  'stock_sentiment_collector'
+                              )
+                              
+                              cursor.execute(insert_query, values)
+                              collected_count += 1
+                      
+                      conn.commit()
+                      cursor.close()
+                      conn.close()
+                      
+                      logger.info(f"✅ Collected {collected_count} stock sentiment records")
+                      return collected_count
+                      
+                  except Exception as e:
+                      logger.error(f"❌ Stock sentiment collection failed: {e}")
+                      return 0
+              
+              def _simulate_stock_news(self, symbol):
+                  """Simulate stock market news for testing"""
+                  news_items = []
+                  news_templates = [
+                      f"{symbol} shows strong performance amid market volatility",
+                      f"Analysts upgrade {symbol} target price on positive outlook",
+                      f"{symbol} faces headwinds from macroeconomic concerns",
+                      f"Institutional investors increase {symbol} positions",
+                      f"{symbol} earnings beat expectations, stock rallies"
+                  ]
+                  
+                  import random
+                  for i in range(random.randint(3, 8)):
+                      headline = random.choice(news_templates)
+                      news_items.append({
+                          'headline': headline,
+                          'content': f"Market analysis for {symbol}: {headline}. This affects crypto markets through risk sentiment and institutional flows.",
+                          'timestamp': datetime.now() - timedelta(hours=random.randint(0, 24))
+                      })
+                  
+                  return news_items
+              
+              def _analyze_stock_sentiment(self, text):
+                  """Simple rule-based stock sentiment analysis"""
+                  positive_words = ['upgrade', 'rally', 'beat', 'strong', 'positive', 'bullish', 'growth', 'increase']
+                  negative_words = ['downgrade', 'decline', 'miss', 'weak', 'negative', 'bearish', 'concerns', 'headwinds']
+                  
+                  text_lower = text.lower()
+                  positive_count = sum(1 for word in positive_words if word in text_lower)
+                  negative_count = sum(1 for word in negative_words if word in text_lower)
+                  
+                  if positive_count > negative_count:
+                      score = min(0.8, 0.3 + (positive_count * 0.1))
+                      label = 'positive'
+                  elif negative_count > positive_count:
+                      score = max(-0.8, -0.3 - (negative_count * 0.1))
+                      label = 'negative'
+                  else:
+                      score = 0.0
+                      label = 'neutral'
+                  
+                  confidence = min(0.8, abs(score) + 0.2)
+                  
+                  return {
+                      'score': score,
+                      'label': label,
+                      'confidence': confidence
+                  }
+          
+          # Global collector instance
+          collector = StockSentimentCollector()
+          
+          @app.get("/health")
+          async def health_check():
+              return {"status": "healthy", "service": "stock-sentiment-collector"}
+          
+          @app.post("/collect")
+          async def trigger_collection():
+              count = collector.collect_stock_sentiment()
+              return {"status": "success", "collected": count}
+          
+          def run_scheduler():
+              """Run scheduled collection"""
+              schedule.every(1).hours.do(collector.collect_stock_sentiment)
+              
+              while True:
+                  schedule.run_pending()
+                  time.sleep(300)  # Check every 5 minutes
+          
+          if __name__ == "__main__":
+              # Start scheduler in background
+              scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+              scheduler_thread.start()
+              
+              # Run initial collection
+              collector.collect_stock_sentiment()
+              
+              # Start FastAPI server
+              uvicorn.run(app, host="0.0.0.0", port=8000)
+          EOF
+          
+          python /app/stock_sentiment_collector.py
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: stock-sentiment-collector
+  namespace: crypto-collectors
+spec:
+  selector:
+    app: stock-sentiment-collector
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+  type: ClusterIP

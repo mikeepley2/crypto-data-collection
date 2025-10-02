@@ -1,0 +1,43 @@
+{
+  "spec": {
+    "template": {
+      "spec": {
+        "containers": [
+          {
+            "name": "materialized-updater",
+            "image": "materialized-updater:v3",
+            "imagePullPolicy": "Never",
+            "env": [
+              {
+                "name": "MYSQL_HOST",
+                "value": "192.168.230.162"
+              },
+              {
+                "name": "MYSQL_USER",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "username",
+                    "name": "crypto-db-secrets"
+                  }
+                }
+              },
+              {
+                "name": "MYSQL_PASSWORD",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "password",
+                    "name": "crypto-db-secrets"
+                  }
+                }
+              },
+              {
+                "name": "MYSQL_DATABASE",
+                "value": "crypto_prices"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

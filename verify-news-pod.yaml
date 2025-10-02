@@ -1,0 +1,55 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: verify-news
+  namespace: crypto-collectors
+spec:
+  restartPolicy: Never
+  containers:
+  - name: verify-news
+    image: python:3.11-slim
+    env:
+    - name: MYSQL_HOST
+      value: "host.docker.internal"
+    - name: MYSQL_USER
+      value: "news_collector"
+    - name: MYSQL_PASSWORD
+      value: "99Rules!"
+    - name: MYSQL_DATABASE
+      value: "crypto_news"
+    command: ["sh", "-c"]
+    args:
+    - |
+      pip install mysql-connector-python
+      python << 'EOF'
+      import mysql.connector
+      import os
+      
+      conn = mysql.connector.connect(
+          host=os.environ['MYSQL_HOST'],
+          user=os.environ['MYSQL_USER'],
+          password=os.environ['MYSQL_PASSWORD'],
+          database=os.environ['MYSQL_DATABASE']
+      )
+      
+      cursor = conn.cursor()
+      
+      cursor.execute("SELECT COUNT(*) FROM news_articles")
+      total_news = cursor.fetchone()[0]
+      print(f"Total news articles: {total_news}")
+      
+      cursor.execute("SELECT DATE(published_date) as date, COUNT(*) as count FROM news_articles GROUP BY DATE(published_date) ORDER BY date DESC LIMIT 10")
+      recent_news = cursor.fetchall()
+      print("Recent news by date:")
+      for row in recent_news:
+          print(f"  {row[0]}: {row[1]} articles")
+      
+      cursor.execute("SELECT source, COUNT(*) as count FROM news_articles GROUP BY source")
+      by_source = cursor.fetchall()
+      print("News by source:")
+      for row in by_source:
+          print(f"  {row[0]}: {row[1]} articles")
+      
+      cursor.close()
+      conn.close()
+      EOF

@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sentiment-microservice
+  namespace: crypto-collectors
+  labels:
+    app: sentiment-microservice
+    app.kubernetes.io/name: sentiment-microservice
+    app.kubernetes.io/part-of: crypto-ai-system
+    component: microservice
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sentiment-microservice
+  template:
+    metadata:
+      labels:
+        app: sentiment-microservice
+        component: microservice
+    spec:
+      containers:
+      - name: sentiment-microservice
+        image: python:3.11-slim
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: RUN_MODE
+          value: "microservice"
+        - name: MYSQL_HOST
+          value: "host.docker.internal"
+        - name: MYSQL_USER
+          value: "news_collector"
+        - name: MYSQL_PASSWORD
+          value: "99Rules!"
+        - name: MYSQL_DATABASE
+          value: "crypto_news"
+        - name: OPENAI_API_KEY
+          value: "sk-placeholder"
+        - name: MOCK_CRYTOBERT
+          value: "true"
+        - name: MOCK_OPENAI
+          value: "true"
+        command: ["/bin/bash"]
+        args:
+        - "-c"
+        - |
+          apt-get update && apt-get install -y git
+          pip install fastapi uvicorn mysql-connector-python requests pandas numpy scikit-learn textblob vaderSentiment
+          git clone https://github.com/mikeepley2/crypto-data-collection.git /app
+          cd /app/backend/services/sentiment
+          python sentiment.py
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sentiment-microservice
+  namespace: crypto-collectors
+spec:
+  selector:
+    app: sentiment-microservice
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+  type: ClusterIP

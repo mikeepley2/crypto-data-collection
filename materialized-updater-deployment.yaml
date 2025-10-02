@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: materialized-updater
+  namespace: crypto-collectors
+  labels:
+    app: materialized-updater
+    component: ml-service
+spec:
+  replicas: 1  # Only one instance should run
+  selector:
+    matchLabels:
+      app: materialized-updater
+  template:
+    metadata:
+      labels:
+        app: materialized-updater
+        component: ml-service
+    spec:
+      restartPolicy: Always
+      tolerations:
+      - key: "data-platform"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      containers:
+      - name: materialized-updater
+        image: aitest-materialized-updater:dxy-fix
+        imagePullPolicy: Never
+        command: ["python", "materialized_updater_fixed.py", "--continuous", "--interval", "5"]
+        env:
+        - name: MYSQL_HOST
+          value: host.docker.internal
+        - name: MYSQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: crypto-db-secrets
+              key: username
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: crypto-db-secrets
+              key: password
+        - name: MYSQL_DATABASE
+          value: crypto_prices
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import mysql.connector; mysql.connector.connect(host='host.docker.internal', user='news_collector', password='99Rules!', database='crypto_prices').close()"
+          initialDelaySeconds: 60
+          periodSeconds: 300  # Check every 5 minutes
+        readinessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import mysql.connector; mysql.connector.connect(host='host.docker.internal', user='news_collector', password='99Rules!', database='crypto_prices').close()"
+          initialDelaySeconds: 30
+          periodSeconds: 60

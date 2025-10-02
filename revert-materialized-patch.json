@@ -1,0 +1,18 @@
+{
+  "spec": {
+    "jobTemplate": {
+      "spec": {
+        "template": {
+          "spec": {
+            "containers": [
+              {
+                "name": "materialized-updater",
+                "image": "aitest-materialized-updater:working"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

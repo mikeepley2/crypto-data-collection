@@ -1,0 +1,168 @@
+{
+  "spec": {
+    "template": {
+      "spec": {
+        "containers": [
+          {
+            "name": "api-gateway",
+            "env": [
+              {
+                "name": "MYSQL_HOST",
+                "valueFrom": {
+                  "configMapKeyRef": {
+                    "key": "MYSQL_HOST",
+                    "name": "data-collection-config"
+                  }
+                }
+              },
+              {
+                "name": "MYSQL_PORT",
+                "valueFrom": {
+                  "configMapKeyRef": {
+                    "key": "MYSQL_PORT",
+                    "name": "data-collection-config"
+                  }
+                }
+              },
+              {
+                "name": "MYSQL_DATABASE",
+                "valueFrom": {
+                  "configMapKeyRef": {
+                    "key": "MYSQL_DATABASE",
+                    "name": "data-collection-config"
+                  }
+                }
+              },
+              {
+                "name": "MYSQL_USER",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "MYSQL_USER",
+                    "name": "database-credentials"
+                  }
+                }
+              },
+              {
+                "name": "MYSQL_PASSWORD",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "MYSQL_PASSWORD",
+                    "name": "database-credentials"
+                  }
+                }
+              },
+              {
+                "name": "REDIS_HOST",
+                "valueFrom": {
+                  "configMapKeyRef": {
+                    "key": "REDIS_HOST",
+                    "name": "data-collection-config"
+                  }
+                }
+              },
+              {
+                "name": "REDIS_PORT",
+                "valueFrom": {
+                  "configMapKeyRef": {
+                    "key": "REDIS_PORT",
+                    "name": "data-collection-config"
+                  }
+                }
+              },
+              {
+                "name": "REDIS_PASSWORD",
+                "valueFrom": {
+                  "configMapKeyRef": {
+                    "key": "REDIS_PASSWORD",
+                    "name": "redis-no-auth"
+                  }
+                }
+              },
+              {
+                "name": "PORT",
+                "valueFrom": {
+                  "configMapKeyRef": {
+                    "key": "PORT",
+                    "name": "api-gateway-config"
+                  }
+                }
+              },
+              {
+                "name": "WORKERS",
+                "valueFrom": {
+                  "configMapKeyRef": {
+                    "key": "WORKERS",
+                    "name": "api-gateway-config"
+                  }
+                }
+              },
+              {
+                "name": "JWT_SECRET_KEY",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "JWT_SECRET_KEY",
+                    "name": "api-security"
+                  }
+                }
+              },
+              {
+                "name": "API_KEY_MASTER",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "API_KEY_MASTER",
+                    "name": "api-security"
+                  }
+                }
+              },
+              {
+                "name": "API_KEY_TRADING",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "API_KEY_TRADING",
+                    "name": "api-security"
+                  }
+                }
+              },
+              {
+                "name": "CORS_ORIGINS",
+                "valueFrom": {
+                  "configMapKeyRef": {
+                    "key": "CORS_ORIGINS",
+                    "name": "api-gateway-config"
+                  }
+                }
+              },
+              {
+                "name": "CORS_METHODS",
+                "valueFrom": {
+                  "configMapKeyRef": {
+                    "key": "CORS_METHODS",
+                    "name": "api-gateway-config"
+                  }
+                }
+              },
+              {
+                "name": "RATE_LIMIT_REQUESTS",
+                "valueFrom": {
+                  "configMapKeyRef": {
+                    "key": "RATE_LIMIT_REQUESTS",
+                    "name": "api-gateway-config"
+                  }
+                }
+              },
+              {
+                "name": "RATE_LIMIT_WINDOW",
+                "valueFrom": {
+                  "configMapKeyRef": {
+                    "key": "RATE_LIMIT_WINDOW",
+                    "name": "api-gateway-config"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

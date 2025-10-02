@@ -1,0 +1,334 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crypto-news-collector
+  namespace: crypto-collectors
+  labels:
+    app: crypto-news-collector
+    app.kubernetes.io/name: crypto-news-collector
+    app.kubernetes.io/part-of: crypto-ai-system
+    component: data-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: crypto-news-collector
+  template:
+    metadata:
+      labels:
+        app: crypto-news-collector
+        component: data-collector
+    spec:
+      containers:
+      - name: crypto-news-collector
+        image: python:3.11-slim
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: MYSQL_HOST
+          value: "host.docker.internal"
+        - name: MYSQL_USER
+          value: "news_collector"
+        - name: MYSQL_PASSWORD
+          value: "99Rules!"
+        - name: MYSQL_DATABASE
+          value: "crypto_news"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: COLLECTION_INTERVAL_MINUTES
+          value: "60"
+        command: ["/bin/bash"]
+        args:
+        - "-c"
+        - |
+          apt-get update && apt-get install -y curl
+          pip install mysql-connector-python requests feedparser fastapi uvicorn schedule
+          
+          # Create app directory and news collector script
+          mkdir -p /app
+          cat > /app/crypto_news_collector.py << 'EOF'
+          import os
+          import time
+          import schedule
+          import logging
+          import requests
+          import feedparser
+          import mysql.connector
+          from datetime import datetime, timedelta
+          from fastapi import FastAPI
+          import uvicorn
+          import threading
+          import hashlib
+          import json
+          import uuid
+          
+          # Configure logging
+          logging.basicConfig(level=logging.INFO)
+          logger = logging.getLogger('crypto_news_collector')
+          
+          app = FastAPI(title="Crypto News Collector")
+          
+          class CryptoNewsCollector:
+              def __init__(self):
+                  self.db_config = {
+                      'host': os.environ.get('MYSQL_HOST'),
+                      'user': os.environ.get('MYSQL_USER'),
+                      'password': os.environ.get('MYSQL_PASSWORD'),
+                      'database': os.environ.get('MYSQL_DATABASE')
+                  }
+                  
+                  # News sources - major crypto news feeds
+                  self.news_sources = [
+                      {
+                          'name': 'CoinDesk',
+                          'url': 'https://www.coindesk.com/arc/outboundfeeds/rss/',
+                          'source': 'coindesk'
+                      },
+                      {
+                          'name': 'Cointelegraph',
+                          'url': 'https://cointelegraph.com/rss',
+                          'source': 'cointelegraph'
+                      },
+                      {
+                          'name': 'CryptoSlate',
+                          'url': 'https://cryptoslate.com/feed/',
+                          'source': 'cryptoslate'
+                      },
+                      {
+                          'name': 'Decrypt',
+                          'url': 'https://decrypt.co/feed',
+                          'source': 'decrypt'
+                      }
+                  ]
+                  
+              def collect_news(self):
+                  """Collect news from all configured sources"""
+                  try:
+                      logger.info("📰 Starting crypto news collection...")
+                      
+                      conn = mysql.connector.connect(**self.db_config)
+                      cursor = conn.cursor()
+                      
+                      total_collected = 0
+                      
+                      for source in self.news_sources:
+                          try:
+                              articles = self._fetch_feed(source)
+                              stored = self._store_articles(cursor, articles, source['source'])
+                              total_collected += stored
+                              logger.info(f"✅ {source['name']}: {stored} new articles")
+                              time.sleep(2)  # Rate limiting
+                          except Exception as e:
+                              logger.error(f"❌ Failed to collect from {source['name']}: {e}")
+                      
+                      conn.commit()
+                      cursor.close()
+                      conn.close()
+                      
+                      logger.info(f"🎉 Collection complete: {total_collected} total articles")
+                      return total_collected
+                      
+                  except Exception as e:
+                      logger.error(f"❌ News collection failed: {e}")
+                      return 0
+              
+              def _fetch_feed(self, source):
+                  """Fetch articles from RSS feed"""
+                  headers = {
+                      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                  }
+                  
+                  try:
+                      feed = feedparser.parse(source['url'])
+                      articles = []
+                      
+                      for entry in feed.entries[:10]:  # Limit to 10 most recent
+                          article = {
+                              'title': entry.get('title', ''),
+                              'description': entry.get('description', ''),
+                              'url': entry.get('link', ''),
+                              'published_at': self._parse_date(entry.get('published')),
+                              'content': entry.get('content', [{}])[0].get('value', '') if entry.get('content') else entry.get('summary', ''),
+                              'author': entry.get('author', ''),
+                              'categories': [tag.get('term', '') for tag in entry.get('tags', [])]
+                          }
+                          articles.append(article)
+                      
+                      return articles
+                      
+                  except Exception as e:
+                      logger.error(f"Feed fetch error for {source['name']}: {e}")
+                      return []
+              
+              def _parse_date(self, date_str):
+                  """Parse various date formats"""
+                  if not date_str:
+                      return datetime.now()
+                  
+                  import email.utils
+                  try:
+                      return datetime(*email.utils.parsedate(date_str)[:6])
+                  except:
+                      return datetime.now()
+              
+              def _store_articles(self, cursor, articles, source):
+                  """Store articles in database"""
+                  stored_count = 0
+                  
+                  for article in articles:
+                      try:
+                          # Generate unique article ID
+                          article_id = hashlib.md5(article['url'].encode()).hexdigest()
+                          
+                          # Check if article already exists
+                          cursor.execute("SELECT article_id FROM crypto_news_data WHERE article_id = %s", (article_id,))
+                          if cursor.fetchone():
+                              continue  # Skip existing articles
+                          
+                          # Extract mentioned cryptos (simple keyword matching)
+                          mentioned_cryptos = self._extract_crypto_mentions(article['title'] + ' ' + article['content'])
+                          
+                          insert_query = '''
+                          INSERT INTO crypto_news_data (
+                              article_id, timestamp, title, description, url, published_at,
+                              source, author, content, categories, feed_category,
+                              collection_source, data_type, mentioned_cryptos, created_at
+                          ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                          '''
+                          
+                          values = (
+                              article_id,
+                              int(time.time()),
+                              article['title'][:500],
+                              article['description'][:1000],
+                              article['url'],
+                              int(article['published_at'].timestamp()),
+                              source,
+                              article['author'][:255],
+                              article['content'][:5000],
+                              json.dumps(article['categories']),
+                              'crypto_news',
+                              'crypto_news_collector',
+                              'news_article',
+                              json.dumps(mentioned_cryptos),
+                              datetime.now()
+                          )
+                          
+                          cursor.execute(insert_query, values)
+                          stored_count += 1
+                          
+                      except Exception as e:
+                          logger.error(f"Failed to store article: {e}")
+                  
+                  return stored_count
+              
+              def _extract_crypto_mentions(self, text):
+                  """Extract cryptocurrency mentions from text"""
+                  crypto_keywords = [
+                      'bitcoin', 'btc', 'ethereum', 'eth', 'cardano', 'ada',
+                      'solana', 'sol', 'polkadot', 'dot', 'chainlink', 'link',
+                      'polygon', 'matic', 'avalanche', 'avax', 'cosmos', 'atom'
+                  ]
+                  
+                  text_lower = text.lower()
+                  found_cryptos = []
+                  
+                  for crypto in crypto_keywords:
+                      if crypto in text_lower:
+                          found_cryptos.append(crypto.upper())
+                  
+                  return list(set(found_cryptos))  # Remove duplicates
+          
+          # Global collector instance
+          collector = CryptoNewsCollector()
+          
+          @app.get("/health")
+          async def health_check():
+              return {"status": "healthy", "service": "crypto-news-collector"}
+          
+          @app.post("/collect")
+          async def trigger_collection():
+              count = collector.collect_news()
+              return {"status": "success", "collected": count}
+          
+          @app.get("/metrics")
+          async def get_metrics():
+              try:
+                  conn = mysql.connector.connect(**collector.db_config)
+                  cursor = conn.cursor()
+                  
+                  cursor.execute("SELECT COUNT(*) FROM crypto_news_data WHERE DATE(created_at) = CURDATE()")
+                  today_count = cursor.fetchone()[0]
+                  
+                  cursor.execute("SELECT COUNT(*) FROM crypto_news_data WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)")
+                  last_24h = cursor.fetchone()[0]
+                  
+                  cursor.close()
+                  conn.close()
+                  
+                  return {
+                      "articles_today": today_count,
+                      "articles_24h": last_24h,
+                      "last_collection": datetime.now().isoformat()
+                  }
+              except Exception as e:
+                  return {"error": str(e)}
+          
+          def run_scheduler():
+              """Run scheduled collection"""
+              interval_minutes = int(os.environ.get('COLLECTION_INTERVAL_MINUTES', 60))
+              schedule.every(interval_minutes).minutes.do(collector.collect_news)
+              
+              while True:
+                  schedule.run_pending()
+                  time.sleep(60)
+          
+          if __name__ == "__main__":
+              # Start scheduler in background
+              scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+              scheduler_thread.start()
+              
+              # Run initial collection
+              collector.collect_news()
+              
+              # Start FastAPI server
+              uvicorn.run(app, host="0.0.0.0", port=8000)
+          EOF
+          
+          python /app/crypto_news_collector.py
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crypto-news-collector
+  namespace: crypto-collectors
+spec:
+  selector:
+    app: crypto-news-collector
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+  type: ClusterIP

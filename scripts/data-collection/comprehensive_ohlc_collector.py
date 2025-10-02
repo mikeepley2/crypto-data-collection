@@ -12,6 +12,16 @@ import json
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any
 import os
+import sys
+
+# Import shared database pool
+sys.path.append('/app/shared')
+try:
+    from shared.database_pool import get_connection_context, execute_query
+except ImportError:
+    # Fallback for local development
+    sys.path.append('../../src/shared')
+    from database_pool import get_connection_context, execute_query
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -33,13 +43,7 @@ class ComprehensiveOHLCCollector:
         self.rate_limit_delay = 0.15  # 150ms between calls
         self.last_request_time = 0
         
-        # Database connection
-        self.db_config = {
-            'host': 'localhost',
-            'user': 'news_collector',
-            'password': '99Rules!',
-            'database': 'crypto_prices'
-        }
+        # Database config removed - using shared connection pool
     
     def rate_limit(self):
         """Enforce rate limiting"""

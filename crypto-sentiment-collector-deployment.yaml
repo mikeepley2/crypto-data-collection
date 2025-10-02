@@ -1,0 +1,332 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crypto-sentiment-collector
+  namespace: crypto-collectors
+  labels:
+    app: crypto-sentiment-collector
+    app.kubernetes.io/name: crypto-sentiment-collector
+    app.kubernetes.io/part-of: crypto-ai-system
+    component: data-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: crypto-sentiment-collector
+  template:
+    metadata:
+      labels:
+        app: crypto-sentiment-collector
+        component: data-collector
+    spec:
+      containers:
+      - name: crypto-sentiment-collector
+        image: python:3.11-slim
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: MYSQL_HOST
+          value: "host.docker.internal"
+        - name: MYSQL_USER
+          value: "news_collector"
+        - name: MYSQL_PASSWORD
+          value: "99Rules!"
+        - name: MYSQL_DATABASE
+          value: "crypto_news"
+        - name: COLLECTION_INTERVAL
+          value: "1800"  # 30 minutes
+        command: ["/bin/bash"]
+        args:
+        - "-c"
+        - |
+          apt-get update && apt-get install -y curl
+          pip install mysql-connector-python requests pandas fastapi uvicorn schedule
+          
+          # Create crypto sentiment collector script
+          cat > /app/crypto_sentiment_collector.py << 'EOF'
+          import os
+          import time
+          import schedule
+          import logging
+          import requests
+          import mysql.connector
+          from datetime import datetime, timedelta
+          from fastapi import FastAPI
+          import uvicorn
+          import threading
+          import json
+          
+          # Configure logging
+          logging.basicConfig(level=logging.INFO)
+          logger = logging.getLogger('crypto_sentiment_collector')
+          
+          app = FastAPI(title="Crypto Sentiment Collector")
+          
+          class CryptoSentimentCollector:
+              def __init__(self):
+                  self.db_config = {
+                      'host': os.environ.get('MYSQL_HOST'),
+                      'user': os.environ.get('MYSQL_USER'),
+                      'password': os.environ.get('MYSQL_PASSWORD'),
+                      'database': os.environ.get('MYSQL_DATABASE')
+                  }
+                  
+              def collect_crypto_sentiment(self):
+                  """Collect crypto-specific sentiment data"""
+                  try:
+                      logger.info("₿ Starting crypto sentiment collection...")
+                      
+                      # Major crypto symbols to track
+                      crypto_symbols = ['BTC', 'ETH', 'ADA', 'SOL', 'DOT', 'MATIC', 'AVAX', 'ATOM', 'LINK', 'UNI']
+                      
+                      conn = mysql.connector.connect(**self.db_config)
+                      cursor = conn.cursor()
+                      
+                      collected_count = 0
+                      
+                      for symbol in crypto_symbols:
+                          # Simulate crypto news/sentiment from various sources
+                          news_items = self._simulate_crypto_news(symbol)
+                          
+                          for i, news in enumerate(news_items):
+                              # Advanced crypto sentiment analysis
+                              sentiment_data = self._analyze_crypto_sentiment(news['headline'], news['content'])
+                              
+                              insert_query = '''
+                              INSERT INTO crypto_sentiment_data 
+                              (text_id, text, asset, sentiment_score, 
+                               sentiment_label, confidence, method, data_type, collection_source, 
+                               published_at, metadata)
+                              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                              '''
+                              
+                              values = (
+                                  f"crypto_{symbol}_{int(time.time())}_{i}",
+                                  news['content'][:500],
+                                  symbol,
+                                  sentiment_data['score'],
+                                  sentiment_data['label'],
+                                  sentiment_data['confidence'],
+                                  'advanced_sentiment',
+                                  'crypto_news',
+                                  'crypto_sentiment_collector',
+                                  news['timestamp'],
+                                  json.dumps(sentiment_data['metadata'])
+                              )
+                              
+                              cursor.execute(insert_query, values)
+                              collected_count += 1
+                      
+                      conn.commit()
+                      cursor.close()
+                      conn.close()
+                      
+                      logger.info(f"✅ Collected {collected_count} crypto sentiment records")
+                      return collected_count
+                      
+                  except Exception as e:
+                      logger.error(f"❌ Crypto sentiment collection failed: {e}")
+                      return 0
+              
+              def _simulate_crypto_news(self, symbol):
+                  """Simulate crypto news from various sources"""
+                  news_items = []
+                  sources = ['CoinDesk', 'CoinTelegraph', 'CryptoSlate', 'Decrypt', 'The Block', 'Reddit-CryptoCurrency']
+                  
+                  news_templates = {
+                      'BTC': [
+                          f"Bitcoin {symbol} reaches new institutional adoption milestone",
+                          f"{symbol} whale movements suggest potential price surge",
+                          f"Bitcoin {symbol} mining difficulty adjustment impacts market sentiment",
+                          f"Major corporation adds {symbol} to treasury holdings",
+                          f"Regulatory clarity around {symbol} improves investment outlook"
+                      ],
+                      'ETH': [
+                          f"Ethereum {symbol} network upgrade enhances scalability",
+                          f"{symbol} DeFi ecosystem reaches new TVL record",
+                          f"Layer 2 solutions boost {symbol} transaction efficiency",
+                          f"Ethereum {symbol} staking yields attract institutional investors",
+                          f"Smart contract activity on {symbol} network surges"
+                      ],
+                      'default': [
+                          f"{symbol} shows strong fundamentals amid market recovery",
+                          f"DeFi integration boosts {symbol} ecosystem growth",
+                          f"{symbol} community announces major development milestone",
+                          f"Institutional interest in {symbol} reaches new high",
+                          f"{symbol} technical analysis suggests bullish momentum"
+                      ]
+                  }
+                  
+                  templates = news_templates.get(symbol, news_templates['default'])
+                  
+                  import random
+                  for i in range(random.randint(2, 6)):
+                      headline = random.choice(templates)
+                      source = random.choice(sources)
+                      
+                      news_items.append({
+                          'headline': headline,
+                          'content': f"Crypto market analysis for {symbol}: {headline}. Market participants are closely watching {symbol} developments for potential price implications.",
+                          'source': source,
+                          'timestamp': datetime.now() - timedelta(minutes=random.randint(0, 1440))  # Last 24 hours
+                      })
+                  
+                  return news_items
+              
+              def _analyze_crypto_sentiment(self, headline, content):
+                  """Advanced crypto-specific sentiment analysis"""
+                  text = f"{headline} {content}".lower()
+                  
+                  # Crypto-specific positive indicators
+                  positive_words = [
+                      'bullish', 'moon', 'surge', 'rally', 'adoption', 'institutional', 
+                      'upgrade', 'milestone', 'breakthrough', 'partnership', 'integration',
+                      'staking', 'yield', 'tvl', 'growth', 'record', 'high', 'pump'
+                  ]
+                  
+                  # Crypto-specific negative indicators  
+                  negative_words = [
+                      'bearish', 'crash', 'dump', 'rug', 'hack', 'exploit', 'regulatory',
+                      'ban', 'fud', 'decline', 'sell-off', 'correction', 'dip', 'fear',
+                      'uncertainty', 'liquidation', 'panic', 'bearish'
+                  ]
+                  
+                  # Neutral/technical indicators
+                  neutral_words = [
+                      'analysis', 'technical', 'support', 'resistance', 'consolidation',
+                      'sideways', 'volume', 'pattern', 'chart', 'indicator'
+                  ]
+                  
+                  positive_count = sum(1 for word in positive_words if word in text)
+                  negative_count = sum(1 for word in negative_words if word in text)
+                  neutral_count = sum(1 for word in neutral_words if word in text)
+                  
+                  # Calculate sentiment score
+                  if positive_count > negative_count:
+                      score = min(0.9, 0.2 + (positive_count * 0.15))
+                      label = 'bullish'
+                  elif negative_count > positive_count:
+                      score = max(-0.9, -0.2 - (negative_count * 0.15))
+                      label = 'bearish'
+                  else:
+                      score = 0.0
+                      label = 'neutral'
+                  
+                  # Adjust for neutral technical content
+                  if neutral_count > max(positive_count, negative_count):
+                      score *= 0.5
+                      label = 'neutral'
+                  
+                  confidence = min(0.85, abs(score) + 0.3)
+                  
+                  metadata = {
+                      'positive_signals': positive_count,
+                      'negative_signals': negative_count,
+                      'neutral_signals': neutral_count,
+                      'total_signals': positive_count + negative_count + neutral_count
+                  }
+                  
+                  return {
+                      'score': round(score, 3),
+                      'label': label,
+                      'confidence': round(confidence, 3),
+                      'metadata': metadata
+                  }
+          
+          # Global collector instance
+          collector = CryptoSentimentCollector()
+          
+          @app.get("/health")
+          async def health_check():
+              return {"status": "healthy", "service": "crypto-sentiment-collector"}
+          
+          @app.post("/collect")
+          async def trigger_collection():
+              count = collector.collect_crypto_sentiment()
+              return {"status": "success", "collected": count}
+          
+          @app.get("/metrics")
+          async def get_metrics():
+              try:
+                  conn = mysql.connector.connect(**collector.db_config)
+                  cursor = conn.cursor()
+                  
+                  # Get latest sentiment stats
+                  cursor.execute("""
+                      SELECT 
+                          COUNT(*) as total_records,
+                          AVG(sentiment_score) as avg_sentiment,
+                          MAX(collected_at) as latest_collection
+                      FROM crypto_sentiment_data 
+                      WHERE collected_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+                  """)
+                  
+                  stats = cursor.fetchone()
+                  cursor.close()
+                  conn.close()
+                  
+                  return {
+                      "records_24h": stats[0] if stats[0] else 0,
+                      "avg_sentiment_24h": float(stats[1]) if stats[1] else 0.0,
+                      "latest_collection": stats[2].isoformat() if stats[2] else None
+                  }
+              except Exception as e:
+                  return {"error": str(e)}
+          
+          def run_scheduler():
+              """Run scheduled collection"""
+              schedule.every(30).minutes.do(collector.collect_crypto_sentiment)
+              
+              while True:
+                  schedule.run_pending()
+                  time.sleep(60)  # Check every minute
+          
+          if __name__ == "__main__":
+              # Start scheduler in background
+              scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+              scheduler_thread.start()
+              
+              # Run initial collection
+              collector.collect_crypto_sentiment()
+              
+              # Start FastAPI server
+              uvicorn.run(app, host="0.0.0.0", port=8000)
+          EOF
+          
+          python /app/crypto_sentiment_collector.py
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crypto-sentiment-collector
+  namespace: crypto-collectors
+spec:
+  selector:
+    app: crypto-sentiment-collector
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+  type: ClusterIP

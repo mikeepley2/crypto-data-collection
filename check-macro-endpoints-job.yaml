@@ -1,0 +1,43 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: check-macro-endpoints
+  namespace: crypto-collectors
+spec:
+  template:
+    spec:
+      tolerations:
+      - effect: NoSchedule
+        key: data-platform
+        operator: Equal
+        value: "true"
+      - effect: NoSchedule
+        key: analytics-infrastructure
+        operator: Equal
+        value: "true"
+      - effect: NoSchedule
+        key: trading-engine
+        operator: Equal
+        value: "true"
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/control-plane
+        operator: Exists
+      containers:
+      - name: check
+        image: curlimages/curl:latest
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Checking macro economic service health..."
+          curl -s http://macro-economic.crypto-collectors.svc.cluster.local:8000/health
+          echo ""
+          
+          echo "Checking available endpoints..."
+          curl -s http://macro-economic.crypto-collectors.svc.cluster.local:8000/docs || echo "No /docs endpoint"
+          
+          echo "Trying alternative collect endpoint..."
+          curl -s -X POST http://macro-economic.crypto-collectors.svc.cluster.local:8000/collect
+      restartPolicy: Never
+  backoffLimit: 1

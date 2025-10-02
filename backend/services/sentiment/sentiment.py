@@ -23,6 +23,15 @@ import uvicorn
 import re
 import math
 
+# Import shared database pool
+sys.path.append('/app/shared')
+try:
+    from shared.database_pool import get_connection_context, execute_query
+except ImportError:
+    # Fallback for local development
+    sys.path.append('../../src/shared')
+    from database_pool import get_connection_context, execute_query
+
 # Import token optimization at the top of file
 try:
     from backend.shared.token_optimization import OpenAIClientOptimizer
@@ -606,27 +615,18 @@ except ImportError:
     MYSQL_AVAILABLE = False
     mysql = None
 
-# MySQL configuration
-MYSQL_CONFIG = {
-    'host': os.environ.get('DATABASE_HOST', 'localhost'),
-    'port': int(os.environ.get('DATABASE_PORT', 3306)),
-    'user': os.environ.get('DATABASE_USER', 'root'),
-    'password': os.environ.get('DATABASE_PASSWORD', ''),
-    'database': os.environ.get('DATABASE_NAME', 'crypto_prices'),
-    'charset': 'utf8mb4',
-    'use_unicode': True,
-    'autocommit': True
-}
+# MySQL configuration removed - using shared connection pool
 
 def get_mysql_connection():
-    """Get MySQL database connection with error handling."""
+    """Get MySQL database connection using shared pool."""
     if not MYSQL_AVAILABLE:
         logger.error("MySQL connector not available")
         return None
     
     try:
-        connection = mysql.connector.connect(**MYSQL_CONFIG)
-        logger.debug(f"✅ Connected to MySQL database: {MYSQL_CONFIG['database']}")
+        from shared.database_pool import get_connection
+        connection = get_connection()
+        logger.debug("✅ Connected to MySQL database using shared pool")
         return connection
     except Exception as e:
         logger.error(f"❌ MySQL connection error: {str(e)}")

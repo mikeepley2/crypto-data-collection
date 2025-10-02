@@ -1,0 +1,35 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: cryptoai-multinode
+nodes:
+- role: control-plane
+  kubeadmConfigPatches:
+  - |
+    kind: InitConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        node-labels: "solution-area=control-plane"
+- role: worker
+  kubeadmConfigPatches:
+  - |
+    kind: JoinConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        node-labels: "solution-area=data-platform,workload-type=data-intensive,node-role=data-collection,node-name=cryptoai-data-collection"
+        register-with-taints: "data-platform=true:NoSchedule"
+- role: worker
+  kubeadmConfigPatches:
+  - |
+    kind: JoinConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        node-labels: "solution-area=trading-engine,workload-type=ml-trading,node-role=trading-engine,node-name=cryptoai-trading-engine"
+        register-with-taints: "trading-engine=true:NoSchedule"
+- role: worker
+  kubeadmConfigPatches:
+  - |
+    kind: JoinConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        node-labels: "solution-area=analytics-infrastructure,workload-type=monitoring,node-role=analytics-monitoring,node-name=cryptoai-analytics"
+        register-with-taints: "analytics-infrastructure=true:NoSchedule"
