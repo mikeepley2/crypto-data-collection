@@ -1,6 +1,0 @@
-{
-  "data": {
-    "REDIS_HOST": "redis.crypto-data-collection.svc.cluster.local",
-    "MYSQL_HOST": "mysql.crypto-data-collection.svc.cluster.local"
-  }
-}

@@ -1,7 +1,0 @@
-[
-  {
-    "op": "replace",
-    "path": "/spec/jobTemplate/spec/template/spec/containers/0/command/2",
-    "value": "echo \"🚀 Starting enhanced price collection for ALL Coinbase symbols...\"\ncurl -X POST http://enhanced-crypto-prices.crypto-collectors.svc.cluster.local:8000/collect \\\n  -H \"Content-Type: application/json\" \\\n  -w \"\\nHTTP Status: %{http_code}\\nTime: %{time_total}s\\n\" || echo \"❌ Collection failed\"\necho \"✅ Enhanced price collection completed\"\n"
-  }
-]

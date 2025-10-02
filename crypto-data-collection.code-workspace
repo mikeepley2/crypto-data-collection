@@ -1,0 +1,169 @@
+{
+    "folders": [
+        {
+            "name": "crypto-data-collection",
+            "path": "."
+        }
+    ],
+    "settings": {
+        "python.defaultInterpreterPath": "./venv/bin/python",
+        "python.linting.enabled": true,
+        "python.linting.pylintEnabled": true,
+        "python.linting.flake8Enabled": true,
+        "python.formatting.provider": "black",
+        "python.testing.pytestEnabled": true,
+        "python.testing.pytestArgs": [
+            "tests"
+        ],
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        },
+        "files.exclude": {
+            "**/__pycache__": true,
+            "**/*.pyc": true,
+            "**/.pytest_cache": true,
+            "**/node_modules": true,
+            "**/.venv": true,
+            "**/venv": true
+        },
+        "yaml.schemas": {
+            "https://json.schemastore.org/kustomization": "k8s/**/kustomization.yaml",
+            "https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/v1.24.0-standalone-strict/all.json": "k8s/**/*.yaml"
+        },
+        "kubernetes.kubectlPath": "kubectl",
+        "kubernetes.namespace": "crypto-data-collection",
+        "terminal.integrated.defaultProfile.windows": "Command Prompt",
+        "terminal.integrated.profiles.windows": {
+            "Command Prompt": {
+                "path": "cmd.exe",
+                "args": []
+            },
+            "PowerShell": {
+                "path": "powershell.exe",
+                "args": []
+            },
+            "WSL Basic": {
+                "path": "wsl.exe"
+            }
+        },
+        "terminal.integrated.env.windows": {
+            "PS1": "$ "
+        }
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-python.python",
+            "ms-python.flake8",
+            "ms-python.black-formatter",
+            "ms-kubernetes-tools.vscode-kubernetes-tools",
+            "redhat.vscode-yaml",
+            "ms-vscode.vscode-json",
+            "formulahendry.docker-explorer",
+            "ms-vscode-remote.remote-containers",
+            "github.copilot",
+            "ms-python.pylint"
+        ]
+    },
+    "launch": {
+        "version": "0.2.0",
+        "configurations": [
+            {
+                "name": "API Gateway Debug",
+                "type": "debugpy",
+                "request": "launch",
+                "program": "${workspaceFolder}/src/api_gateway/main.py",
+                "console": "integratedTerminal",
+                "env": {
+                    "MYSQL_HOST": "host.docker.internal",
+                    "MYSQL_USER": "news_collector",
+                    "MYSQL_PASSWORD": "99Rules!",
+                    "MYSQL_DATABASE": "crypto_prices"
+                }
+            },
+            {
+                "name": "Crypto Prices Collector Debug",
+                "type": "debugpy",
+                "request": "launch",
+                "program": "${workspaceFolder}/src/collectors/crypto_prices/main.py",
+                "console": "integratedTerminal"
+            },
+            {
+                "name": "Run Tests",
+                "type": "debugpy",
+                "request": "launch",
+                "module": "pytest",
+                "args": ["tests/"],
+                "console": "integratedTerminal"
+            }
+        ]
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "Deploy to Kubernetes",
+                "type": "shell",
+                "command": "./scripts/deploy.sh",
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                }
+            },
+            {
+                "label": "Run API Gateway",
+                "type": "shell",
+                "command": "python -m uvicorn main:app --reload --port 8000",
+                "options": {
+                    "cwd": "${workspaceFolder}/src/api_gateway"
+                },
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                }
+            },
+            {
+                "label": "Run Tests",
+                "type": "shell",
+                "command": "pytest tests/ -v",
+                "group": "test",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                }
+            },
+            {
+                "label": "Validate Deployment",
+                "type": "shell",
+                "command": "./scripts/validate.sh",
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                }
+            },
+            {
+                "label": "Build Docker Images",
+                "type": "shell",
+                "command": "./scripts/build-images.sh",
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                }
+            }
+        ]
+    }
+}
