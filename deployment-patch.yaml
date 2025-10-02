@@ -1,7 +1,0 @@
-spec:
-  template:
-    spec:
-      containers:
-      - name: enhanced-crypto-prices
-        image: enhanced-crypto-prices:schema-fix
-        imagePullPolicy: Never
