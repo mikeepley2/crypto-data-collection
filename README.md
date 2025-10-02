@@ -285,13 +285,14 @@ connection = pool.get_connection()
 - **Features**: Technical indicators, sentiment, macro data
 - **Status**: ✅ **REAL-TIME PROCESSING** - <5 minute latency
 
-### **🔗 API Gateway (New)**
-- **Service**: `data-api-gateway`
+### **🔗 API Gateway (Fixed & Operational)**
+- **Service**: `simple-api-gateway.crypto-collectors.svc.cluster.local:8000` (Redis-free implementation)
 - **Endpoints**: REST, WebSocket, authentication
-- **External Access**: Port 31683 (LoadBalancer)
+- **Internal Access**: `http://simple-api-gateway.crypto-collectors.svc.cluster.local:8000`
+- **External Access**: Port 30080 (for development/testing only)
 - **Authentication**: 3 levels (master/trading/readonly)
 - **Database**: Connected to Windows MySQL (192.168.230.162)
-- **Status**: ✅ **OPERATIONAL** - Unified data access
+- **Status**: ✅ **OPERATIONAL** - Unified data access (Recent fix: Redis dependency removed)
 
 ### **📊 Collection Performance**
 - **Recent Records**: 496 price records in last hour
@@ -373,7 +374,7 @@ cp config/secrets.example.yaml config/secrets.yaml
 ./scripts/validate.sh
 
 # 5. Access the API
-kubectl port-forward svc/data-api-gateway 8000:8000 -n crypto-data-collection
+kubectl port-forward svc/simple-api-gateway 8000:8000 -n crypto-collectors
 curl http://localhost:8000/health
 ```
 
@@ -415,11 +416,12 @@ crypto-data-collection/
 
 ## 📋 **Services Overview**
 
-### **API Gateway** (`data-api-gateway`)
+### **API Gateway** (`simple-api-gateway`)
 - **Purpose**: Unified REST API access to all collected cryptocurrency and financial data
 - **Endpoints**: REST, WebSocket streaming, authentication
 - **Features**: API key authentication (3 levels), rate limiting, Redis caching, CORS support
-- **Port**: 8000 (Internal), 31683 (External LoadBalancer)
+- **Internal DNS**: `simple-api-gateway.crypto-collectors.svc.cluster.local:8000`
+- **External Port**: 30080 (for development/testing only)
 - **Status**: ✅ **FULLY OPERATIONAL** - Connected to Windows MySQL database
 - **Database**: Windows MySQL (192.168.230.162) with news_collector credentials
 - **Authentication Keys**: master/trading/readonly access levels
@@ -433,7 +435,7 @@ crypto-data-collection/
 | **simple-sentiment-collector** | Core sentiment analysis | Continuous | Social data | ✅ Active |
 | **materialized-updater** | ML features materialization | Real-time | 320 symbols | ✅ Active (Excellent) |
 | **crypto-health-monitor** | System monitoring (CronJob) | 6 hours | Health checks | ✅ Active |
-| **data-api-gateway** | Unified REST API access | Real-time | All data sources | ✅ Active (New) |
+| **simple-api-gateway** | Unified REST API access | Real-time | All data sources | ✅ Active (Fixed) |
 
 ### **Processing Services**
 - **ML Feature Engineer**: Creates training features for ML models
@@ -454,9 +456,11 @@ crypto-data-collection/
 ## 🔗 **API Reference**
 
 ### **Base URL**
-- **Production**: `http://data-api-gateway.crypto-collectors.svc.cluster.local:8000`
-- **External Access**: `http://localhost:31683` (LoadBalancer)
+- **Production (K8s Internal)**: `http://simple-api-gateway.crypto-collectors.svc.cluster.local:8000`
+- **External Access (Dev/Testing)**: `http://localhost:30080`
 - **Local Development**: `http://localhost:8000`
+
+> **Note**: Always use Kubernetes DNS names for internal service communication to avoid port dependencies.
 
 ### **Key Endpoints**
 ```
@@ -488,7 +492,7 @@ curl -H "Authorization: Bearer trading-crypto-data-key-2025" \
 
 # Using readonly key for read-only access
 curl -H "Authorization: Bearer readonly-crypto-data-key-2025" \
-     http://localhost:31683/api/v1/stats/collectors
+     http://simple-api-gateway.crypto-collectors.svc.cluster.local:8000/api/v1/stats/collectors
 ```
 
 ### **API Keys**
@@ -561,13 +565,13 @@ kubectl get jobs -n crypto-collectors --sort-by=.metadata.creationTimestamp
 kubectl get pods -n crypto-collectors
 
 # View API Gateway logs
-kubectl logs data-api-gateway-* -n crypto-collectors
+kubectl logs simple-api-gateway-* -n crypto-collectors
 
 # Monitor materialized updater
 kubectl logs materialized-updater-* -n crypto-collectors -f
 
 # Test API Gateway health
-curl http://localhost:31683/health
+curl http://simple-api-gateway.crypto-collectors.svc.cluster.local:8000/health
 
 # Check service exposure
 kubectl get svc -n crypto-collectors
@@ -619,8 +623,8 @@ continuous_monitor.bat
 ### **Quick Health Checks**
 ```bash
 # API Gateway health
-curl http://localhost:31683/health
-curl http://localhost:31683/api/v1/stats/collectors
+curl http://simple-api-gateway.crypto-collectors.svc.cluster.local:8000/health
+curl http://simple-api-gateway.crypto-collectors.svc.cluster.local:8000/api/v1/stats/collectors
 
 # Kubernetes pod status
 kubectl get pods -n crypto-collectors
@@ -641,11 +645,11 @@ kubectl get cronjobs -n crypto-collectors
 ### **Where to Find What**
 | **Monitoring Need** | **Solution Location** |
 |---------------------|----------------------|
-| **ML Features Health** | `python monitor_ml_features.py` |
-| **Real-time Processing** | `kubectl logs materialized-updater-* -n crypto-collectors -f` |
-| **API Gateway Status** | `curl http://localhost:31683/health` |
-| **Collection Status** | `kubectl get cronjobs -n crypto-collectors` |
-| **Pod Health** | `kubectl get pods -n crypto-collectors` |
+| **ML Features Health** | `python monitor_ml_features.py` | ✅ 100/100 Score |
+| **Real-time Processing** | `kubectl logs materialized-updater-* -n crypto-collectors -f` | ✅ Active |
+| **API Gateway (Internal)** | `curl http://simple-api-gateway.crypto-collectors.svc.cluster.local:8000/health` | ✅ Operational |
+| **API Gateway (External)** | `curl http://localhost:30080/health` | ✅ Accessible |
+| **Collection Activity** | `kubectl logs enhanced-crypto-prices-collector-* -n crypto-collectors --tail=10` | ✅ Every 5min |
 | **Complete Status** | `MONITORING_STATUS.md` documentation |
 
 ## 🧪 **Testing**

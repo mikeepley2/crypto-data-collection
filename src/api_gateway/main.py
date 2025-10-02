@@ -37,20 +37,44 @@ logger = logging.getLogger(__name__)
 
 # Configuration from environment variables
 DATABASE_CONFIG = {
-    "host": os.getenv("MYSQL_HOST", "mysql-data-collection"),
+    "host": os.getenv("MYSQL_HOST", "192.168.230.162"),  # External Windows MySQL IP
     "port": int(os.getenv("MYSQL_PORT", "3306")),
-    "user": os.getenv("MYSQL_USER", "data_collector"),
-    "password": os.getenv("MYSQL_PASSWORD", "password"),
-    "db": os.getenv("MYSQL_DATABASE", "crypto_data_collection"),
+    "user": os.getenv("MYSQL_USER", "news_collector"),
+    "password": os.getenv("MYSQL_PASSWORD", "99Rules!"),
+    "db": os.getenv("MYSQL_DATABASE", "crypto_prices"),
     "charset": "utf8mb4",
     "autocommit": True,
 }
 
 REDIS_CONFIG = {
-    "host": os.getenv("REDIS_HOST", "redis-data-collection"),
+    "host": os.getenv(
+        "REDIS_HOST", "redis-data-collection.crypto-collectors.svc.cluster.local"
+    ),
     "port": int(os.getenv("REDIS_PORT", "6379")),
-    "password": os.getenv("REDIS_PASSWORD", "password"),
+    "password": os.getenv("REDIS_PASSWORD", None),  # No password for internal Redis
     "decode_responses": True,
+    "socket_connect_timeout": 5,
+    "socket_timeout": 5,
+}
+
+# Internal Service URLs (Kubernetes DNS)
+SERVICE_URLS = {
+    "enhanced_crypto_prices": os.getenv(
+        "ENHANCED_CRYPTO_PRICES_URL",
+        "enhanced-crypto-prices.crypto-collectors.svc.cluster.local:8000",
+    ),
+    "news_collector": os.getenv(
+        "NEWS_COLLECTOR_URL",
+        "crypto-news-collector.crypto-collectors.svc.cluster.local:8000",
+    ),
+    "sentiment_collector": os.getenv(
+        "SENTIMENT_COLLECTOR_URL",
+        "simple-sentiment-collector.crypto-collectors.svc.cluster.local:8000",
+    ),
+    "materialized_updater": os.getenv(
+        "MATERIALIZED_UPDATER_URL",
+        "materialized-updater.crypto-collectors.svc.cluster.local:8000",
+    ),
 }
 
 # API Configuration
@@ -146,17 +170,27 @@ async def lifespan(app: FastAPI):
         logger.info("MySQL connection pool initialized")
 
         # Initialize Redis client
-        redis_client = aioredis.from_url(
-            f"redis://:{REDIS_CONFIG['password']}@{REDIS_CONFIG['host']}:{REDIS_CONFIG['port']}/0",
-            decode_responses=True,
-        )
-        await redis_client.ping()
-        logger.info("Redis connection established")
+        try:
+            redis_client = aioredis.Redis(
+                host=REDIS_CONFIG["host"],
+                port=REDIS_CONFIG["port"],
+                password=REDIS_CONFIG["password"] if REDIS_CONFIG["password"] else None,
+                decode_responses=REDIS_CONFIG["decode_responses"],
+                socket_connect_timeout=REDIS_CONFIG["socket_connect_timeout"],
+                socket_timeout=REDIS_CONFIG["socket_timeout"],
+            )
+            await redis_client.ping()
+            logger.info("✅ Redis connection established successfully")
+        except Exception as redis_error:
+            logger.warning(
+                f"⚠️ Redis not available, running without cache: {redis_error}"
+            )
+            redis_client = None
 
         yield
 
     except Exception as e:
-        logger.error(f"Failed to initialize connections: {e}")
+        logger.error(f"Failed to initialize MySQL connection: {e}")
         raise
     finally:
         # Cleanup connections
@@ -209,6 +243,47 @@ async def get_redis_client():
     if not redis_client:
         raise HTTPException(status_code=503, detail="Redis connection not available")
     return redis_client
+
+
+# Cache utilities
+async def get_cached_data(key: str, default=None):
+    """Get data from Redis cache"""
+    if not redis_client:
+        return default
+    try:
+        cached = await redis_client.get(key)
+        if cached:
+            return json.loads(cached)
+        return default
+    except Exception as e:
+        logger.warning(f"Cache read error for key {key}: {e}")
+        return default
+
+
+async def set_cached_data(key: str, data: Any, ttl: int = 300):
+    """Set data in Redis cache with TTL"""
+    if not redis_client:
+        return False
+    try:
+        await redis_client.setex(key, ttl, json.dumps(data, default=str))
+        return True
+    except Exception as e:
+        logger.warning(f"Cache write error for key {key}: {e}")
+        return False
+
+
+async def invalidate_cache_pattern(pattern: str):
+    """Invalidate cache entries matching pattern"""
+    if not redis_client:
+        return 0
+    try:
+        keys = await redis_client.keys(pattern)
+        if keys:
+            return await redis_client.delete(*keys)
+        return 0
+    except Exception as e:
+        logger.warning(f"Cache invalidation error for pattern {pattern}: {e}")
+        return 0
 
 
 # API Routes

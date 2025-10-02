@@ -3,15 +3,24 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: data-collection-config
-  namespace: crypto-data-collection
+  namespace: crypto-collectors
 data:
-  # Database Configuration - Use Existing Windows Databases
-  MYSQL_HOST: "host.docker.internal"
+  # Database Configuration - Use Existing Windows Databases (External)
+  MYSQL_HOST: "192.168.230.162"  # External Windows MySQL IP
   MYSQL_PORT: "3306"
   MYSQL_DATABASE: "crypto_prices"
   MYSQL_USER: "news_collector"
-  REDIS_HOST: "host.docker.internal"
+  
+  # Redis Configuration - Internal Kubernetes Service
+  REDIS_HOST: "redis-data-collection.crypto-collectors.svc.cluster.local"
   REDIS_PORT: "6379"
+  
+  # Internal Service DNS Names
+  API_GATEWAY_URL: "simple-api-gateway.crypto-collectors.svc.cluster.local:8000"
+  ENHANCED_CRYPTO_PRICES_URL: "enhanced-crypto-prices.crypto-collectors.svc.cluster.local:8000"
+  NEWS_COLLECTOR_URL: "crypto-news-collector.crypto-collectors.svc.cluster.local:8000"
+  SENTIMENT_COLLECTOR_URL: "simple-sentiment-collector.crypto-collectors.svc.cluster.local:8000"
+  MATERIALIZED_UPDATER_URL: "materialized-updater.crypto-collectors.svc.cluster.local:8000"
   # Trading Database Configuration
   TRADING_MYSQL_DATABASE: "crypto_transactions"
   STOCK_MYSQL_DATABASE: "stock_market_news"
@@ -49,7 +58,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: logging-config
-  namespace: crypto-data-collection
+  namespace: crypto-collectors
 data:
   log_level: "INFO"
   log_format: "json"
@@ -61,7 +70,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: api-gateway-config
-  namespace: crypto-data-collection
+  namespace: crypto-collectors
 data:
   # API Gateway Settings
   PORT: "8000"
@@ -88,7 +97,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: monitoring-config
-  namespace: crypto-data-collection
+  namespace: crypto-collectors
 data:
   # Prometheus Settings
   PROMETHEUS_PORT: "9090"

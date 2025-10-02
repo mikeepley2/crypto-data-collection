@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: data-api-gateway
-  namespace: crypto-data-collection
+  namespace: crypto-collectors
   labels:
     app: data-api-gateway
     component: api
@@ -155,7 +155,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: data-api-gateway
-  namespace: crypto-data-collection
+  namespace: crypto-collectors
   labels:
     app: data-api-gateway
     component: api
@@ -174,7 +174,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: data-api-gateway-hpa
-  namespace: crypto-data-collection
+  namespace: crypto-collectors
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
@@ -201,7 +201,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: data-api-gateway-netpol
-  namespace: crypto-data-collection
+  namespace: crypto-collectors
 spec:
   podSelector:
     matchLabels:
