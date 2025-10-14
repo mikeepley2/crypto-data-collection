@@ -24,78 +24,82 @@ import aiohttp
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 class DatabaseCryptoDefinitions:
     """Database-driven crypto definitions"""
-    
+
     def __init__(self):
+        import os
+
         self.db_config = {
-            'host': 'host.docker.internal',
-            'user': 'news_collector',
-            'password': '99Rules!',
-            'database': 'crypto_prices'
+            "host": os.getenv("MYSQL_HOST", "host.docker.internal"),
+            "user": os.getenv("MYSQL_USER", "news_collector"),
+            "password": os.getenv("MYSQL_PASSWORD", "99Rules!"),
+            "database": os.getenv("MYSQL_DATABASE", "crypto_prices"),
         }
         self._symbol_cache = {}
         self._cache_timestamp = 0
         self._cache_ttl = 3600  # 1 hour cache
-        
+
         # Fallback definitions for essential symbols
         self.fallback_coingecko_ids = {
-            'BTC': 'bitcoin',
-            'ETH': 'ethereum',
-            'ADA': 'cardano',
-            'SOL': 'solana',
-            'DOT': 'polkadot',
-            'LINK': 'chainlink',
-            'DOGE': 'dogecoin',
-            'XRP': 'ripple',
-            'UNI': 'uniswap',
-            'AAVE': 'aave',
-            'ALGO': 'algorand',
-            'APT': 'aptos',
-            'ARB': 'arbitrum',
-            'ATOM': 'cosmos',
-            'AVAX': 'avalanche-2',
-            'BNB': 'binancecoin',
-            'COMP': 'compound-governance-token',
-            'CRV': 'curve-dao-token',
-            'FIL': 'filecoin',
-            'ICP': 'internet-computer',
-            'LTC': 'litecoin',
-            'MATIC': 'polygon',
-            'NEAR': 'near',
-            'OP': 'optimism',
-            'SHIB': 'shiba-inu',
-            'SUSHI': 'sushi',
-            'YFI': 'yearn-finance',
-            'ZEC': 'zcash',
-            'BCH': 'bitcoin-cash',
-            'TRX': 'tron',
-            'MKR': 'maker',
-            'BAL': 'balancer',
-            'SNX': 'synthetix',
-            'DASH': 'dash',
-            'EOS': 'eos',
-            'XLM': 'stellar',
-            'XTZ': 'tezos',
-            'VET': 'vechain',
-            'XMR': 'monero'
+            "BTC": "bitcoin",
+            "ETH": "ethereum",
+            "ADA": "cardano",
+            "SOL": "solana",
+            "DOT": "polkadot",
+            "LINK": "chainlink",
+            "DOGE": "dogecoin",
+            "XRP": "ripple",
+            "UNI": "uniswap",
+            "AAVE": "aave",
+            "ALGO": "algorand",
+            "APT": "aptos",
+            "ARB": "arbitrum",
+            "ATOM": "cosmos",
+            "AVAX": "avalanche-2",
+            "BNB": "binancecoin",
+            "COMP": "compound-governance-token",
+            "CRV": "curve-dao-token",
+            "FIL": "filecoin",
+            "ICP": "internet-computer",
+            "LTC": "litecoin",
+            "MATIC": "polygon",
+            "NEAR": "near",
+            "OP": "optimism",
+            "SHIB": "shiba-inu",
+            "SUSHI": "sushi",
+            "YFI": "yearn-finance",
+            "ZEC": "zcash",
+            "BCH": "bitcoin-cash",
+            "TRX": "tron",
+            "MKR": "maker",
+            "BAL": "balancer",
+            "SNX": "synthetix",
+            "DASH": "dash",
+            "EOS": "eos",
+            "XLM": "stellar",
+            "XTZ": "tezos",
+            "VET": "vechain",
+            "XMR": "monero",
         }
-    
+
     def _is_cache_valid(self) -> bool:
         """Check if symbol cache is still valid"""
         return (time.time() - self._cache_timestamp) < self._cache_ttl
-    
+
     def get_coinbase_symbols(self) -> List[str]:
         """Get ALL Coinbase-supported symbols from database"""
         if self._is_cache_valid() and self._symbol_cache:
             logger.debug(f"Using cached symbols: {len(self._symbol_cache)} symbols")
             return list(self._symbol_cache.keys())
-        
+
         try:
             db = mysql.connector.connect(**self.db_config)
             cursor = db.cursor()
-            
-            cursor.execute('''
+
+            cursor.execute(
+                """
                 SELECT symbol, coingecko_id, name 
                 FROM crypto_assets 
                 WHERE coinbase_supported = 1
@@ -103,61 +107,67 @@ class DatabaseCryptoDefinitions:
                 AND symbol IS NOT NULL
                 AND symbol != ''
                 ORDER BY symbol
-            ''')
-            
+            """
+            )
+
             symbols = {}
             for symbol, coingecko_id, name in cursor.fetchall():
                 symbols[symbol] = {
-                    'coingecko_id': coingecko_id or self.fallback_coingecko_ids.get(symbol, symbol.lower()),
-                    'name': name or symbol
+                    "coingecko_id": coingecko_id
+                    or self.fallback_coingecko_ids.get(symbol, symbol.lower()),
+                    "name": name or symbol,
                 }
-            
+
             cursor.close()
             db.close()
-            
+
             # Update cache
             self._symbol_cache = symbols
             self._cache_timestamp = time.time()
-            
-            logger.info(f"Retrieved {len(symbols)} Coinbase-supported symbols from database")
+
+            logger.info(
+                f"Retrieved {len(symbols)} Coinbase-supported symbols from database"
+            )
             return list(symbols.keys())
-            
+
         except Exception as e:
             logger.error(f"Error getting Coinbase symbols from database: {e}")
             # Fallback to essential symbols
             fallback_symbols = list(self.fallback_coingecko_ids.keys())
             logger.warning(f"Using fallback symbols: {len(fallback_symbols)} symbols")
             return fallback_symbols
-    
+
     def get_coingecko_id(self, symbol: str) -> str:
         """Get CoinGecko ID for a symbol"""
         if not self._is_cache_valid() or not self._symbol_cache:
             self.get_coinbase_symbols()  # Refresh cache
-        
+
         if symbol in self._symbol_cache:
-            return self._symbol_cache[symbol]['coingecko_id']
-        
+            return self._symbol_cache[symbol]["coingecko_id"]
+
         # Fallback
         return self.fallback_coingecko_ids.get(symbol, symbol.lower())
-    
+
     def get_coin_name(self, symbol: str) -> str:
         """Get coin name for a symbol"""
         if not self._is_cache_valid() or not self._symbol_cache:
             self.get_coinbase_symbols()  # Refresh cache
-        
+
         if symbol in self._symbol_cache:
-            return self._symbol_cache[symbol]['name']
-        
+            return self._symbol_cache[symbol]["name"]
+
         # Fallback
-        return symbol.replace('_', ' ').title()
-    
+        return symbol.replace("_", " ").title()
+
     def get_all_coingecko_ids(self) -> List[str]:
         """Get all CoinGecko IDs"""
         symbols = self.get_coinbase_symbols()
         return [self.get_coingecko_id(symbol) for symbol in symbols]
 
+
 # Initialize database-driven crypto definitions
 crypto_definitions = DatabaseCryptoDefinitions()
+
 
 # Response Models
 class PriceResponse(BaseModel):
@@ -170,6 +180,7 @@ class PriceResponse(BaseModel):
     market_cap: Optional[float] = None
     last_updated: str
 
+
 class MultiPriceResponse(BaseModel):
     prices: List[PriceResponse]
     total_count: int
@@ -179,6 +190,7 @@ class MultiPriceResponse(BaseModel):
     cache_hits: int
     api_calls: int
 
+
 class HealthResponse(BaseModel):
     status: str
     cache_entries: int
@@ -186,6 +198,7 @@ class HealthResponse(BaseModel):
     api_calls_today: int
     supported_symbols: int
     timestamp: str
+
 
 class EnhancedCryptoPricesService:
     def __init__(self):
@@ -196,30 +209,32 @@ class EnhancedCryptoPricesService:
         self.last_api_call = None
         self.api_calls_today = 0
         self.daily_reset = datetime.now().date()
-        
+
         # MySQL storage for price data
+        import os
+
         self.db_config = {
-            'host': 'host.docker.internal',
-            'user': 'news_collector',
-            'password': '99Rules!',
-            'database': 'crypto_prices'
+            "host": os.getenv("MYSQL_HOST", "host.docker.internal"),
+            "user": os.getenv("MYSQL_USER", "news_collector"),
+            "password": os.getenv("MYSQL_PASSWORD", "99Rules!"),
+            "database": os.getenv("MYSQL_DATABASE", "crypto_prices"),
         }
-    
+
     def _is_cache_valid(self, key: str) -> bool:
         """Check if cache entry is still valid"""
         if key not in self.cache:
             return False
-        
-        entry_time = self.cache[key].get('timestamp', 0)
+
+        entry_time = self.cache[key].get("timestamp", 0)
         return (time.time() - entry_time) < self.cache_ttl
-    
+
     def _reset_daily_counters(self):
         """Reset daily API call counter if needed"""
         today = datetime.now().date()
         if today != self.daily_reset:
             self.api_calls_today = 0
             self.daily_reset = today
-    
+
     async def get_current_price_coinbase(self, symbol: str) -> Optional[float]:
         """Get current price from Coinbase API"""
         try:
@@ -228,29 +243,33 @@ class EnhancedCryptoPricesService:
                 async with session.get(url, timeout=10) as response:
                     if response.status == 200:
                         data = await response.json()
-                        price = float(data['data']['rates']['USD'])
+                        price = float(data["data"]["rates"]["USD"])
                         return price
                     elif response.status == 404:
                         # Symbol not supported by Coinbase
                         return None
                     else:
-                        logger.warning(f"Coinbase API error for {symbol}: {response.status}")
+                        logger.warning(
+                            f"Coinbase API error for {symbol}: {response.status}"
+                        )
                         return None
         except Exception as e:
             logger.debug(f"Coinbase API failed for {symbol}: {e}")
             return None
-    
-    async def get_coingecko_price(self, coin_id: str, vs_currency: str = "usd") -> Optional[Dict]:
+
+    async def get_coingecko_price(
+        self, coin_id: str, vs_currency: str = "usd"
+    ) -> Optional[Dict]:
         """Get price data from CoinGecko API"""
         try:
             url = f"{self.base_url}/simple/price"
             params = {
-                'ids': coin_id,
-                'vs_currencies': vs_currency,
-                'include_24hr_change': 'true',
-                'include_market_cap': 'true'
+                "ids": coin_id,
+                "vs_currencies": vs_currency,
+                "include_24hr_change": "true",
+                "include_market_cap": "true",
             }
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, params=params, timeout=15) as response:
                     if response.status == 200:
@@ -264,141 +283,146 @@ class EnhancedCryptoPricesService:
                         await asyncio.sleep(2)  # Wait before retry
                         return None
                     else:
-                        logger.warning(f"CoinGecko API error for {coin_id}: {response.status}")
+                        logger.warning(
+                            f"CoinGecko API error for {coin_id}: {response.status}"
+                        )
                         return None
         except Exception as e:
             logger.debug(f"CoinGecko API failed for {coin_id}: {e}")
             return None
-    
-    async def get_price_for_symbol(self, symbol: str, vs_currency: str = "usd") -> Optional[Dict]:
+
+    async def get_price_for_symbol(
+        self, symbol: str, vs_currency: str = "usd"
+    ) -> Optional[Dict]:
         """Get price data for a specific symbol using multiple sources"""
         cache_key = f"{symbol}_{vs_currency}"
-        
+
         # Check cache first
         if self._is_cache_valid(cache_key):
-            return self.cache[cache_key]['data']
-        
+            return self.cache[cache_key]["data"]
+
         # Get CoinGecko ID for this symbol
         coingecko_id = crypto_definitions.get_coingecko_id(symbol)
         coin_name = crypto_definitions.get_coin_name(symbol)
-        
+
         price_data = None
-        
+
         # Try CoinGecko first
         if coingecko_id:
             cg_data = await self.get_coingecko_price(coingecko_id, vs_currency)
             if cg_data:
                 price_data = {
-                    'coin_id': coingecko_id,
-                    'symbol': symbol,
-                    'name': coin_name,
-                    'current_price': cg_data.get(vs_currency, 0),
-                    'price_change_24h': cg_data.get(f'{vs_currency}_24h_change'),
-                    'price_change_percentage_24h': cg_data.get(f'{vs_currency}_24h_change'),
-                    'market_cap': cg_data.get(f'{vs_currency}_market_cap'),
-                    'last_updated': datetime.now().isoformat(),
-                    'data_source': 'coingecko'
+                    "coin_id": coingecko_id,
+                    "symbol": symbol,
+                    "name": coin_name,
+                    "current_price": cg_data.get(vs_currency, 0),
+                    "price_change_24h": cg_data.get(f"{vs_currency}_24h_change"),
+                    "price_change_percentage_24h": cg_data.get(
+                        f"{vs_currency}_24h_change"
+                    ),
+                    "market_cap": cg_data.get(f"{vs_currency}_market_cap"),
+                    "last_updated": datetime.now().isoformat(),
+                    "data_source": "coingecko",
                 }
-        
+
         # Fallback to Coinbase if CoinGecko fails
         if not price_data:
             coinbase_price = await self.get_current_price_coinbase(symbol)
             if coinbase_price:
                 price_data = {
-                    'coin_id': coingecko_id or symbol.lower(),
-                    'symbol': symbol,
-                    'name': coin_name,
-                    'current_price': coinbase_price,
-                    'price_change_24h': None,
-                    'price_change_percentage_24h': None,
-                    'market_cap': None,
-                    'last_updated': datetime.now().isoformat(),
-                    'data_source': 'coinbase'
+                    "coin_id": coingecko_id or symbol.lower(),
+                    "symbol": symbol,
+                    "name": coin_name,
+                    "current_price": coinbase_price,
+                    "price_change_24h": None,
+                    "price_change_percentage_24h": None,
+                    "market_cap": None,
+                    "last_updated": datetime.now().isoformat(),
+                    "data_source": "coinbase",
                 }
-        
+
         # Cache the result
         if price_data:
-            self.cache[cache_key] = {
-                'data': price_data,
-                'timestamp': time.time()
-            }
-        
+            self.cache[cache_key] = {"data": price_data, "timestamp": time.time()}
+
         return price_data
-    
+
     async def get_current_prices_all_symbols(self, vs_currency: str = "usd") -> Dict:
         """Get current prices for ALL Coinbase-supported symbols"""
         start_time = time.time()
         self._reset_daily_counters()
-        
+
         # Get all symbols from database
         symbols = crypto_definitions.get_coinbase_symbols()
         logger.info(f"Fetching prices for {len(symbols)} symbols...")
-        
+
         # Process symbols in batches to avoid overwhelming APIs
         batch_size = 25
         all_prices = []
         cache_hits = 0
         api_calls = 0
-        
+
         for i in range(0, len(symbols), batch_size):
-            batch = symbols[i:i + batch_size]
-            logger.info(f"Processing batch {i//batch_size + 1}/{(len(symbols) + batch_size - 1)//batch_size}: {batch[:5]}...")
-            
+            batch = symbols[i : i + batch_size]
+            logger.info(
+                f"Processing batch {i//batch_size + 1}/{(len(symbols) + batch_size - 1)//batch_size}: {batch[:5]}..."
+            )
+
             # Process batch concurrently but with rate limiting
             batch_tasks = []
             for symbol in batch:
                 batch_tasks.append(self.get_price_for_symbol(symbol, vs_currency))
-            
+
             # Execute batch with small delay between batches
             batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
-            
+
             for result in batch_results:
                 if isinstance(result, Exception):
                     logger.warning(f"Error in batch processing: {result}")
                     continue
-                
+
                 if result:
                     all_prices.append(result)
-                    if result.get('data_source') == 'cache':
+                    if result.get("data_source") == "cache":
                         cache_hits += 1
                     else:
                         api_calls += 1
-            
+
             # Rate limiting between batches
             if i + batch_size < len(symbols):
                 await asyncio.sleep(1)  # 1 second between batches
-        
+
         processing_time = (time.time() - start_time) * 1000
-        
+
         logger.info(f"Collected prices for {len(all_prices)}/{len(symbols)} symbols")
-        
+
         return {
-            'prices': all_prices,
-            'total_count': len(all_prices),
-            'vs_currency': vs_currency,
-            'timestamp': datetime.now().isoformat(),
-            'processing_time_ms': processing_time,
-            'cache_hits': cache_hits,
-            'api_calls': api_calls,
-            'symbols_requested': len(symbols),
-            'symbols_successful': len(all_prices)
+            "prices": all_prices,
+            "total_count": len(all_prices),
+            "vs_currency": vs_currency,
+            "timestamp": datetime.now().isoformat(),
+            "processing_time_ms": processing_time,
+            "cache_hits": cache_hits,
+            "api_calls": api_calls,
+            "symbols_requested": len(symbols),
+            "symbols_successful": len(all_prices),
         }
-    
+
     def store_prices_to_mysql(self, prices_data: List[Dict]) -> int:
         """Store price data to MySQL price_data_real table"""
         if not prices_data:
             return 0
-        
+
         try:
             db = mysql.connector.connect(**self.db_config)
             cursor = db.cursor()
-            
+
             # Store to price_data_real table (the actual table that exists)
             current_time = datetime.now()
             unix_timestamp = int(current_time.timestamp())
-            
+
             # Insert/update price data in the correct table
-            insert_query = '''
+            insert_query = """
             INSERT INTO price_data_real (
                 symbol, coin_id, name, timestamp, timestamp_iso, 
                 current_price, data_source, collection_interval,
@@ -410,49 +434,53 @@ class EnhancedCryptoPricesService:
                 timestamp_iso = VALUES(timestamp_iso),
                 timestamp = VALUES(timestamp),
                 created_at = VALUES(created_at)
-            '''
-            
+            """
+
             insert_data = []
             for price_info in prices_data:
-                price = price_info.get('current_price', 0)
-                symbol = price_info.get('symbol')
+                price = price_info.get("current_price", 0)
+                symbol = price_info.get("symbol")
                 if price > 0 and symbol:
                     # Get coin_id from our definitions
                     coin_id = crypto_definitions.get_coingecko_id(symbol)
                     coin_name = crypto_definitions.get_coin_name(symbol)
-                    
-                    insert_data.append((
-                        symbol,
-                        coin_id,
-                        coin_name,
-                        unix_timestamp,
-                        current_time,
-                        float(price),
-                        'enhanced_crypto_prices',
-                        'realtime',
-                        current_time
-                    ))
-            
+
+                    insert_data.append(
+                        (
+                            symbol,
+                            coin_id,
+                            coin_name,
+                            unix_timestamp,
+                            current_time,
+                            float(price),
+                            "enhanced_crypto_prices",
+                            "realtime",
+                            current_time,
+                        )
+                    )
+
             if insert_data:
                 cursor.executemany(insert_query, insert_data)
                 db.commit()
                 inserted_count = cursor.rowcount
-                
+
                 logger.info(f"Stored {inserted_count} records to DB")
             else:
                 inserted_count = 0
-            
+
             cursor.close()
             db.close()
-            
+
             return inserted_count
-            
+
         except Exception as e:
             logger.error(f"Error storing prices to MySQL: {e}")
             return 0
 
+
 # Initialize service
 enhanced_service = EnhancedCryptoPricesService()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -464,28 +492,31 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("⚡ Shutting down Enhanced Crypto Prices Service")
 
+
 # Create FastAPI app
 app = FastAPI(
     title="Enhanced Cryptocurrency Prices Service",
     description="Enhanced microservice supporting ALL Coinbase-compatible symbols",
     version="2.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
+
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint"""
     enhanced_service._reset_daily_counters()
     symbols = crypto_definitions.get_coinbase_symbols()
-    
+
     return HealthResponse(
         status="healthy",
         cache_entries=len(enhanced_service.cache),
         last_api_call=enhanced_service.last_api_call,
         api_calls_today=enhanced_service.api_calls_today,
         supported_symbols=len(symbols),
-        timestamp=datetime.now().isoformat()
+        timestamp=datetime.now().isoformat(),
     )
+
 
 @app.get("/status")
 async def get_status():
@@ -493,7 +524,7 @@ async def get_status():
     try:
         enhanced_service._reset_daily_counters()
         symbols = crypto_definitions.get_coinbase_symbols()
-        
+
         return {
             "service": "enhanced-crypto-prices",
             "status": "healthy",
@@ -504,60 +535,68 @@ async def get_status():
                 "database_connection": True,
                 "coingecko_api": True,
                 "coinbase_api": True,
-                "symbol_cache": crypto_definitions._is_cache_valid()
+                "symbol_cache": crypto_definitions._is_cache_valid(),
             },
             "statistics": {
                 "cache_size": len(enhanced_service.cache),
                 "api_calls_today": enhanced_service.api_calls_today,
                 "last_api_call": enhanced_service.last_api_call,
-                "cache_ttl_seconds": enhanced_service.cache_ttl
+                "cache_ttl_seconds": enhanced_service.cache_ttl,
             },
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
         }
-    
+
     except Exception as e:
         logger.error(f"Error getting status: {e}")
         return {
             "service": "enhanced-crypto-prices",
             "status": "error",
             "error": str(e),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
         }
+
 
 @app.post("/collect")
 async def collect_all_prices():
     """Collect prices for ALL Coinbase-supported symbols"""
     try:
         logger.info("🚀 Starting comprehensive price collection...")
-        
+
         result = await enhanced_service.get_current_prices_all_symbols()
-        
+
         # Store to MySQL
-        stored_count = enhanced_service.store_prices_to_mysql(result['prices'])
-        
-        logger.info(f"✅ Collection complete: {result['symbols_successful']}/{result['symbols_requested']} symbols")
-        
+        stored_count = enhanced_service.store_prices_to_mysql(result["prices"])
+
+        logger.info(
+            f"✅ Collection complete: {result['symbols_successful']}/{result['symbols_requested']} symbols"
+        )
+
         return {
             "status": "success",
             "message": f"Collected prices for {result['symbols_successful']} symbols",
-            "symbols_requested": result['symbols_requested'],
-            "symbols_successful": result['symbols_successful'],
+            "symbols_requested": result["symbols_requested"],
+            "symbols_successful": result["symbols_successful"],
             "stored_to_mysql": stored_count,
-            "processing_time_ms": result['processing_time_ms'],
-            "cache_hits": result['cache_hits'],
-            "api_calls": result['api_calls'],
-            "coverage_percentage": (result['symbols_successful'] / result['symbols_requested']) * 100 if result['symbols_requested'] > 0 else 0,
-            "timestamp": result['timestamp']
+            "processing_time_ms": result["processing_time_ms"],
+            "cache_hits": result["cache_hits"],
+            "api_calls": result["api_calls"],
+            "coverage_percentage": (
+                (result["symbols_successful"] / result["symbols_requested"]) * 100
+                if result["symbols_requested"] > 0
+                else 0
+            ),
+            "timestamp": result["timestamp"],
         }
-    
+
     except Exception as e:
         logger.error(f"Error in collect endpoint: {e}")
         return {
             "status": "error",
             "message": f"Collection failed: {str(e)}",
             "symbols_collected": 0,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
         }
+
 
 @app.get("/symbols")
 async def get_supported_symbols():
@@ -568,14 +607,12 @@ async def get_supported_symbols():
             "supported_symbols": symbols,
             "total_count": len(symbols),
             "source": "database",
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
         }
     except Exception as e:
         logger.error(f"Error getting symbols: {e}")
-        return {
-            "error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }
+        return {"error": str(e), "timestamp": datetime.now().isoformat()}
+
 
 @app.get("/price/{symbol}")
 async def get_single_price(symbol: str, vs_currency: str = "usd"):
@@ -583,17 +620,20 @@ async def get_single_price(symbol: str, vs_currency: str = "usd"):
     try:
         symbol = symbol.upper()
         price_data = await enhanced_service.get_price_for_symbol(symbol, vs_currency)
-        
+
         if not price_data:
-            raise HTTPException(status_code=404, detail=f"Price data not found for {symbol}")
-        
+            raise HTTPException(
+                status_code=404, detail=f"Price data not found for {symbol}"
+            )
+
         return PriceResponse(**price_data)
-    
+
     except Exception as e:
         logger.error(f"Error getting single price for {symbol}: {e}")
         if isinstance(e, HTTPException):
             raise e
         raise HTTPException(status_code=500, detail=f"Error fetching price: {str(e)}")
+
 
 @app.get("/metrics")
 async def get_metrics():
@@ -601,36 +641,42 @@ async def get_metrics():
     try:
         enhanced_service._reset_daily_counters()
         symbols = crypto_definitions.get_coinbase_symbols()
-        uptime = time.time() - start_time if 'start_time' in globals() else 0
-        
+        uptime = time.time() - start_time if "start_time" in globals() else 0
+
         metrics_lines = [
-            '# HELP enhanced_crypto_service_uptime_seconds Service uptime in seconds',
-            '# TYPE enhanced_crypto_service_uptime_seconds gauge',
+            "# HELP enhanced_crypto_service_uptime_seconds Service uptime in seconds",
+            "# TYPE enhanced_crypto_service_uptime_seconds gauge",
             f'enhanced_crypto_service_uptime_seconds{{service_name="enhanced-crypto-prices"}} {uptime:.2f}',
-            '',
-            '# HELP enhanced_crypto_service_supported_symbols Number of supported symbols',
-            '# TYPE enhanced_crypto_service_supported_symbols gauge',
+            "",
+            "# HELP enhanced_crypto_service_supported_symbols Number of supported symbols",
+            "# TYPE enhanced_crypto_service_supported_symbols gauge",
             f'enhanced_crypto_service_supported_symbols{{service_name="enhanced-crypto-prices"}} {len(symbols)}',
-            '',
-            '# HELP enhanced_crypto_service_cache_entries Number of cache entries',
-            '# TYPE enhanced_crypto_service_cache_entries gauge',
+            "",
+            "# HELP enhanced_crypto_service_cache_entries Number of cache entries",
+            "# TYPE enhanced_crypto_service_cache_entries gauge",
             f'enhanced_crypto_service_cache_entries{{service_name="enhanced-crypto-prices"}} {len(enhanced_service.cache)}',
-            '',
-            '# HELP enhanced_crypto_service_api_calls_total Total API calls today',
-            '# TYPE enhanced_crypto_service_api_calls_total counter',
+            "",
+            "# HELP enhanced_crypto_service_api_calls_total Total API calls today",
+            "# TYPE enhanced_crypto_service_api_calls_total counter",
             f'enhanced_crypto_service_api_calls_total{{service_name="enhanced-crypto-prices"}} {enhanced_service.api_calls_today}',
         ]
-        
-        prometheus_output = '\n'.join(metrics_lines) + '\n'
-        return Response(content=prometheus_output, media_type="text/plain; version=0.0.4; charset=utf-8")
-        
+
+        prometheus_output = "\n".join(metrics_lines) + "\n"
+        return Response(
+            content=prometheus_output,
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
+
     except Exception as e:
         logger.error(f"Error getting metrics: {e}")
         error_metrics = f"""# HELP enhanced_crypto_service_error Service error status
 # TYPE enhanced_crypto_service_error gauge
 enhanced_crypto_service_error{{service_name="enhanced-crypto-prices",error="{str(e)}"}} 1
 """
-        return Response(content=error_metrics, media_type="text/plain; version=0.0.4; charset=utf-8")
+        return Response(
+            content=error_metrics, media_type="text/plain; version=0.0.4; charset=utf-8"
+        )
+
 
 # Track start time for metrics
 start_time = time.time()

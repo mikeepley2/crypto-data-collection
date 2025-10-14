@@ -11,7 +11,7 @@ import sys
 
 # Database configuration
 DB_CONFIG = {
-    "host": "192.168.230.162",
+    "host": "localhost",
     "port": 3306,
     "user": "news_collector",
     "password": "99Rules!",

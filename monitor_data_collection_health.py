@@ -44,7 +44,7 @@ class DataCollectionHealthMonitor:
         self.alert_threshold_hours = alert_threshold_hours
         self.check_interval_minutes = check_interval_minutes
         self.db_config = {
-            "host": "192.168.230.162",
+            "host": "localhost",
             "user": "news_collector",
             "password": "99Rules!",
             "database": "crypto_prices",
