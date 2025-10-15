@@ -1,452 +1,328 @@
-# Production Operations Guide
-# ===========================
+# 🚀 Production Operations Guide
 
 ## Overview
 
-This guide provides operational procedures for the Crypto Data Collection system in production. It covers common issues, troubleshooting steps, and maintenance procedures.
+This guide provides operational procedures for the crypto data collection system in production.
 
 ## System Architecture
 
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Data Sources  │    │  Data Collection │    │   Analytics     │
-│                 │    │     Node         │    │     Node        │
-│ • RSS Feeds     │───▶│ • News Collector │    │ • Prometheus    │
-│ • CryptoPanic   │    │ • Sentiment      │    │ • Grafana       │
-│ • CoinGecko     │    │ • Price Collector│    │ • Alertmanager  │
-│ • Coinbase      │    │ • Health Monitor │    │                 │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                │
-                                ▼
-                       ┌─────────────────┐
-                       │   Windows Host  │
-                       │                 │
-                       │ • MySQL Server  │
-                       │ • Redis Cache   │
-                       └─────────────────┘
-```
+### Core Services
+- **enhanced-crypto-prices**: Collects cryptocurrency prices from CoinGecko API
+- **crypto-news-collector**: Collects news from 26 RSS sources and APIs
+- **sentiment-collector**: Analyzes sentiment from news articles
+- **materialized-updater**: Updates materialized views for ML features
+- **redis-data-collection**: Provides caching layer
 
-## Service Status Commands
+### Monitoring Services
+- **performance-monitor**: Real-time performance tracking
+- **cost-tracker**: Resource cost estimation and optimization
+- **cache-manager**: Intelligent Redis cache management
+- **resource-monitor**: Resource usage and quota tracking
+- **data-collection-health-monitor**: Overall system health monitoring
 
-### Check All Services
+### Infrastructure
+- **prometheus**: Metrics collection and alerting
+- **grafana**: Dashboards and visualization
+- **metrics-server**: Kubernetes metrics for HPA
+- **mysql**: Primary database (Windows host)
+- **redis**: Caching database
+
+## Health Checks
+
+### Service Health Endpoints
+
 ```bash
-# Check pod status
+# Check all service health
 kubectl get pods -n crypto-data-collection
 
-# Check service health
-kubectl get svc -n crypto-data-collection
+# Check specific service health
+kubectl exec -n crypto-data-collection <pod-name> -- curl http://localhost:8000/health
 
-# Check node status
-kubectl get nodes --show-labels
+# Check performance monitor
+kubectl port-forward svc/performance-monitor 8005:8000 -n crypto-data-collection
+curl http://localhost:8005/performance
+
+# Check cost tracker
+kubectl port-forward svc/cost-tracker 8006:8000 -n crypto-data-collection
+curl http://localhost:8006/costs
 ```
 
-### Individual Service Health
+### Database Health
+
 ```bash
-# Enhanced Crypto Prices
-kubectl port-forward svc/enhanced-crypto-prices 8001:8000 -n crypto-data-collection
-curl http://localhost:8001/health
+# Check MySQL connection
+kubectl exec -n crypto-data-collection enhanced-crypto-prices-<pod-id> -- python -c "
+import mysql.connector
+import os
+conn = mysql.connector.connect(
+    host=os.getenv('MYSQL_HOST', 'host.docker.internal'),
+    port=int(os.getenv('MYSQL_PORT', 3306)),
+    user=os.getenv('MYSQL_USER', 'news_collector'),
+    password=os.getenv('MYSQL_PASSWORD', '99Rules!'),
+    database=os.getenv('MYSQL_DATABASE', 'crypto_prices')
+)
+print('Database connection: OK')
+conn.close()
+"
 
-# News Collector
-kubectl port-forward svc/crypto-news-collector 8002:8000 -n crypto-data-collection
-curl http://localhost:8002/health
-
-# Sentiment Collector
-kubectl port-forward svc/sentiment-collector 8003:8000 -n crypto-data-collection
-curl http://localhost:8003/health
-
-# Health Monitor
-kubectl port-forward svc/data-collection-health-monitor 8004:8000 -n crypto-data-collection
-curl http://localhost:8004/health
+# Check Redis connection
+kubectl exec -n crypto-data-collection redis-data-collection-<pod-id> -- redis-cli ping
 ```
 
-## Common Issues and Solutions
+## Monitoring Access
 
-### 1. Service CrashLoopBackOff
+### Prometheus
+```bash
+kubectl port-forward svc/prometheus 9090:9090 -n crypto-data-collection
+# Access: http://localhost:9090
+```
 
-**Symptoms:**
-- Pods restarting repeatedly
-- `kubectl get pods` shows CrashLoopBackOff status
+### Grafana
+```bash
+kubectl port-forward svc/grafana 3000:3000 -n crypto-data-collection
+# Access: http://localhost:3000 (admin/admin123)
+```
 
-**Diagnosis:**
+### Performance Monitor
+```bash
+kubectl port-forward svc/performance-monitor 8005:8000 -n crypto-data-collection
+# Access: http://localhost:8005/performance
+```
+
+## Troubleshooting
+
+### Common Issues
+
+#### 1. Pod CrashLoopBackOff
 ```bash
 # Check pod logs
-kubectl logs -n crypto-data-collection deployment/<service-name> --tail=50
+kubectl logs -n crypto-data-collection <pod-name> --previous
 
 # Check pod events
 kubectl describe pod -n crypto-data-collection <pod-name>
+
+# Common causes:
+# - Database connection issues
+# - Missing environment variables
+# - Resource limits exceeded
 ```
 
-**Common Causes:**
-- Database connection issues
-- Missing environment variables
-- Resource limits exceeded
-- Application startup errors
-
-**Solutions:**
-1. **Database Connection Issues:**
-   ```bash
-   # Verify MySQL is running on Windows host
-   # Check centralized config
-   kubectl get configmap centralized-db-config -n crypto-data-collection -o yaml
-   
-   # Test database connectivity
-   kubectl exec -it -n crypto-data-collection <pod-name> -- python -c "
-   import mysql.connector
-   conn = mysql.connector.connect(
-       host='host.docker.internal',
-       user='news_collector',
-       password='99Rules!',
-       database='crypto_prices'
-   )
-   print('Database connection successful')
-   conn.close()
-   "
-   ```
-
-2. **Resource Issues:**
-   ```bash
-   # Check resource usage
-   kubectl top pods -n crypto-data-collection
-   
-   # Increase resource limits in deployment YAML
-   kubectl edit deployment <service-name> -n crypto-data-collection
-   ```
-
-3. **Environment Variables:**
-   ```bash
-   # Check environment variables
-   kubectl exec -it -n crypto-data-collection <pod-name> -- env | grep -E "(MYSQL|REDIS)"
-   ```
-
-### 2. Data Collection Stopped
-
-**Symptoms:**
-- No new data in database
-- Health monitor shows stale data alerts
-
-**Diagnosis:**
+#### 2. HPA Not Scaling
 ```bash
-# Check data freshness
-kubectl port-forward svc/data-collection-health-monitor 8004:8000 -n crypto-data-collection
-curl http://localhost:8004/status
+# Check HPA status
+kubectl get hpa -n crypto-data-collection
 
-# Check database directly
-mysql -h localhost -u news_collector -p99Rules! crypto_prices -e "
-SELECT 
-    MAX(timestamp_iso) as latest_price,
-    COUNT(*) as total_records
-FROM price_data_real 
-WHERE timestamp_iso > DATE_SUB(NOW(), INTERVAL 1 HOUR);
-"
+# Check metrics-server
+kubectl get pods -n kube-system | grep metrics-server
+
+# Check pod metrics
+kubectl top pods -n crypto-data-collection
 ```
 
-**Solutions:**
-1. **Restart Collection Services:**
-   ```bash
-   kubectl rollout restart deployment/enhanced-crypto-prices -n crypto-data-collection
-   kubectl rollout restart deployment/crypto-news-collector -n crypto-data-collection
-   ```
-
-2. **Check API Rate Limits:**
-   ```bash
-   # Check service logs for rate limit errors
-   kubectl logs -n crypto-data-collection deployment/enhanced-crypto-prices --tail=100 | grep -i "rate\|limit\|quota"
-   ```
-
-3. **Verify External APIs:**
-   ```bash
-   # Test CoinGecko API
-   curl "https://api.coingecko.com/api/v3/ping"
-   
-   # Test Coinbase API
-   curl "https://api.coinbase.com/v2/time"
-   ```
-
-### 3. Database Connection Issues
-
-**Symptoms:**
-- Services can't connect to MySQL
-- Database-related errors in logs
-
-**Diagnosis:**
+#### 3. Database Connection Issues
 ```bash
 # Check MySQL service on Windows host
-# Verify MySQL is running and accessible
-netstat -an | findstr :3306
+# Ensure MySQL is running on port 3306
+# Verify firewall allows connections from Kubernetes
 
-# Test connection from Kubernetes
-kubectl run mysql-test --image=mysql:8.0 --rm -it --restart=Never -- \
-  mysql -h host.docker.internal -u news_collector -p99Rules! crypto_prices -e "SELECT 1"
+# Test connection from pod
+kubectl exec -n crypto-data-collection <pod-name> -- telnet host.docker.internal 3306
 ```
 
-**Solutions:**
-1. **MySQL Service Issues:**
-   ```bash
-   # On Windows host, restart MySQL service
-   net stop mysql
-   net start mysql
-   
-   # Check MySQL logs
-   # Windows: C:\ProgramData\MySQL\MySQL Server 8.0\Data\*.err
-   ```
-
-2. **Network Connectivity:**
-   ```bash
-   # Test host.docker.internal resolution
-   kubectl run network-test --image=busybox --rm -it --restart=Never -- \
-     nslookup host.docker.internal
-   ```
-
-3. **Authentication Issues:**
-   ```bash
-   # Verify user exists and has correct permissions
-   mysql -h localhost -u root -p -e "
-   SELECT User, Host FROM mysql.user WHERE User='news_collector';
-   SHOW GRANTS FOR 'news_collector'@'%';
-   "
-   ```
-
-### 4. Monitoring Issues
-
-**Symptoms:**
-- Prometheus not scraping metrics
-- Grafana dashboards not updating
-- Alerts not firing
-
-**Diagnosis:**
+#### 4. Redis Connection Issues
 ```bash
-# Check Prometheus targets
-kubectl port-forward svc/prometheus 9090:9090 -n crypto-data-collection
-# Open http://localhost:9090/targets
+# Check Redis pod
+kubectl get pods -n crypto-data-collection | grep redis
 
-# Check Grafana datasource
-kubectl port-forward svc/grafana 3000:3000 -n crypto-data-collection
-# Open http://localhost:3000 (admin/admin123)
+# Check Redis logs
+kubectl logs -n crypto-data-collection redis-data-collection-<pod-id>
+
+# Test Redis connection
+kubectl exec -n crypto-data-collection redis-data-collection-<pod-id> -- redis-cli ping
 ```
 
-**Solutions:**
-1. **Prometheus Configuration:**
-   ```bash
-   # Check Prometheus config
-   kubectl get configmap prometheus-config -n crypto-data-collection -o yaml
-   
-   # Reload Prometheus config
-   kubectl port-forward svc/prometheus 9090:9090 -n crypto-data-collection
-   curl -X POST http://localhost:9090/-/reload
-   ```
+### Performance Issues
 
-2. **Service Discovery Issues:**
-   ```bash
-   # Check pod annotations
-   kubectl get pods -n crypto-data-collection -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.annotations.prometheus\.io/scrape}{"\n"}{end}'
-   ```
+#### High CPU Usage
+```bash
+# Check resource usage
+kubectl top pods -n crypto-data-collection
+
+# Check HPA status
+kubectl get hpa -n crypto-data-collection
+
+# Scale manually if needed
+kubectl scale deployment <deployment-name> --replicas=2 -n crypto-data-collection
+```
+
+#### High Memory Usage
+```bash
+# Check memory usage
+kubectl top pods -n crypto-data-collection
+
+# Check for memory leaks in logs
+kubectl logs -n crypto-data-collection <pod-name> | grep -i memory
+
+# Restart pod if needed
+kubectl delete pod -n crypto-data-collection <pod-name>
+```
 
 ## Maintenance Procedures
 
-### Daily Checks
+### Regular Maintenance
 
-1. **Service Health:**
-   ```bash
-   # Quick health check
-   kubectl get pods -n crypto-data-collection
-   
-   # Check health monitor status
-   kubectl port-forward svc/data-collection-health-monitor 8004:8000 -n crypto-data-collection
-   curl http://localhost:8004/status
-   ```
+#### Daily
+- Check system health score (should be 100/100)
+- Verify all services are running
+- Check data collection rates
+- Review error logs
 
-2. **Data Freshness:**
-   ```bash
-   # Check latest data timestamps
-   mysql -h localhost -u news_collector -p99Rules! crypto_prices -e "
-   SELECT 
-       'price_data' as table_name,
-       MAX(timestamp_iso) as latest_data,
-       COUNT(*) as total_records
-   FROM price_data_real 
-   WHERE timestamp_iso > DATE_SUB(NOW(), INTERVAL 1 HOUR)
-   UNION ALL
-   SELECT 
-       'ml_features' as table_name,
-       MAX(timestamp_iso) as latest_data,
-       COUNT(*) as total_records
-   FROM ml_features_materialized 
-   WHERE timestamp_iso > DATE_SUB(NOW(), INTERVAL 1 HOUR);
-   "
-   ```
+#### Weekly
+- Review resource usage trends
+- Check database size and performance
+- Verify backup procedures
+- Update documentation
 
-3. **Error Rates:**
-   ```bash
-   # Check for errors in logs
-   kubectl logs -n crypto-data-collection deployment/enhanced-crypto-prices --since=1h | grep -i error | wc -l
-   kubectl logs -n crypto-data-collection deployment/crypto-news-collector --since=1h | grep -i error | wc -l
-   ```
+#### Monthly
+- Review and update API keys
+- Analyze cost trends
+- Performance optimization review
+- Security audit
 
-### Weekly Maintenance
+### Scaling Procedures
 
-1. **Database Maintenance:**
-   ```bash
-   # Check database size and performance
-   mysql -h localhost -u news_collector -p99Rules! crypto_prices -e "
-   SELECT 
-       table_name,
-       ROUND(((data_length + index_length) / 1024 / 1024), 2) AS 'Size (MB)',
-       table_rows
-   FROM information_schema.tables 
-   WHERE table_schema = 'crypto_prices'
-   ORDER BY (data_length + index_length) DESC;
-   "
-   
-   # Clean up old data (optional)
-   mysql -h localhost -u news_collector -p99Rules! crypto_prices -e "
-   DELETE FROM price_data_real 
-   WHERE timestamp_iso < DATE_SUB(NOW(), INTERVAL 30 DAY);
-   
-   DELETE FROM crypto_news 
-   WHERE published_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
-   "
-   ```
+#### Manual Scaling
+```bash
+# Scale specific deployment
+kubectl scale deployment enhanced-crypto-prices --replicas=3 -n crypto-data-collection
 
-2. **Log Rotation:**
-   ```bash
-   # Check log sizes
-   kubectl exec -n crypto-data-collection deployment/enhanced-crypto-prices -- du -sh /var/log/*
-   
-   # Restart services to rotate logs
-   kubectl rollout restart deployment/enhanced-crypto-prices -n crypto-data-collection
-   kubectl rollout restart deployment/crypto-news-collector -n crypto-data-collection
-   kubectl rollout restart deployment/sentiment-collector -n crypto-data-collection
-   ```
+# Scale all data collection services
+kubectl scale deployment enhanced-crypto-prices --replicas=2 -n crypto-data-collection
+kubectl scale deployment crypto-news-collector --replicas=2 -n crypto-data-collection
+kubectl scale deployment sentiment-collector --replicas=2 -n crypto-data-collection
+```
 
-### Monthly Maintenance
+#### HPA Configuration
+```bash
+# Check HPA configuration
+kubectl get hpa -n crypto-data-collection -o yaml
 
-1. **Security Updates:**
-   ```bash
-   # Update base images
-   kubectl set image deployment/enhanced-crypto-prices enhanced-crypto-prices=python:3.11-slim -n crypto-data-collection
-   kubectl set image deployment/crypto-news-collector crypto-news-collector=python:3.11-slim -n crypto-data-collection
-   kubectl set image deployment/sentiment-collector sentiment-collector=python:3.11-slim -n crypto-data-collection
-   ```
+# Update HPA thresholds
+kubectl patch hpa enhanced-crypto-prices-hpa -n crypto-data-collection -p '{"spec":{"metrics":[{"type":"Resource","resource":{"name":"cpu","target":{"type":"Utilization","averageUtilization":60}}}]}}'
+```
 
-2. **Performance Review:**
-   ```bash
-   # Check resource usage trends
-   kubectl top pods -n crypto-data-collection --sort-by=memory
-   kubectl top pods -n crypto-data-collection --sort-by=cpu
-   
-   # Review Prometheus metrics
-   # Access Grafana dashboards and review performance trends
-   ```
+## Backup and Recovery
+
+### Database Backup
+```bash
+# Backup MySQL database
+mysqldump -h host.docker.internal -u news_collector -p99Rules! crypto_prices > backup_$(date +%Y%m%d_%H%M%S).sql
+
+# Restore from backup
+mysql -h host.docker.internal -u news_collector -p99Rules! crypto_prices < backup_file.sql
+```
+
+### Configuration Backup
+```bash
+# Backup Kubernetes configurations
+kubectl get all -n crypto-data-collection -o yaml > k8s-backup-$(date +%Y%m%d_%H%M%S).yaml
+
+# Backup secrets and configmaps
+kubectl get secrets,configmaps -n crypto-data-collection -o yaml > config-backup-$(date +%Y%m%d_%H%M%S).yaml
+```
+
+## Security Considerations
+
+### API Keys Management
+- Store API keys in Kubernetes secrets
+- Rotate keys regularly
+- Monitor API usage for anomalies
+
+### Network Security
+- Use internal service communication
+- Implement proper RBAC
+- Monitor network traffic
+
+### Data Protection
+- Encrypt sensitive data at rest
+- Use secure connections (TLS)
+- Implement proper access controls
+
+## Performance Optimization
+
+### Resource Optimization
+```bash
+# Check resource quotas
+kubectl get resourcequota -n crypto-data-collection
+
+# Check limit ranges
+kubectl get limitrange -n crypto-data-collection
+
+# Optimize resource requests/limits
+kubectl edit deployment <deployment-name> -n crypto-data-collection
+```
+
+### Caching Optimization
+```bash
+# Check cache status
+kubectl port-forward svc/cache-manager 8007:8000 -n crypto-data-collection
+curl http://localhost:8007/cache/status
+
+# Clear cache if needed
+curl -X POST http://localhost:8007/cache/clear/price_data
+```
 
 ## Emergency Procedures
 
-### Complete System Restart
+### Service Outage
+1. Check pod status: `kubectl get pods -n crypto-data-collection`
+2. Check logs: `kubectl logs -n crypto-data-collection <pod-name>`
+3. Restart service: `kubectl rollout restart deployment <deployment-name> -n crypto-data-collection`
+4. Scale up if needed: `kubectl scale deployment <deployment-name> --replicas=2 -n crypto-data-collection`
 
-1. **Stop All Services:**
-   ```bash
-   kubectl scale deployment --replicas=0 --all -n crypto-data-collection
-   ```
+### Database Outage
+1. Check MySQL service on Windows host
+2. Verify network connectivity
+3. Check firewall settings
+4. Restart MySQL service if needed
 
-2. **Restart in Order:**
-   ```bash
-   # Start core services first
-   kubectl scale deployment enhanced-crypto-prices --replicas=1 -n crypto-data-collection
-   kubectl scale deployment materialized-updater --replicas=1 -n crypto-data-collection
-   
-   # Wait for core services to be ready
-   kubectl wait --for=condition=available deployment/enhanced-crypto-prices -n crypto-data-collection --timeout=300s
-   
-   # Start secondary services
-   kubectl scale deployment crypto-news-collector --replicas=1 -n crypto-data-collection
-   kubectl scale deployment sentiment-collector --replicas=1 -n crypto-data-collection
-   kubectl scale deployment data-collection-health-monitor --replicas=1 -n crypto-data-collection
-   ```
+### Complete System Recovery
+1. Check cluster status: `kubectl cluster-info`
+2. Restart all deployments: `kubectl rollout restart deployment --all -n crypto-data-collection`
+3. Verify all services are running
+4. Check data collection is working
 
-### Database Recovery
+## Contact Information
 
-1. **Backup Current State:**
-   ```bash
-   mysqldump -h localhost -u news_collector -p99Rules! crypto_prices > backup_$(date +%Y%m%d_%H%M%S).sql
-   ```
+### Escalation Procedures
+1. **Level 1**: Check logs and restart services
+2. **Level 2**: Check infrastructure and network
+3. **Level 3**: Contact system administrator
 
-2. **Restore from Backup:**
-   ```bash
-   mysql -h localhost -u news_collector -p99Rules! crypto_prices < backup_20231014_120000.sql
-   ```
+### Monitoring Alerts
+- Prometheus alerts configured for critical issues
+- Grafana dashboards for real-time monitoring
+- Performance monitor for system health
 
-## Monitoring and Alerting
+## Appendix
 
-### Key Metrics to Monitor
-
-1. **Service Health:**
-   - `up{job="crypto-data-collection-services"}` - Service availability
-   - `health_score` - Overall system health
-   - `service_availability` - Individual service status
-
-2. **Data Quality:**
-   - `data_freshness_seconds` - Data age
-   - `news_collection_requests_total` - Collection rate
-   - `sentiment_analysis_total` - Analysis rate
-
-3. **Performance:**
-   - `http_request_duration_seconds` - Response times
-   - `database_connections_active` - DB connections
-   - `circuit_breaker_state` - Circuit breaker status
-
-### Alert Thresholds
-
-- **Critical:** Health score < 60, Data age > 2 hours, Service down > 1 minute
-- **Warning:** Health score < 80, Data age > 1 hour, High error rate > 10%
-
-### Notification Channels
-
-- **Critical Alerts:** Email + Slack #alerts-critical
-- **Warning Alerts:** Email + Slack #alerts-warning  
-- **Data Collection:** Slack #data-collection
-
-## Troubleshooting Checklist
-
-### Before Escalating
-
-1. ✅ Check pod status: `kubectl get pods -n crypto-data-collection`
-2. ✅ Check service logs: `kubectl logs -n crypto-data-collection deployment/<service> --tail=50`
-3. ✅ Verify database connectivity
-4. ✅ Check external API availability
-5. ✅ Review Prometheus targets and alerts
-6. ✅ Check resource usage: `kubectl top pods -n crypto-data-collection`
-7. ✅ Verify configuration: `kubectl get configmap -n crypto-data-collection`
-
-### Escalation Contacts
-
-- **Level 1:** Data Collection Team (Slack #data-collection)
-- **Level 2:** Platform Team (Slack #platform)
-- **Level 3:** On-call Engineer (PagerDuty)
-
-## Useful Commands Reference
-
+### Useful Commands
 ```bash
-# Service Management
-kubectl get pods -n crypto-data-collection
-kubectl logs -n crypto-data-collection deployment/<service> --tail=100
-kubectl describe pod -n crypto-data-collection <pod-name>
-kubectl rollout restart deployment/<service> -n crypto-data-collection
+# Get all resources
+kubectl get all -n crypto-data-collection
 
-# Port Forwarding
-kubectl port-forward svc/enhanced-crypto-prices 8001:8000 -n crypto-data-collection
-kubectl port-forward svc/prometheus 9090:9090 -n crypto-data-collection
-kubectl port-forward svc/grafana 3000:3000 -n crypto-data-collection
-
-# Database Access
-mysql -h localhost -u news_collector -p99Rules! crypto_prices
-
-# Monitoring
-kubectl top pods -n crypto-data-collection
+# Check events
 kubectl get events -n crypto-data-collection --sort-by='.lastTimestamp'
+
+# Check resource usage
+kubectl top pods -n crypto-data-collection
+kubectl top nodes
+
+# Check logs
+kubectl logs -n crypto-data-collection <pod-name> --tail=100 -f
+
+# Port forward multiple services
+kubectl port-forward svc/prometheus 9090:9090 -n crypto-data-collection &
+kubectl port-forward svc/grafana 3000:3000 -n crypto-data-collection &
+kubectl port-forward svc/performance-monitor 8005:8000 -n crypto-data-collection &
 ```
-
-## Documentation Links
-
-- [Monitoring Setup Guide](MONITORING_SETUP.md)
-- [Quick Status Reference](../QUICK_STATUS_REFERENCE.md)
-- [Deployment Guide](DEPLOYMENT_GUIDE.md)
-- [API Documentation](API_DOCUMENTATION.md)

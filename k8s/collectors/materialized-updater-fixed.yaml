@@ -81,12 +81,13 @@ spec:
                       conn = get_db_connection()
                       cursor = conn.cursor()
                       
-                      # Get recent price data that hasn't been processed yet
+                      # Get recent price data that hasn't been processed yet (last 6 hours to catch up)
                       cursor.execute('''
                       SELECT symbol, timestamp_iso, current_price, price_change_24h, volume_usd_24h, market_cap 
                       FROM price_data_real 
-                      WHERE timestamp_iso > DATE_SUB(NOW(), INTERVAL 2 HOUR) 
+                      WHERE timestamp_iso > DATE_SUB(NOW(), INTERVAL 6 HOUR) 
                       ORDER BY timestamp_iso DESC
+                      LIMIT 10000
                       ''')
                       recent_data = cursor.fetchall()
                       
@@ -152,8 +153,30 @@ spec:
               def root():
                   return {"message": "Materialized Updater Service", "status": "running"}
 
+              import threading
+              import asyncio
+
+              def background_update_loop():
+                  """Background loop to automatically update materialized table"""
+                  while True:
+                      try:
+                          logger.info("🔄 Starting automatic materialized table update...")
+                          count = update_materialized_table()
+                          logger.info(f"✅ Automatic update completed: {count} records updated")
+                      except Exception as e:
+                          logger.error(f"❌ Error in background update: {e}")
+                      
+                      # Wait 5 minutes before next update
+                      time.sleep(300)
+
               if __name__ == "__main__":
-                  logger.info("🚀 Starting Materialized Updater Service")
+                  logger.info("🚀 Starting Materialized Updater Service with Automatic Updates")
+                  
+                  # Start background update thread
+                  update_thread = threading.Thread(target=background_update_loop, daemon=True)
+                  update_thread.start()
+                  
+                  # Start the web service
                   uvicorn.run(app, host="0.0.0.0", port=8000)
               EOF
 

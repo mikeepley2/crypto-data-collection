@@ -37,7 +37,7 @@ data:
         updateIntervalSeconds: 10
         allowUiUpdates: true
         options:
-          path: /var/lib/grafana/dashboards/crypto-data-collection
+          path: /var/lib/grafana/dashboards
 ---
 apiVersion: apps/v1
 kind: Deployment

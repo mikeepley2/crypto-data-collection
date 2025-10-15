@@ -52,6 +52,19 @@ data:
             action: replace
             target_label: service
 
+      # Performance Monitoring Services
+      - job_name: 'performance-monitor'
+        static_configs:
+          - targets: ['performance-monitor.crypto-data-collection.svc.cluster.local:8000']
+        metrics_path: '/metrics'
+        scrape_interval: 30s
+
+      - job_name: 'cost-tracker'
+        static_configs:
+          - targets: ['cost-tracker.crypto-data-collection.svc.cluster.local:8000']
+        metrics_path: '/metrics'
+        scrape_interval: 60s
+
       # Kubernetes API Server
       - job_name: 'kubernetes-apiservers'
         kubernetes_sd_configs:

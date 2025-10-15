@@ -1,0 +1,373 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cost-tracker
+  namespace: crypto-data-collection
+  labels:
+    app: cost-tracker
+    component: monitoring
+    node-type: analytics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cost-tracker
+  template:
+    metadata:
+      labels:
+        app: cost-tracker
+        component: monitoring
+        node-type: analytics
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: cost-tracker
+      nodeSelector:
+        node-type: analytics
+      tolerations:
+        - key: "analytics-infrastructure"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      containers:
+        - name: cost-tracker
+          image: python:3.11-slim
+          ports:
+            - containerPort: 8000
+              name: http
+          command:
+            - /bin/bash
+            - -c
+          args:
+            - |
+              # Install dependencies
+              pip install fastapi uvicorn prometheus-client kubernetes
+
+              # Create application directory
+              mkdir -p /app
+
+              # Create the cost tracking service
+              cat > /app/main.py << 'EOF'
+              import asyncio
+              import logging
+              import os
+              import time
+              from datetime import datetime, timedelta
+              from fastapi import FastAPI
+              from prometheus_client import Gauge, Counter, generate_latest
+              import uvicorn
+              from kubernetes import client, config
+
+              # Configure logging
+              logging.basicConfig(level=logging.INFO)
+              logger = logging.getLogger(__name__)
+
+              # Cost estimation metrics (USD per hour)
+              COST_CPU_USD_PER_HOUR = Gauge('cost_cpu_usd_per_hour', 'CPU cost per hour', ['node', 'pod'])
+              COST_MEMORY_USD_PER_HOUR = Gauge('cost_memory_usd_per_hour', 'Memory cost per hour', ['node', 'pod'])
+              COST_STORAGE_USD_PER_HOUR = Gauge('cost_storage_usd_per_hour', 'Storage cost per hour', ['node', 'pod'])
+              COST_NETWORK_USD_PER_HOUR = Gauge('cost_network_usd_per_hour', 'Network cost per hour', ['node', 'pod'])
+              COST_TOTAL_USD_PER_HOUR = Gauge('cost_total_usd_per_hour', 'Total cost per hour', ['node', 'pod'])
+
+              # Resource usage tracking
+              RESOURCE_CPU_CORES = Gauge('resource_cpu_cores', 'CPU cores allocated', ['node', 'pod'])
+              RESOURCE_MEMORY_GB = Gauge('resource_memory_gb', 'Memory allocated in GB', ['node', 'pod'])
+              RESOURCE_STORAGE_GB = Gauge('resource_storage_gb', 'Storage allocated in GB', ['node', 'pod'])
+
+              # Cost optimization metrics
+              COST_OPTIMIZATION_SCORE = Gauge('cost_optimization_score', 'Cost optimization score (0-100)')
+              RESOURCE_EFFICIENCY = Gauge('resource_efficiency_percent', 'Resource efficiency percentage', ['resource_type'])
+
+              class CostTracker:
+                  def __init__(self):
+                      self.app = FastAPI(title="Cost Tracker Service", version="1.0.0")
+                      self.setup_routes()
+                      
+                      # Cost rates (USD per hour) - These would be configurable in production
+                      self.cost_rates = {
+                          'cpu_per_core': 0.10,      # $0.10 per CPU core per hour
+                          'memory_per_gb': 0.05,     # $0.05 per GB RAM per hour
+                          'storage_per_gb': 0.01,    # $0.01 per GB storage per hour
+                          'network_per_gb': 0.02     # $0.02 per GB network per hour
+                      }
+                      
+                      # Kubernetes client
+                      try:
+                          config.load_incluster_config()
+                          self.k8s_client = client.CoreV1Api()
+                          self.k8s_apps_client = client.AppsV1Api()
+                      except:
+                          logger.warning("Could not load Kubernetes config")
+                          self.k8s_client = None
+                          self.k8s_apps_client = None
+                      
+                      logger.info("🚀 Cost Tracker initialized")
+
+                  def setup_routes(self):
+                      @self.app.get("/health")
+                      async def health():
+                          return {
+                              "status": "healthy",
+                              "service": "cost-tracker",
+                              "version": "1.0.0",
+                              "k8s_client": self.k8s_client is not None
+                          }
+
+                      @self.app.get("/metrics")
+                      async def metrics():
+                          return generate_latest()
+
+                      @self.app.get("/costs")
+                      async def cost_summary():
+                          return await self.get_cost_summary()
+
+                  async def get_pod_resource_usage(self):
+                      """Get resource usage for all pods"""
+                      if not self.k8s_client:
+                          return {}
+                      
+                      try:
+                          pods = self.k8s_client.list_namespaced_pod(
+                              namespace="crypto-data-collection"
+                          )
+                          
+                          pod_resources = {}
+                          for pod in pods.items:
+                              if pod.status.phase == "Running":
+                                  pod_name = pod.metadata.name
+                                  node_name = pod.spec.node_name
+                                  
+                                  # Get resource requests/limits
+                                  total_cpu_cores = 0
+                                  total_memory_gb = 0
+                                  
+                                  for container in pod.spec.containers:
+                                      resources = container.resources
+                                      if resources and resources.requests:
+                                          # Parse CPU (e.g., "100m" -> 0.1 cores)
+                                          cpu_request = resources.requests.get('cpu', '0')
+                                          if cpu_request.endswith('m'):
+                                              total_cpu_cores += int(cpu_request[:-1]) / 1000
+                                          else:
+                                              total_cpu_cores += float(cpu_request)
+                                          
+                                          # Parse memory (e.g., "512Mi" -> 0.5 GB)
+                                          memory_request = resources.requests.get('memory', '0')
+                                          if memory_request.endswith('Mi'):
+                                              total_memory_gb += int(memory_request[:-2]) / 1024
+                                          elif memory_request.endswith('Gi'):
+                                              total_memory_gb += float(memory_request[:-2])
+                                          else:
+                                              total_memory_gb += float(memory_request) / (1024**3)
+                                  
+                                  pod_resources[pod_name] = {
+                                      'node': node_name,
+                                      'cpu_cores': total_cpu_cores,
+                                      'memory_gb': total_memory_gb,
+                                      'storage_gb': 1.0,  # Default storage estimate
+                                      'network_gb': 0.1   # Default network estimate
+                                  }
+                          
+                          return pod_resources
+                      except Exception as e:
+                          logger.error(f"Error getting pod resources: {e}")
+                          return {}
+
+                  def calculate_costs(self, pod_resources):
+                      """Calculate costs for each pod"""
+                      costs = {}
+                      
+                      for pod_name, resources in pod_resources.items():
+                          node = resources['node']
+                          
+                          cpu_cost = resources['cpu_cores'] * self.cost_rates['cpu_per_core']
+                          memory_cost = resources['memory_gb'] * self.cost_rates['memory_per_gb']
+                          storage_cost = resources['storage_gb'] * self.cost_rates['storage_per_gb']
+                          network_cost = resources['network_gb'] * self.cost_rates['network_per_gb']
+                          total_cost = cpu_cost + memory_cost + storage_cost + network_cost
+                          
+                          costs[pod_name] = {
+                              'node': node,
+                              'cpu_cost': cpu_cost,
+                              'memory_cost': memory_cost,
+                              'storage_cost': storage_cost,
+                              'network_cost': network_cost,
+                              'total_cost': total_cost,
+                              'cpu_cores': resources['cpu_cores'],
+                              'memory_gb': resources['memory_gb'],
+                              'storage_gb': resources['storage_gb']
+                          }
+                      
+                      return costs
+
+                  def calculate_optimization_score(self, costs):
+                      """Calculate cost optimization score (0-100)"""
+                      if not costs:
+                          return 0
+                      
+                      total_cost = sum(cost['total_cost'] for cost in costs.values())
+                      total_cpu = sum(cost['cpu_cores'] for cost in costs.values())
+                      total_memory = sum(cost['memory_gb'] for cost in costs.values())
+                      
+                      # Base score
+                      score = 100
+                      
+                      # Deduct for high costs
+                      if total_cost > 1.0:  # More than $1/hour
+                          score -= min(30, (total_cost - 1.0) * 30)
+                      
+                      # Deduct for resource waste
+                      if total_cpu > 10:  # More than 10 CPU cores
+                          score -= min(20, (total_cpu - 10) * 2)
+                      
+                      if total_memory > 20:  # More than 20GB RAM
+                          score -= min(20, (total_memory - 20) * 1)
+                      
+                      # Bonus for efficiency
+                      if total_cost < 0.5:  # Less than $0.50/hour
+                          score += 10
+                      
+                      return max(0, min(100, score))
+
+                  async def update_cost_metrics(self):
+                      """Update all cost-related metrics"""
+                      try:
+                          pod_resources = await self.get_pod_resource_usage()
+                          costs = self.calculate_costs(pod_resources)
+                          
+                          # Update Prometheus metrics
+                          for pod_name, cost_data in costs.items():
+                              node = cost_data['node']
+                              
+                              COST_CPU_USD_PER_HOUR.labels(node=node, pod=pod_name).set(cost_data['cpu_cost'])
+                              COST_MEMORY_USD_PER_HOUR.labels(node=node, pod=pod_name).set(cost_data['memory_cost'])
+                              COST_STORAGE_USD_PER_HOUR.labels(node=node, pod=pod_name).set(cost_data['storage_cost'])
+                              COST_NETWORK_USD_PER_HOUR.labels(node=node, pod=pod_name).set(cost_data['network_cost'])
+                              COST_TOTAL_USD_PER_HOUR.labels(node=node, pod=pod_name).set(cost_data['total_cost'])
+                              
+                              RESOURCE_CPU_CORES.labels(node=node, pod=pod_name).set(cost_data['cpu_cores'])
+                              RESOURCE_MEMORY_GB.labels(node=node, pod=pod_name).set(cost_data['memory_gb'])
+                              RESOURCE_STORAGE_GB.labels(node=node, pod=pod_name).set(cost_data['storage_gb'])
+                          
+                          # Calculate optimization score
+                          optimization_score = self.calculate_optimization_score(costs)
+                          COST_OPTIMIZATION_SCORE.set(optimization_score)
+                          
+                          # Calculate resource efficiency
+                          if costs:
+                              total_cpu = sum(cost['cpu_cores'] for cost in costs.values())
+                              total_memory = sum(cost['memory_gb'] for cost in costs.values())
+                              
+                              # Simple efficiency calculation (could be more sophisticated)
+                              cpu_efficiency = min(100, (total_cpu / len(costs)) * 100)
+                              memory_efficiency = min(100, (total_memory / len(costs)) * 100)
+                              
+                              RESOURCE_EFFICIENCY.labels(resource_type="cpu").set(cpu_efficiency)
+                              RESOURCE_EFFICIENCY.labels(resource_type="memory").set(memory_efficiency)
+                          
+                          logger.info(f"Updated cost metrics, optimization score: {optimization_score}/100")
+                          
+                      except Exception as e:
+                          logger.error(f"Error updating cost metrics: {e}")
+
+                  async def get_cost_summary(self):
+                      """Get comprehensive cost summary"""
+                      pod_resources = await self.get_pod_resource_usage()
+                      costs = self.calculate_costs(pod_resources)
+                      optimization_score = self.calculate_optimization_score(costs)
+                      
+                      total_cost = sum(cost['total_cost'] for cost in costs.values())
+                      total_cpu = sum(cost['cpu_cores'] for cost in costs.values())
+                      total_memory = sum(cost['memory_gb'] for cost in costs.values())
+                      
+                      return {
+                          "total_cost_per_hour": total_cost,
+                          "total_cost_per_day": total_cost * 24,
+                          "total_cost_per_month": total_cost * 24 * 30,
+                          "total_cpu_cores": total_cpu,
+                          "total_memory_gb": total_memory,
+                          "pod_count": len(costs),
+                          "optimization_score": optimization_score,
+                          "cost_breakdown": {
+                              "cpu_cost": sum(cost['cpu_cost'] for cost in costs.values()),
+                              "memory_cost": sum(cost['memory_cost'] for cost in costs.values()),
+                              "storage_cost": sum(cost['storage_cost'] for cost in costs.values()),
+                              "network_cost": sum(cost['network_cost'] for cost in costs.values())
+                          },
+                          "timestamp": datetime.now().isoformat()
+                      }
+
+                  async def start_cost_tracking_loop(self):
+                      """Start continuous cost tracking loop"""
+                      logger.info("Starting cost tracking loop")
+                      
+                      while True:
+                          try:
+                              await self.update_cost_metrics()
+                              await asyncio.sleep(60)  # Update every minute
+                          except Exception as e:
+                              logger.error(f"Error in cost tracking loop: {e}")
+                              await asyncio.sleep(120)  # Wait longer on error
+
+              # Create tracker instance
+              tracker = CostTracker()
+              app = tracker.app
+
+              if __name__ == "__main__":
+                  logger.info("🚀 Starting Cost Tracker Service")
+                  
+                  # Start background tracking
+                  import threading
+                  def start_tracking():
+                      loop = asyncio.new_event_loop()
+                      asyncio.set_event_loop(loop)
+                      loop.run_until_complete(tracker.start_cost_tracking_loop())
+                  
+                  tracking_thread = threading.Thread(target=start_tracking, daemon=True)
+                  tracking_thread.start()
+                  
+                  # Start the service
+                  uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+              EOF
+
+              # Start the service
+              cd /app && python main.py
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cost-tracker
+  namespace: crypto-data-collection
+  labels:
+    app: cost-tracker
+    component: monitoring
+spec:
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+      name: http
+  selector:
+    app: cost-tracker
+  type: ClusterIP

@@ -150,9 +150,10 @@ spec:
                           with get_connection_context() as conn:
                               cursor = conn.cursor()
                               cursor.execute("""
-                                  SELECT symbol, name, coinbase_supported 
+                                  SELECT symbol, name, coinbase_supported, coingecko_id
                                   FROM crypto_assets 
-                                  ORDER BY market_cap_rank
+                                  WHERE coingecko_id IS NOT NULL AND coingecko_id != ''
+                                  ORDER BY COALESCE(market_cap_rank, 999999), symbol
                                   LIMIT 100
                               """)
                               symbols = cursor.fetchall()
@@ -169,12 +170,13 @@ spec:
                       try:
                           # Create symbol mapping for names
                           symbol_map = {symbol[0]: symbol[1] for symbol in symbols}
+                          coingecko_id_map = {symbol[3]: symbol[0] for symbol in symbols}  # Map coingecko_id to symbol
                           
-                          # Prepare symbol list for CoinGecko
-                          symbol_ids = [symbol[0].lower() for symbol in symbols[:50]]  # Limit to 50 for API
+                          # Prepare coin ID list for CoinGecko (use coingecko_id from database)
+                          coin_ids = [symbol[3] for symbol in symbols if symbol[3]]  # Use coingecko_id from database
                           
                           params = {
-                              'ids': ','.join(symbol_ids),
+                              'ids': ','.join(coin_ids),
                               'vs_currencies': 'usd',
                               'include_24hr_change': 'true',
                               'include_24hr_vol': 'true',
@@ -187,12 +189,13 @@ spec:
                                       data = await response.json()
                                       
                                       prices = []
-                                      for symbol_id, price_data in data.items():
+                                      for coin_id, price_data in data.items():
                                           if 'usd' in price_data:
-                                              symbol_upper = symbol_id.upper()
+                                              # Get symbol from coingecko_id mapping
+                                              symbol = coingecko_id_map.get(coin_id, coin_id.upper())
                                               prices.append({
-                                                  'symbol': symbol_upper,
-                                                  'name': symbol_map.get(symbol_upper, symbol_upper),
+                                                  'symbol': symbol,
+                                                  'name': symbol_map.get(symbol, symbol),
                                                   'price': price_data['usd'],
                                                   'change_24h': price_data.get('usd_24h_change', 0),
                                                   'volume_24h': price_data.get('usd_24h_vol', 0),
