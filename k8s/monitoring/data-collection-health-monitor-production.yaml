@@ -1,0 +1,707 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-collection-health-monitor
+  namespace: crypto-data-collection
+  labels:
+    app: data-collection-health-monitor
+    component: monitoring
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: "/metrics"
+    prometheus.io/port: "8000"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: data-collection-health-monitor
+  template:
+    metadata:
+      labels:
+        app: data-collection-health-monitor
+        component: monitoring
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8000"
+    spec:
+      nodeSelector:
+        node-type: data-collection # Target the data collection node
+      tolerations:
+        - key: "data-platform"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      containers:
+        - name: health-monitor
+          image: python:3.11-slim
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              # Install dependencies
+              pip install fastapi uvicorn requests tenacity prometheus-client mysql-connector-python redis
+
+              # Create app directory
+              mkdir -p /app
+
+              # Create the production health monitor service
+              cat > /app/health_monitor.py << 'EOF'
+              import os
+              import sys
+              import json
+              import time
+              import logging
+              import asyncio
+              from datetime import datetime, timedelta
+              from typing import Dict, List, Optional, Any
+              from dataclasses import dataclass
+
+              import requests
+              from requests.adapters import HTTPAdapter
+              from urllib3.util.retry import Retry
+              from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+              from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+              import mysql.connector
+              import redis
+              from fastapi import FastAPI, BackgroundTasks
+              from fastapi.responses import Response, JSONResponse
+              import uvicorn
+
+              # Set up structured logging
+              logging.basicConfig(
+                  level=logging.INFO,
+                  format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+              )
+              logger = logging.getLogger(__name__)
+
+              # Prometheus metrics
+              HEALTH_CHECK_TOTAL = Counter(
+                  'health_check_total',
+                  'Total health checks performed',
+                  ['component', 'status']
+              )
+
+              HEALTH_CHECK_DURATION = Histogram(
+                  'health_check_duration_seconds',
+                  'Health check duration',
+                  ['component']
+              )
+
+              HEALTH_SCORE = Gauge(
+                  'health_score',
+                  'Overall system health score (0-100)',
+                  ['component']
+              )
+
+              DATA_FRESHNESS = Gauge(
+                  'data_freshness_seconds',
+                  'Data freshness in seconds',
+                  ['data_type']
+              )
+
+              SERVICE_AVAILABILITY = Gauge(
+                  'service_availability',
+                  'Service availability (1=up, 0=down)',
+                  ['service']
+              )
+
+              DATABASE_CONNECTIONS = Gauge(
+                  'database_connections_active',
+                  'Active database connections',
+                  ['database']
+              )
+
+              @dataclass
+              class HealthCheckResult:
+                  component: str
+                  status: str  # healthy, warning, critical
+                  score: float  # 0-100
+                  message: str
+                  details: Dict[str, Any]
+                  timestamp: datetime
+
+              class DataCollectionHealthMonitor:
+                  def __init__(self):
+                      self.app = FastAPI(
+                          title="Data Collection Health Monitor",
+                          description="Production-grade health monitoring for data collection services",
+                          version="2.0.0"
+                      )
+                      self.setup_routes()
+                      
+                      # Service endpoints to monitor
+                      self.services = {
+                          "enhanced-crypto-prices": "http://enhanced-crypto-prices.crypto-data-collection.svc.cluster.local:8000",
+                          "crypto-news-collector": "http://crypto-news-collector.crypto-data-collection.svc.cluster.local:8000",
+                          "sentiment-collector": "http://sentiment-collector.crypto-data-collection.svc.cluster.local:8000",
+                          "materialized-updater": "http://materialized-updater.crypto-data-collection.svc.cluster.local:8000"
+                      }
+                      
+                      # HTTP session with retry strategy
+                      self.session = requests.Session()
+                      retry_strategy = Retry(
+                          total=3,
+                          backoff_factor=1,
+                          status_forcelist=[429, 500, 502, 503, 504],
+                      )
+                      adapter = HTTPAdapter(max_retries=retry_strategy)
+                      self.session.mount("http://", adapter)
+                      self.session.mount("https://", adapter)
+                      
+                      # Redis connection for caching
+                      try:
+                          self.redis_client = redis.Redis(
+                              host=os.getenv("REDIS_HOST", "redis-data-collection.crypto-data-collection.svc.cluster.local"),
+                              port=int(os.getenv("REDIS_PORT", "6379")),
+                              decode_responses=True
+                          )
+                          self.redis_client.ping()
+                          logger.info("✅ Connected to Redis for health monitoring")
+                      except Exception as e:
+                          logger.warning(f"⚠️ Redis connection failed: {e}")
+                          self.redis_client = None
+                      
+                      # Health check intervals (in seconds)
+                      self.check_intervals = {
+                          "database": 30,
+                          "services": 60,
+                          "data_freshness": 120,
+                          "overall": 300
+                      }
+                      
+                      # Last check times
+                      self.last_checks = {}
+                      
+                      # Health history
+                      self.health_history = []
+                      
+                      # Stats
+                      self.stats = {
+                          "total_checks": 0,
+                          "critical_alerts": 0,
+                          "warning_alerts": 0,
+                          "last_check": None,
+                          "overall_health_score": 100
+                      }
+                  
+                  def get_db_connection(self):
+                      """Get database connection"""
+                      try:
+                          config = {
+                              "host": os.getenv("MYSQL_HOST", "host.docker.internal"),
+                              "user": os.getenv("MYSQL_USER", "news_collector"),
+                              "password": os.getenv("MYSQL_PASSWORD", "99Rules!"),
+                              "database": os.getenv("MYSQL_DATABASE", "crypto_prices"),
+                              "charset": "utf8mb4",
+                              "autocommit": False
+                          }
+                          return mysql.connector.connect(**config)
+                      except Exception as e:
+                          logger.error(f"Database connection error: {e}")
+                          return None
+                  
+                  @retry(
+                      stop=stop_after_attempt(3),
+                      wait=wait_exponential(multiplier=1, min=2, max=8),
+                      retry=retry_if_exception_type((requests.RequestException,))
+                  )
+                  def check_service_health(self, service_name: str, endpoint: str) -> HealthCheckResult:
+                      """Check individual service health"""
+                      try:
+                          response = self.session.get(f"{endpoint}/health", timeout=10)
+                          
+                          if response.status_code == 200:
+                              data = response.json()
+                              status = data.get("status", "unknown")
+                              
+                              if status == "healthy":
+                                  score = 100
+                                  message = f"{service_name} is healthy"
+                              elif status == "warning":
+                                  score = 70
+                                  message = f"{service_name} has warnings"
+                              else:
+                                  score = 0
+                                  message = f"{service_name} is unhealthy"
+                              
+                              SERVICE_AVAILABILITY.labels(service=service_name).set(1)
+                              HEALTH_CHECK_TOTAL.labels(component=service_name, status="success").inc()
+                              
+                          else:
+                              score = 0
+                              status = "critical"
+                              message = f"{service_name} returned status {response.status_code}"
+                              SERVICE_AVAILABILITY.labels(service=service_name).set(0)
+                              HEALTH_CHECK_TOTAL.labels(component=service_name, status="error").inc()
+                          
+                      except Exception as e:
+                          score = 0
+                          status = "critical"
+                          message = f"{service_name} is unreachable: {str(e)}"
+                          SERVICE_AVAILABILITY.labels(service=service_name).set(0)
+                          HEALTH_CHECK_TOTAL.labels(component=service_name, status="error").inc()
+                      
+                      return HealthCheckResult(
+                          component=service_name,
+                          status=status,
+                          score=score,
+                          message=message,
+                          details={"endpoint": endpoint},
+                          timestamp=datetime.now()
+                      )
+                  
+                  def check_database_health(self) -> HealthCheckResult:
+                      """Check database connectivity and performance"""
+                      try:
+                          conn = self.get_db_connection()
+                          if not conn:
+                              return HealthCheckResult(
+                                  component="database",
+                                  status="critical",
+                                  score=0,
+                                  message="Cannot connect to database",
+                                  details={},
+                                  timestamp=datetime.now()
+                              )
+                          
+                          cursor = conn.cursor()
+                          
+                          # Test basic query
+                          cursor.execute("SELECT 1")
+                          cursor.fetchone()
+                          
+                          # Check connection count
+                          cursor.execute("SHOW STATUS LIKE 'Threads_connected'")
+                          connections = cursor.fetchone()[1]
+                          
+                          # Check database size
+                          cursor.execute("""
+                              SELECT 
+                                  ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS 'DB Size in MB'
+                              FROM information_schema.tables 
+                              WHERE table_schema = %s
+                          """, (os.getenv("MYSQL_DATABASE", "crypto_prices"),))
+                          db_size = cursor.fetchone()[0]
+                          
+                          cursor.close()
+                          conn.close()
+                          
+                          # Calculate health score
+                          score = 100
+                          if int(connections) > 50:  # Too many connections
+                              score -= 20
+                          if db_size > 1000:  # Database getting large
+                              score -= 10
+                          
+                          DATABASE_CONNECTIONS.labels(database="mysql").set(int(connections))
+                          HEALTH_CHECK_TOTAL.labels(component="database", status="success").inc()
+                          
+                          return HealthCheckResult(
+                              component="database",
+                              status="healthy" if score >= 80 else "warning" if score >= 60 else "critical",
+                              score=score,
+                              message=f"Database healthy - {connections} connections, {db_size}MB size",
+                              details={"connections": int(connections), "size_mb": db_size},
+                              timestamp=datetime.now()
+                          )
+                          
+                      except Exception as e:
+                          HEALTH_CHECK_TOTAL.labels(component="database", status="error").inc()
+                          return HealthCheckResult(
+                              component="database",
+                              status="critical",
+                              score=0,
+                              message=f"Database error: {str(e)}",
+                              details={},
+                              timestamp=datetime.now()
+                          )
+                  
+                  def check_data_freshness(self) -> HealthCheckResult:
+                      """Check data freshness across all data types"""
+                      try:
+                          conn = self.get_db_connection()
+                          if not conn:
+                              return HealthCheckResult(
+                                  component="data_freshness",
+                                  status="critical",
+                                  score=0,
+                                  message="Cannot connect to database for data freshness check",
+                                  details={},
+                                  timestamp=datetime.now()
+                              )
+                          
+                          cursor = conn.cursor(dictionary=True)
+                          freshness_data = {}
+                          
+                          # Check price data freshness
+                          cursor.execute("""
+                              SELECT MAX(timestamp_iso) as latest_price
+                              FROM price_data_real
+                              WHERE timestamp_iso >= %s
+                          """, (datetime.now() - timedelta(hours=2),))
+                          price_result = cursor.fetchone()
+                          
+                          if price_result and price_result['latest_price']:
+                              price_age = (datetime.now() - price_result['latest_price']).total_seconds()
+                              freshness_data['price_data'] = price_age
+                              DATA_FRESHNESS.labels(data_type="price_data").set(price_age)
+                          else:
+                              freshness_data['price_data'] = 999999  # Very old
+                              DATA_FRESHNESS.labels(data_type="price_data").set(999999)
+                          
+                          # Check ML features freshness
+                          cursor.execute("""
+                              SELECT MAX(timestamp_iso) as latest_ml
+                              FROM ml_features_materialized
+                              WHERE timestamp_iso >= %s
+                          """, (datetime.now() - timedelta(hours=2),))
+                          ml_result = cursor.fetchone()
+                          
+                          if ml_result and ml_result['latest_ml']:
+                              ml_age = (datetime.now() - ml_result['latest_ml']).total_seconds()
+                              freshness_data['ml_features'] = ml_age
+                              DATA_FRESHNESS.labels(data_type="ml_features").set(ml_age)
+                          else:
+                              freshness_data['ml_features'] = 999999
+                              DATA_FRESHNESS.labels(data_type="ml_features").set(999999)
+                          
+                          # Check news data freshness
+                          cursor.execute("""
+                              SELECT MAX(published_at) as latest_news
+                              FROM crypto_news
+                              WHERE published_at >= %s
+                          """, (datetime.now() - timedelta(hours=24),))
+                          news_result = cursor.fetchone()
+                          
+                          if news_result and news_result['latest_news']:
+                              news_age = (datetime.now() - news_result['latest_news']).total_seconds()
+                              freshness_data['news_data'] = news_age
+                              DATA_FRESHNESS.labels(data_type="news_data").set(news_age)
+                          else:
+                              freshness_data['news_data'] = 999999
+                              DATA_FRESHNESS.labels(data_type="news_data").set(999999)
+                          
+                          cursor.close()
+                          conn.close()
+                          
+                          # Calculate overall freshness score
+                          score = 100
+                          issues = []
+                          
+                          if freshness_data['price_data'] > 3600:  # 1 hour
+                              score -= 40
+                              issues.append("Price data stale")
+                          if freshness_data['ml_features'] > 7200:  # 2 hours
+                              score -= 30
+                              issues.append("ML features stale")
+                          if freshness_data['news_data'] > 86400:  # 24 hours
+                              score -= 20
+                              issues.append("News data stale")
+                          
+                          status = "healthy" if score >= 80 else "warning" if score >= 60 else "critical"
+                          message = f"Data freshness: {status}" + (f" - {', '.join(issues)}" if issues else "")
+                          
+                          HEALTH_CHECK_TOTAL.labels(component="data_freshness", status="success").inc()
+                          
+                          return HealthCheckResult(
+                              component="data_freshness",
+                              status=status,
+                              score=score,
+                              message=message,
+                              details=freshness_data,
+                              timestamp=datetime.now()
+                          )
+                          
+                      except Exception as e:
+                          HEALTH_CHECK_TOTAL.labels(component="data_freshness", status="error").inc()
+                          return HealthCheckResult(
+                              component="data_freshness",
+                              status="critical",
+                              score=0,
+                              message=f"Data freshness check error: {str(e)}",
+                              details={},
+                              timestamp=datetime.now()
+                          )
+                  
+                  def run_health_check_cycle(self) -> Dict:
+                      """Run one complete health check cycle"""
+                      logger.info("Starting health check cycle...")
+                      start_time = time.time()
+                      
+                      results = []
+                      
+                      # Check database health
+                      with HEALTH_CHECK_DURATION.labels(component="database").time():
+                          db_result = self.check_database_health()
+                          results.append(db_result)
+                      
+                      # Check service health
+                      for service_name, endpoint in self.services.items():
+                          with HEALTH_CHECK_DURATION.labels(component=service_name).time():
+                              service_result = self.check_service_health(service_name, endpoint)
+                              results.append(service_result)
+                      
+                      # Check data freshness
+                      with HEALTH_CHECK_DURATION.labels(component="data_freshness").time():
+                          freshness_result = self.check_data_freshness()
+                          results.append(freshness_result)
+                      
+                      # Calculate overall health score
+                      scores = [r.score for r in results if r.score > 0]
+                      overall_score = sum(scores) / len(scores) if scores else 0
+                      
+                      # Determine overall status
+                      critical_count = sum(1 for r in results if r.status == "critical")
+                      warning_count = sum(1 for r in results if r.status == "warning")
+                      
+                      if critical_count > 0:
+                          overall_status = "critical"
+                      elif warning_count > 0:
+                          overall_status = "warning"
+                      else:
+                          overall_status = "healthy"
+                      
+                      # Update metrics
+                      HEALTH_SCORE.labels(component="overall").set(overall_score)
+                      for result in results:
+                          HEALTH_SCORE.labels(component=result.component).set(result.score)
+                      
+                      # Update stats
+                      self.stats["total_checks"] += 1
+                      self.stats["last_check"] = datetime.now()
+                      self.stats["overall_health_score"] = overall_score
+                      
+                      if overall_status == "critical":
+                          self.stats["critical_alerts"] += 1
+                      elif overall_status == "warning":
+                          self.stats["warning_alerts"] += 1
+                      
+                      # Store in history (keep last 100 checks)
+                      self.health_history.append({
+                          "timestamp": datetime.now().isoformat(),
+                          "overall_score": overall_score,
+                          "overall_status": overall_status,
+                          "components": {r.component: {"status": r.status, "score": r.score} for r in results}
+                      })
+                      
+                      if len(self.health_history) > 100:
+                          self.health_history = self.health_history[-100:]
+                      
+                      duration = time.time() - start_time
+                      
+                      result = {
+                          "status": "completed",
+                          "overall_status": overall_status,
+                          "overall_score": overall_score,
+                          "duration_seconds": duration,
+                          "components_checked": len(results),
+                          "critical_issues": critical_count,
+                          "warning_issues": warning_count,
+                          "results": [
+                              {
+                                  "component": r.component,
+                                  "status": r.status,
+                                  "score": r.score,
+                                  "message": r.message
+                              }
+                              for r in results
+                          ]
+                      }
+                      
+                      # Log results
+                      logger.info(f"Health check completed: {overall_status.upper()} (Score: {overall_score:.1f}/100)")
+                      for r in results:
+                          logger.info(f"  {r.component}: {r.status} ({r.score}/100) - {r.message}")
+                      
+                      # Send alerts if needed
+                      if overall_status in ["critical", "warning"]:
+                          self.send_alert(overall_status, result)
+                      
+                      return result
+                  
+                  def send_alert(self, severity: str, health_data: Dict):
+                      """Send alert for health issues"""
+                      alert_message = f"""
+                      🚨 DATA COLLECTION HEALTH ALERT 🚨
+                      
+                      Severity: {severity.upper()}
+                      Overall Health Score: {health_data['overall_score']:.1f}/100
+                      Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                      
+                      Component Status:
+                      """
+                      
+                      for result in health_data['results']:
+                          alert_message += f"  • {result['component']}: {result['status']} ({result['score']}/100)\n"
+                      
+                      alert_message += f"""
+                      
+                      Critical Issues: {health_data['critical_issues']}
+                      Warning Issues: {health_data['warning_issues']}
+                      
+                      Action Required: Please investigate and resolve the issues above.
+                      """
+                      
+                      logger.warning(f"ALERT: {alert_message}")
+                      
+                      # TODO: Integrate with actual alerting system (Slack, email, etc.)
+                  
+                  def setup_routes(self):
+                      """Setup FastAPI routes"""
+                      
+                      @self.app.get("/health")
+                      def health():
+                          """Health check endpoint"""
+                          return {
+                              "status": "healthy",
+                              "service": "data-collection-health-monitor",
+                              "version": "2.0.0",
+                              "last_check": self.stats["last_check"],
+                              "overall_health_score": self.stats["overall_health_score"]
+                          }
+                      
+                      @self.app.get("/status")
+                      def status():
+                          """Status endpoint with detailed information"""
+                          return {
+                              "service": "data-collection-health-monitor",
+                              "version": "2.0.0",
+                              "stats": self.stats,
+                              "services_monitored": list(self.services.keys()),
+                              "check_intervals": self.check_intervals
+                          }
+                      
+                      @self.app.post("/check")
+                      def run_health_check(background_tasks: BackgroundTasks):
+                          """Trigger health check"""
+                          background_tasks.add_task(self.run_health_check_cycle)
+                          return {
+                              "status": "started",
+                              "message": "Health check initiated"
+                          }
+                      
+                      @self.app.get("/history")
+                      def get_health_history(limit: int = 50):
+                          """Get health check history"""
+                          return {
+                              "history": self.health_history[-limit:],
+                              "total_checks": len(self.health_history)
+                          }
+                      
+                      @self.app.get("/metrics")
+                      def metrics():
+                          """Prometheus metrics endpoint"""
+                          return Response(
+                              generate_latest(),
+                              media_type=CONTENT_TYPE_LATEST
+                          )
+
+              # Create the service instance
+              health_monitor = DataCollectionHealthMonitor()
+              app = health_monitor.app
+
+              if __name__ == "__main__":
+                  logger.info("🚀 Starting Production Data Collection Health Monitor v2.0.0")
+                  
+                  # Start background health check loop
+                  async def health_check_loop():
+                      while True:
+                          try:
+                              health_monitor.run_health_check_cycle()
+                              await asyncio.sleep(300)  # Check every 5 minutes
+                          except Exception as e:
+                              logger.error(f"Health check loop error: {e}")
+                              await asyncio.sleep(60)  # Wait 1 minute on error
+                  
+                  # Start the health check loop in background
+                  import threading
+                  def run_loop():
+                      asyncio.run(health_check_loop())
+                  
+                  health_thread = threading.Thread(target=run_loop, daemon=True)
+                  health_thread.start()
+                  
+                  uvicorn.run(app, host="0.0.0.0", port=8000)
+              EOF
+
+              # Start the service
+              cd /app && python health_monitor.py
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: MYSQL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_HOST
+            - name: MYSQL_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_PORT
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-user
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-password
+            - name: MYSQL_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_DATABASE
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: REDIS_HOST
+            - name: REDIS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: REDIS_PORT
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-collection-health-monitor
+  namespace: crypto-data-collection
+  labels:
+    app: data-collection-health-monitor
+    component: monitoring
+spec:
+  selector:
+    app: data-collection-health-monitor
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP

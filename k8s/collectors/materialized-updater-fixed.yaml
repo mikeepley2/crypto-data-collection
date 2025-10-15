@@ -19,6 +19,11 @@ spec:
     spec:
       nodeSelector:
         node-type: data-collection # Target the data collection node
+      tolerations:
+        - key: "data-platform"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
       containers:
         - name: materialized-updater
           image: python:3.11-slim

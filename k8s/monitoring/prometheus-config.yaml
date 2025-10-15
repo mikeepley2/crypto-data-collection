@@ -1,0 +1,276 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: crypto-data-collection
+  labels:
+    app: prometheus
+    component: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'cryptoai-k8s-trading-engine'
+        environment: 'production'
+
+    rule_files:
+      - "/etc/prometheus/rules/*.yml"
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+              - alertmanager.crypto-data-collection.svc.cluster.local:9093
+
+    scrape_configs:
+      # Data Collection Services
+      - job_name: 'crypto-data-collection-services'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - crypto-data-collection
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: instance
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: replace
+            target_label: service
+
+      # Kubernetes API Server
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+          - role: endpoints
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: default;kubernetes;https
+
+      # Kubernetes Nodes
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+          - role: node
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/${1}/proxy/metrics
+
+      # Kubernetes Pods
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: kubernetes_pod_name
+
+      # cAdvisor for container metrics
+      - job_name: 'kubernetes-cadvisor'
+        kubernetes_sd_configs:
+          - role: node
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+
+  # Alert Rules
+  crypto_data_collection_rules.yml: |
+    groups:
+      - name: crypto_data_collection
+        rules:
+          # Service Availability Alerts
+          - alert: ServiceDown
+            expr: up{job="crypto-data-collection-services"} == 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Service {{ $labels.service }} is down"
+              description: "Service {{ $labels.service }} has been down for more than 1 minute."
+
+          - alert: ServiceHighErrorRate
+            expr: rate(http_requests_total{job="crypto-data-collection-services",status=~"5.."}[5m]) > 0.1
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High error rate for {{ $labels.service }}"
+              description: "Service {{ $labels.service }} has error rate > 10% for 2 minutes."
+
+          # Data Collection Alerts
+          - alert: DataCollectionStopped
+            expr: rate(crypto_collection_requests_total[5m]) == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Data collection has stopped"
+              description: "No data collection requests in the last 5 minutes."
+
+          - alert: DataStale
+            expr: data_freshness_seconds > 3600
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Data is stale for {{ $labels.data_type }}"
+              description: "{{ $labels.data_type }} data is older than 1 hour."
+
+          - alert: DataVeryStale
+            expr: data_freshness_seconds > 7200
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Data is very stale for {{ $labels.data_type }}"
+              description: "{{ $labels.data_type }} data is older than 2 hours."
+
+          # Health Score Alerts
+          - alert: HealthScoreLow
+            expr: health_score < 80
+            for: 3m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Health score is low for {{ $labels.component }}"
+              description: "{{ $labels.component }} health score is {{ $value }}/100."
+
+          - alert: HealthScoreCritical
+            expr: health_score < 60
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Health score is critical for {{ $labels.component }}"
+              description: "{{ $labels.component }} health score is {{ $value }}/100."
+
+          # Database Alerts
+          - alert: DatabaseConnectionsHigh
+            expr: database_connections_active > 50
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High database connection count"
+              description: "Database has {{ $value }} active connections."
+
+          - alert: DatabaseDown
+            expr: up{job="crypto-data-collection-services",service="database"} == 0
+            for: 30s
+            labels:
+              severity: critical
+            annotations:
+              summary: "Database is down"
+              description: "Database connection is unavailable."
+
+          # News Collection Alerts
+          - alert: NewsCollectionFailed
+            expr: rate(news_collection_errors_total[5m]) > 0.1
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High news collection error rate"
+              description: "News collection error rate is {{ $value }} errors/second."
+
+          - alert: NewsSourcesDown
+            expr: news_sources_active < 5
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Too many news sources are down"
+              description: "Only {{ $value }} news sources are active."
+
+          # Sentiment Analysis Alerts
+          - alert: SentimentAnalysisFailed
+            expr: rate(sentiment_errors_total[5m]) > 0.05
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High sentiment analysis error rate"
+              description: "Sentiment analysis error rate is {{ $value }} errors/second."
+
+          # Circuit Breaker Alerts
+          - alert: CircuitBreakerOpen
+            expr: circuit_breaker_state == 1
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Circuit breaker is open for {{ $labels.source }}"
+              description: "Circuit breaker is open for {{ $labels.source }} service."
+
+          # Resource Usage Alerts
+          - alert: HighCPUUsage
+            expr: rate(container_cpu_usage_seconds_total[5m]) > 0.8
+            for: 3m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High CPU usage for {{ $labels.container }}"
+              description: "Container {{ $labels.container }} CPU usage is {{ $value }}."
+
+          - alert: HighMemoryUsage
+            expr: container_memory_usage_bytes / container_spec_memory_limit_bytes > 0.8
+            for: 3m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High memory usage for {{ $labels.container }}"
+              description: "Container {{ $labels.container }} memory usage is {{ $value }}."

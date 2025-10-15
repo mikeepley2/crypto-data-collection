@@ -23,6 +23,14 @@ data:
   NEWS_COLLECTION_INTERVAL: "900" # 15 minutes
   SENTIMENT_COLLECTION_INTERVAL: "900" # 15 minutes
 
+  # News Collection Configuration - Expanded Coverage
+  NEWS_RSS_SOURCES: "26" # Number of RSS sources (expanded from 8 to 26)
+  NEWS_API_SOURCES: "1" # Number of API sources (CryptoPanic)
+  NEWS_DUPLICATE_TTL_HOURS: "24" # TTL for duplicate detection
+  NEWS_MAX_ITEMS_PER_SOURCE: "15" # Max items to collect per source (reduced due to more sources)
+  NEWS_COLLECTION_TIMEOUT: "30" # Timeout for HTTP requests
+  NEWS_BATCH_SIZE: "5" # Process RSS sources in batches to avoid overwhelming
+
   # Data Quality Settings
   DATA_VALIDATION_ENABLED: "true"
   MAX_RETRY_ATTEMPTS: "3"
