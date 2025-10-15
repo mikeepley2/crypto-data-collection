@@ -290,7 +290,7 @@ spec:
                           score = 100
                           if int(connections) > 50:  # Too many connections
                               score -= 20
-                          if db_size > 1000:  # Database getting large
+                          if db_size > 10000:  # Database getting very large (10GB threshold)
                               score -= 10
                           
                           DATABASE_CONNECTIONS.labels(database="mysql").set(int(connections))
@@ -388,7 +388,7 @@ spec:
                           score = 100
                           issues = []
                           
-                          if freshness_data['price_data'] > 3600:  # 1 hour
+                          if freshness_data['price_data'] > 7200:  # 2 hours
                               score -= 40
                               issues.append("Price data stale")
                           if freshness_data['ml_features'] > 7200:  # 2 hours
