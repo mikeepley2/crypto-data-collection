@@ -1,0 +1,498 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crypto-news-collector
+  namespace: crypto-data-collection
+  labels:
+    app: crypto-news-collector
+    component: data-collection
+    node-type: data-collection
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: crypto-news-collector
+  template:
+    metadata:
+      labels:
+        app: crypto-news-collector
+        component: data-collection
+        node-type: data-collection
+    spec:
+      nodeSelector:
+        node-type: data-collection
+      tolerations:
+        - key: "data-platform"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      containers:
+        - name: crypto-news-collector
+          image: python:3.11-slim
+          ports:
+            - containerPort: 8000
+              name: http
+          command:
+            - /bin/bash
+            - -c
+          args:
+            - |
+              # Install dependencies
+              pip install fastapi uvicorn feedparser requests asyncio aiohttp mysql-connector-python prometheus-client tenacity circuitbreaker
+
+              # Create application directory
+              mkdir -p /app
+
+              # Create the crypto news collector service with automatic collection
+              cat > /app/main.py << 'EOF'
+              import asyncio
+              import logging
+              import os
+              import time
+              import hashlib
+              from datetime import datetime, timedelta
+              from contextlib import contextmanager
+              import mysql.connector
+              import requests
+              import aiohttp
+              import feedparser
+              from fastapi import FastAPI, BackgroundTasks
+              from prometheus_client import Counter, Histogram, Gauge, generate_latest
+              from tenacity import retry, stop_after_attempt, wait_exponential
+              from circuitbreaker import CircuitBreaker
+              import uvicorn
+
+              # Configure logging
+              logging.basicConfig(level=logging.INFO)
+              logger = logging.getLogger(__name__)
+
+              # Prometheus metrics
+              NEWS_COLLECTION_TOTAL = Counter('news_collection_requests_total', 'Total news collection requests', ['source', 'status'])
+              NEWS_COLLECTION_DURATION = Histogram('news_collection_duration_seconds', 'News collection duration', ['source'])
+              NEWS_ITEMS_STORED = Counter('news_items_stored_total', 'Total news items stored', ['source'])
+              NEWS_COLLECTION_ERRORS = Counter('news_collection_errors_total', 'News collection errors', ['source', 'error_type'])
+              ACTIVE_COLLECTION_LOOPS = Gauge('active_collection_loops', 'Number of active collection loops')
+              CIRCUIT_BREAKER_STATE = Gauge('circuit_breaker_state', 'Circuit breaker state', ['source'])
+
+              @contextmanager
+              def get_connection_context():
+                  """Database connection context manager"""
+                  conn = None
+                  try:
+                      conn = mysql.connector.connect(
+                          host=os.getenv('MYSQL_HOST', 'host.docker.internal'),
+                          port=int(os.getenv('MYSQL_PORT', 3306)),
+                          user=os.getenv('MYSQL_USER', 'news_collector'),
+                          password=os.getenv('MYSQL_PASSWORD', '99Rules!'),
+                          database=os.getenv('MYSQL_DATABASE', 'crypto_prices')
+                      )
+                      yield conn
+                  except Exception as e:
+                      logger.error(f"Database connection error: {e}")
+                      if conn:
+                          conn.rollback()
+                      raise
+                  finally:
+                      if conn:
+                          conn.close()
+
+              class CryptoNewsCollector:
+                  def __init__(self):
+                      self.app = FastAPI(title="Crypto News Collector Service", version="2.0.0")
+                      self.setup_routes()
+                      
+                      # Collection configuration
+                      self.collection_interval = int(os.getenv('NEWS_COLLECTION_INTERVAL', 900))  # 15 minutes
+                      self.is_collecting = False
+                      self.collection_task = None
+                      
+                      # RSS Sources
+                      self.rss_sources = [
+                          "https://www.coindesk.com/arc/outboundfeeds/rss/",
+                          "https://cointelegraph.com/rss",
+                          "https://cryptoslate.com/feed/",
+                          "https://decrypt.co/feed",
+                          "https://bitcoinmagazine.com/feed",
+                          "https://coinjournal.net/feed/",
+                          "https://www.newsbtc.com/feed/",
+                          "https://beincrypto.com/feed/",
+                          "https://www.theblock.co/rss.xml",
+                          "https://defipulse.com/blog/feed/",
+                          "https://coingecko.com/en/news/feed",
+                          "https://coinmarketcap.com/headlines/news/feed/",
+                          "https://coincenter.org/feed/",
+                          "https://www.blockchainassociation.org/feed/",
+                          "https://blog.ethereum.org/feed.xml",
+                          "https://bitcoin.org/en/rss.xml",
+                          "https://solana.com/news/rss.xml",
+                          "https://polygon.technology/blog/rss.xml",
+                          "https://cryptobriefing.com/feed/",
+                          "https://cryptodaily.co.uk/feed/",
+                          "https://ambcrypto.com/feed/",
+                          "https://cryptonews.com/news/feed/",
+                          "https://coinspeaker.com/feed/",
+                          "https://cryptoglobe.com/latest/feed/",
+                          "https://bitcoinist.com/feed/",
+                          "https://cryptonewsflash.com/feed/"
+                      ]
+                      
+                      # Circuit breakers for each source
+                      self.circuit_breakers = {
+                          source: CircuitBreaker(failure_threshold=5, recovery_timeout=60)
+                          for source in self.rss_sources
+                      }
+                      
+                      logger.info(f"🚀 Crypto News Collector initialized with {self.collection_interval}s interval and {len(self.rss_sources)} RSS sources")
+
+                  def setup_routes(self):
+                      @self.app.get("/health")
+                      async def health():
+                          return {
+                              "status": "healthy",
+                              "service": "crypto-news-collector",
+                              "version": "2.0.0",
+                              "collection_active": self.is_collecting,
+                              "collection_interval": self.collection_interval,
+                              "sources": len(self.rss_sources),
+                              "last_collection": getattr(self, 'last_collection_time', 'Never')
+                          }
+
+                      @self.app.get("/metrics")
+                      async def metrics():
+                          return generate_latest()
+
+                      @self.app.get("/status")
+                      async def status():
+                          return {
+                              "service": "crypto-news-collector",
+                              "version": "2.0.0",
+                              "collection_active": self.is_collecting,
+                              "sources": {
+                                  "rss_sources": len(self.rss_sources),
+                                  "api_sources": 1
+                              },
+                              "circuit_breakers": {
+                                  name: "open" if cb.failure_count >= 5 else "closed"
+                                  for name, cb in self.circuit_breakers.items()
+                              }
+                          }
+
+                      @self.app.post("/start-collection")
+                      async def start_collection(background_tasks: BackgroundTasks):
+                          if not self.is_collecting:
+                              background_tasks.add_task(self.start_background_collection)
+                              return {"status": "started", "message": "News collection started"}
+                          return {"status": "already_running", "message": "Collection already active"}
+
+                      @self.app.post("/stop-collection")
+                      async def stop_collection():
+                          if self.is_collecting:
+                              self.is_collecting = False
+                              if self.collection_task:
+                                  self.collection_task.cancel()
+                              return {"status": "stopped", "message": "News collection stopped"}
+                          return {"status": "not_running", "message": "Collection not active"}
+
+                      @self.app.post("/collect")
+                      async def manual_collect(background_tasks: BackgroundTasks):
+                          background_tasks.add_task(self.collect_news_once)
+                          return {"status": "started", "message": "Manual news collection initiated"}
+
+                  @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=8))
+                  async def collect_rss_feed(self, url):
+                      """Collect news from RSS feed with circuit breaker"""
+                      try:
+                          cb = self.circuit_breakers[url]
+                          
+                          with cb:
+                              async with aiohttp.ClientSession() as session:
+                                  async with session.get(url, timeout=30) as response:
+                                      if response.status == 200:
+                                          content = await response.text()
+                                          feed = feedparser.parse(content)
+                                          
+                                          articles = []
+                                          for entry in feed.entries[:15]:  # Limit to 15 items per source
+                                              try:
+                                                  # Create URL hash for duplicate detection
+                                                  url_hash = hashlib.md5(entry.link.encode()).hexdigest()
+                                                  
+                                                  # Parse published date
+                                                  published_at = datetime.now()
+                                                  if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                                                      published_at = datetime(*entry.published_parsed[:6])
+                                                  
+                                                  articles.append({
+                                                      'title': entry.title,
+                                                      'content': getattr(entry, 'summary', ''),
+                                                      'url': entry.link,
+                                                      'published_at': published_at,
+                                                      'source': url,
+                                                      'url_hash': url_hash
+                                                  })
+                                              except Exception as e:
+                                                  logger.error(f"Error parsing RSS entry from {url}: {e}")
+                                                  continue
+                                          
+                                          NEWS_COLLECTION_TOTAL.labels(source=url, status='success').inc()
+                                          logger.info(f"Collected {len(articles)} articles from {url}")
+                                          return articles
+                                      else:
+                                          NEWS_COLLECTION_TOTAL.labels(source=url, status='error').inc()
+                                          NEWS_COLLECTION_ERRORS.labels(source=url, error_type='http_error').inc()
+                                          logger.error(f"RSS feed error {url}: {response.status}")
+                                          return []
+                      except Exception as e:
+                          NEWS_COLLECTION_TOTAL.labels(source=url, status='error').inc()
+                          NEWS_COLLECTION_ERRORS.labels(source=url, error_type='exception').inc()
+                          logger.error(f"Error collecting RSS feed {url}: {e}")
+                          return []
+
+                  async def collect_cryptopanic_news(self):
+                      """Collect news from CryptoPanic API"""
+                      try:
+                          url = "https://cryptopanic.com/api/v1/posts/"
+                          params = {
+                              'auth_token': 'free',  # Free tier
+                              'currencies': 'BTC,ETH,BNB,ADA,SOL,MATIC,AVAX,DOT,LINK,UNI',
+                              'filter': 'hot',
+                              'public': 'true'
+                          }
+                          
+                          async with aiohttp.ClientSession() as session:
+                              async with session.get(url, params=params, timeout=30) as response:
+                                  if response.status == 200:
+                                      data = await response.json()
+                                      
+                                      articles = []
+                                      for post in data.get('results', [])[:20]:  # Limit to 20 items
+                                          try:
+                                              # Create URL hash for duplicate detection
+                                              url_hash = hashlib.md5(post['url'].encode()).hexdigest()
+                                              
+                                              # Parse published date
+                                              published_at = datetime.now()
+                                              if 'created_at' in post:
+                                                  published_at = datetime.fromisoformat(post['created_at'].replace('Z', '+00:00'))
+                                              
+                                              articles.append({
+                                                  'title': post['title'],
+                                                  'content': post.get('body', ''),
+                                                  'url': post['url'],
+                                                  'published_at': published_at,
+                                                  'source': 'cryptopanic',
+                                                  'url_hash': url_hash
+                                              })
+                                          except Exception as e:
+                                              logger.error(f"Error parsing CryptoPanic post: {e}")
+                                              continue
+                                      
+                                      NEWS_COLLECTION_TOTAL.labels(source='cryptopanic', status='success').inc()
+                                      logger.info(f"Collected {len(articles)} articles from CryptoPanic")
+                                      return articles
+                                  else:
+                                      NEWS_COLLECTION_TOTAL.labels(source='cryptopanic', status='error').inc()
+                                      NEWS_COLLECTION_ERRORS.labels(source='cryptopanic', error_type='http_error').inc()
+                                      logger.error(f"CryptoPanic API error: {response.status}")
+                                      return []
+                      except Exception as e:
+                          NEWS_COLLECTION_TOTAL.labels(source='cryptopanic', status='error').inc()
+                          NEWS_COLLECTION_ERRORS.labels(source='cryptopanic', error_type='exception').inc()
+                          logger.error(f"Error collecting CryptoPanic news: {e}")
+                          return []
+
+                  async def store_news_articles(self, articles):
+                      """Store news articles in database"""
+                      if not articles:
+                          return 0
+                          
+                      try:
+                          with get_connection_context() as conn:
+                              cursor = conn.cursor()
+                              
+                              stored_count = 0
+                              for article in articles:
+                                  try:
+                                      # Check for duplicates
+                                      cursor.execute("SELECT id FROM crypto_news WHERE url_hash = %s", (article['url_hash'],))
+                                      if cursor.fetchone():
+                                          continue  # Skip duplicate
+                                      
+                                      cursor.execute("""
+                                          INSERT INTO crypto_news (
+                                              title, content, url, published_at, source, url_hash
+                                          ) VALUES (%s, %s, %s, %s, %s, %s)
+                                      """, (
+                                          article['title'],
+                                          article['content'],
+                                          article['url'],
+                                          article['published_at'],
+                                          article['source'],
+                                          article['url_hash']
+                                      ))
+                                      stored_count += 1
+                                  except Exception as e:
+                                      logger.error(f"Error storing article '{article['title']}': {e}")
+                                      continue
+                              
+                              conn.commit()
+                              cursor.close()
+                              
+                              NEWS_ITEMS_STORED.labels(source=article['source']).inc(stored_count)
+                              logger.info(f"Stored {stored_count} news articles in database")
+                              return stored_count
+                      except Exception as e:
+                          logger.error(f"Error storing news articles: {e}")
+                          return 0
+
+                  async def collect_news_once(self):
+                      """Collect news once from all sources"""
+                      logger.info("Starting news collection cycle...")
+                      start_time = time.time()
+                      
+                      try:
+                          all_articles = []
+                          
+                          # Collect from RSS feeds
+                          for rss_url in self.rss_sources:
+                              with NEWS_COLLECTION_DURATION.labels(source=rss_url).time():
+                                  articles = await self.collect_rss_feed(rss_url)
+                                  all_articles.extend(articles)
+                          
+                          # Collect from CryptoPanic API
+                          with NEWS_COLLECTION_DURATION.labels(source='cryptopanic').time():
+                              articles = await self.collect_cryptopanic_news()
+                              all_articles.extend(articles)
+                          
+                          # Store articles
+                          stored_count = await self.store_news_articles(all_articles)
+                          
+                          # Update last collection time
+                          self.last_collection_time = datetime.now().isoformat()
+                          
+                          duration = time.time() - start_time
+                          logger.info(f"News collection completed: {stored_count} articles from {len(all_articles)} total in {duration:.2f}s")
+                          
+                      except Exception as e:
+                          logger.error(f"Error in news collection cycle: {e}")
+
+                  async def start_background_collection(self):
+                      """Start background news collection loop"""
+                      if self.is_collecting:
+                          logger.warning("Collection already running")
+                          return
+                      
+                      self.is_collecting = True
+                      ACTIVE_COLLECTION_LOOPS.set(1)
+                      logger.info(f"Starting background news collection every {self.collection_interval} seconds")
+                      
+                      try:
+                          while self.is_collecting:
+                              await self.collect_news_once()
+                              
+                              # Wait for next collection
+                              for _ in range(self.collection_interval):
+                                  if not self.is_collecting:
+                                      break
+                                  await asyncio.sleep(1)
+                      except asyncio.CancelledError:
+                          logger.info("News collection loop cancelled")
+                      except Exception as e:
+                          logger.error(f"Error in background collection loop: {e}")
+                      finally:
+                          self.is_collecting = False
+                          ACTIVE_COLLECTION_LOOPS.set(0)
+                          logger.info("Background news collection stopped")
+
+              # Create collector instance
+              collector = CryptoNewsCollector()
+              app = collector.app
+
+              if __name__ == "__main__":
+                  logger.info("🚀 Starting Crypto News Collector Service with Automatic Collection")
+                  
+                  # Start background collection automatically
+                  import threading
+                  def start_collection_loop():
+                      loop = asyncio.new_event_loop()
+                      asyncio.set_event_loop(loop)
+                      loop.run_until_complete(collector.start_background_collection())
+                  
+                  # Start collection in background thread
+                  collection_thread = threading.Thread(target=start_collection_loop, daemon=True)
+                  collection_thread.start()
+                  
+                  # Start the service
+                  uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+              EOF
+
+              # Start the service
+              cd /app && python main.py
+          env:
+            - name: MYSQL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_HOST
+            - name: MYSQL_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_PORT
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-user
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-password
+            - name: MYSQL_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_DATABASE
+            - name: NEWS_COLLECTION_INTERVAL
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: NEWS_COLLECTION_INTERVAL
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crypto-news-collector
+  namespace: crypto-data-collection
+  labels:
+    app: crypto-news-collector
+    component: data-collection
+spec:
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+      name: http
+  selector:
+    app: crypto-news-collector
+  type: ClusterIP
