@@ -314,9 +314,9 @@
             },
             "targets": [
                 {
-                    "expr": "rate(health_check_total{exported_component=\"crypto-news-collector\"}[5m])",
+                    "expr": "health_check_total{exported_component=\"crypto-news-collector\"}",
                     "interval": "",
-                    "legendFormat": "News Collector Health Checks",
+                    "legendFormat": "News Collector Total Checks",
                     "refId": "A"
                 }
             ],
@@ -395,9 +395,9 @@
             },
             "targets": [
                 {
-                    "expr": "rate(health_check_total{exported_component=\"sentiment-collector\"}[5m])",
+                    "expr": "health_check_total{exported_component=\"sentiment-collector\"}",
                     "interval": "",
-                    "legendFormat": "Sentiment Collector Health Checks",
+                    "legendFormat": "Sentiment Collector Total Checks",
                     "refId": "A"
                 }
             ],
@@ -557,9 +557,9 @@
             },
             "targets": [
                 {
-                    "expr": "rate(health_check_total{status=\"error\"}[5m])",
+                    "expr": "health_check_total{status=\"error\"}",
                     "interval": "",
-                    "legendFormat": "Error Rate",
+                    "legendFormat": "Total Errors",
                     "refId": "A"
                 }
             ],
@@ -638,9 +638,9 @@
             },
             "targets": [
                 {
-                    "expr": "up{job=\"crypto-data-collection-services\"}",
+                    "expr": "health_score",
                     "interval": "",
-                    "legendFormat": "{{service}} Health State (1=Up, 0=Down)",
+                    "legendFormat": "{{component}} Health Score",
                     "refId": "A"
                 }
             ],
