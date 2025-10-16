@@ -20,22 +20,22 @@ This guide provides step-by-step procedures for responding to data collection in
    python monitor_ml_features.py
    
    # Check Kubernetes pods
-   kubectl get pods -n crypto-collectors
+   kubectl get pods -n crypto-data-collection
    
    # Check cronjobs
-   kubectl get cronjobs -n crypto-collectors
+   kubectl get cronjobs -n crypto-data-collection
    ```
 
 2. **Identify Root Cause**
    ```bash
    # Check materialized updater logs
-   kubectl logs materialized-updater-* -n crypto-collectors --tail=50
+   kubectl logs materialized-updater-* -n crypto-data-collection --tail=50
    
    # Check price collector logs
-   kubectl logs enhanced-crypto-prices-* -n crypto-collectors --tail=20
+   kubectl logs enhanced-crypto-prices-* -n crypto-data-collection --tail=20
    
-   # Check API gateway logs
-   kubectl logs simple-api-gateway-* -n crypto-collectors --tail=20
+   # Check health monitor logs
+   kubectl logs data-collection-health-monitor-* -n crypto-data-collection --tail=20
    ```
 
 ### **Common Root Causes & Fixes**
@@ -45,10 +45,10 @@ This guide provides step-by-step procedures for responding to data collection in
 **Fix**:
 ```bash
 # Restart materialized updater
-kubectl delete pod materialized-updater-* -n crypto-collectors
+kubectl delete pod materialized-updater-* -n crypto-data-collection
 
 # Verify restart
-kubectl get pods -n crypto-collectors | grep materialized-updater
+kubectl get pods -n crypto-data-collection | grep materialized-updater
 ```
 
 #### **2. API Gateway Redis Connection Issues**
@@ -56,10 +56,10 @@ kubectl get pods -n crypto-collectors | grep materialized-updater
 **Fix**:
 ```bash
 # Check Redis status
-kubectl exec redis-data-collection-* -n crypto-collectors -- redis-cli ping
+kubectl exec redis-data-collection-* -n crypto-data-collection -- redis-cli ping
 
-# Fix API Gateway Redis config
-kubectl patch deployment simple-api-gateway -n crypto-collectors --type merge -p '{"spec":{"template":{"spec":{"containers":[{"name":"api-gateway","env":[{"name":"REDIS_HOST","value":"redis-data-collection.crypto-collectors.svc.cluster.local"},{"name":"REDIS_PORT","value":"6379"},{"name":"REDIS_PASSWORD","value":""}]}]}}}'
+# Check current monitoring services
+kubectl get pods -n crypto-data-collection | grep -E "(prometheus|grafana|alertmanager)"
 ```
 
 #### **3. CronJob Scheduling Issues**
@@ -67,10 +67,10 @@ kubectl patch deployment simple-api-gateway -n crypto-collectors --type merge -p
 **Fix**:
 ```bash
 # Check cronjob status
-kubectl get cronjobs -n crypto-collectors
+kubectl get cronjobs -n crypto-data-collection
 
 # Manually trigger if needed
-kubectl create job --from=cronjob/enhanced-crypto-prices-collector manual-trigger -n crypto-collectors
+kubectl create job --from=cronjob/enhanced-crypto-prices-collector manual-trigger -n crypto-data-collection
 ```
 
 #### **4. Database Connection Issues**
@@ -78,7 +78,7 @@ kubectl create job --from=cronjob/enhanced-crypto-prices-collector manual-trigge
 **Fix**:
 ```bash
 # Test database connection
-kubectl exec materialized-updater-* -n crypto-collectors -- python -c "import mysql.connector; mysql.connector.connect(host='192.168.230.162', user='news_collector', password='99Rules!', database='crypto_prices').close(); print('DB OK')"
+kubectl exec materialized-updater-* -n crypto-data-collection -- python -c "import mysql.connector; mysql.connector.connect(host='host.docker.internal', user='root', password='password', database='crypto_prices').close(); print('DB OK')"
 ```
 
 ### **Recovery Procedures (15-60 minutes)**
@@ -89,7 +89,7 @@ kubectl exec materialized-updater-* -n crypto-collectors -- python -c "import my
    python monitor_ml_features.py
    
    # Check for recent updates
-   kubectl logs materialized-updater-* -n crypto-collectors --tail=20 | grep "Found.*new records"
+   kubectl logs materialized-updater-* -n crypto-data-collection --tail=20 | grep "Updated materialized table"
    ```
 
 2. **Backfill Missing Data (if needed)**
@@ -99,7 +99,7 @@ kubectl exec materialized-updater-* -n crypto-collectors -- python -c "import my
    
    # If gaps exist, the materialized updater will automatically backfill
    # Monitor progress with:
-   kubectl logs materialized-updater-* -n crypto-collectors -f
+   kubectl logs materialized-updater-* -n crypto-data-collection -f
    ```
 
 3. **Validate System Health**
@@ -108,7 +108,7 @@ kubectl exec materialized-updater-* -n crypto-collectors -- python -c "import my
    python monitor_data_collection_health.py --once
    
    # Verify all services are healthy
-   kubectl get pods -n crypto-collectors
+   kubectl get pods -n crypto-data-collection
    ```
 
 ### **Post-Incident Actions (1-24 hours)**
@@ -136,7 +136,7 @@ kubectl exec materialized-updater-* -n crypto-collectors -- python -c "import my
 kubectl apply -f k8s/monitoring/data-collection-health-monitor.yaml
 
 # Check monitoring status
-kubectl get cronjobs -n crypto-collectors | grep health-monitor
+kubectl get cronjobs -n crypto-data-collection | grep health-monitor
 ```
 
 ### **Alert Thresholds**
@@ -161,13 +161,13 @@ python monitor_ml_features.py continuous 5 12
 python monitor_ml_features.py
 
 # Kubernetes services
-kubectl get pods -n crypto-collectors
+kubectl get pods -n crypto-data-collection
 
 # Recent activity
-kubectl logs materialized-updater-* -n crypto-collectors --tail=20
+kubectl logs materialized-updater-* -n crypto-data-collection --tail=20
 
 # Data freshness
-kubectl exec materialized-updater-* -n crypto-collectors -- python -c "from datetime import datetime; print(f'Current time: {datetime.now()}')"
+kubectl exec materialized-updater-* -n crypto-data-collection -- python -c "from datetime import datetime; print(f'Current time: {datetime.now()}')"
 ```
 
 ### **Detailed Diagnostics**
@@ -179,8 +179,8 @@ python monitor_data_collection_health.py --once --alert-threshold 1
 python monitor_data_collection_health.py --check-interval 5
 
 # Service logs
-kubectl logs -l app=materialized-updater -n crypto-collectors --tail=100
-kubectl logs -l app=enhanced-crypto-prices -n crypto-collectors --tail=50
+kubectl logs -l app=materialized-updater -n crypto-data-collection --tail=100
+kubectl logs -l app=enhanced-crypto-prices -n crypto-data-collection --tail=50
 ```
 
 ## 🚨 **Emergency Contacts & Escalation**
@@ -221,6 +221,6 @@ LESSONS LEARNED:
 
 ---
 
-**Last Updated**: October 7, 2025  
-**Version**: 1.0  
-**Status**: Active
+**Last Updated**: January 15, 2025  
+**Version**: 2.0  
+**Status**: Active - Updated for current system

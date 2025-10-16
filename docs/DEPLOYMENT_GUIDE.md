@@ -37,6 +37,7 @@ The data collection system supports multiple deployment scenarios:
 - **Windows MySQL Server**: Accessible via network ⚠️ **CRITICAL: MySQL must ONLY run on Windows host, NOT in Kubernetes**
 - **API Keys**: CoinGecko Premium, FRED, Guardian, OpenAI
 - **Network Access**: Outbound HTTPS (443) for external APIs
+- **Monitoring Stack**: Prometheus, Grafana, Alertmanager (deployed in crypto-data-collection namespace)
 
 ## 🚀 **Quick Start Deployment**
 

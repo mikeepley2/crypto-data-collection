@@ -120,7 +120,7 @@ scrape_configs:
       - role: pod
         namespaces:
           names:
-            - crypto-collectors
+            - crypto-data-collection
     relabel_configs:
       - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
         action: keep
@@ -137,7 +137,7 @@ scrape_configs:
 
   - job_name: 'crypto-api-gateway'
     static_configs:
-      - targets: ['data-api-gateway.crypto-collectors.svc.cluster.local:8000']
+      - targets: ['data-api-gateway.crypto-data-collection.svc.cluster.local:8000']
     metrics_path: '/metrics'
     scrape_interval: 10s
 
@@ -150,7 +150,7 @@ alerting:
   alertmanagers:
     - static_configs:
         - targets:
-          - alertmanager.crypto-monitoring.svc.cluster.local:9093
+          - alertmanager.crypto-data-collection.svc.cluster.local:9093
 ```
 
 #### **Service Metrics Implementation**
@@ -741,8 +741,8 @@ class StructuredLogger:
             "trace_id": kwargs.get('trace_id'),
             "labels": {
                 "environment": kwargs.get('environment', 'production'),
-                "cluster": "crypto-data-collection",
-                "namespace": "crypto-collectors"
+            "cluster": "crypto-data-collection",
+            "namespace": "crypto-data-collection"
             }
         }
     
@@ -1114,20 +1114,20 @@ async def readiness_check():
 #### **Service Down Incident**
 ```bash
 # 1. Identify failed service
-kubectl get pods -n crypto-collectors
+kubectl get pods -n crypto-data-collection
 
 # 2. Check service logs
-kubectl logs -n crypto-collectors deployment/FAILED_SERVICE --tail=100
+kubectl logs -n crypto-data-collection deployment/FAILED_SERVICE --tail=100
 
 # 3. Check resource usage
-kubectl top pods -n crypto-collectors
+kubectl top pods -n crypto-data-collection
 
 # 4. Restart service if needed
-kubectl rollout restart deployment/FAILED_SERVICE -n crypto-collectors
+kubectl rollout restart deployment/FAILED_SERVICE -n crypto-data-collection
 
 # 5. Verify recovery
-kubectl get pods -n crypto-collectors
-curl http://FAILED_SERVICE.crypto-collectors.svc.cluster.local:8080/health
+kubectl get pods -n crypto-data-collection
+curl http://FAILED_SERVICE.crypto-data-collection.svc.cluster.local:8080/health
 
 # 6. Update incident tracking
 # Document root cause and resolution
@@ -1143,7 +1143,7 @@ mysql -h host.docker.internal -u news_collector -p99Rules! crypto_prices \
   -e "SELECT symbol, MAX(timestamp) as latest FROM price_data GROUP BY symbol ORDER BY latest;"
 
 # 3. Manual data collection trigger
-kubectl exec -n crypto-collectors deployment/crypto-prices-collector -- \
+kubectl exec -n crypto-data-collection deployment/crypto-prices-collector -- \
   python -c "import collect; collect.run_manual_collection(['bitcoin', 'ethereum'])"
 
 # 4. Verify data recovery

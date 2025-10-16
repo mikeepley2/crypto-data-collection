@@ -81,13 +81,13 @@ spec:
                       conn = get_db_connection()
                       cursor = conn.cursor()
                       
-                      # Get recent price data that hasn't been processed yet (last 6 hours to catch up)
+                      # Get recent price data (last 1 hour for balanced updates)
                       cursor.execute('''
                       SELECT symbol, timestamp_iso, current_price, price_change_24h, volume_usd_24h, market_cap 
                       FROM price_data_real 
-                      WHERE timestamp_iso > DATE_SUB(NOW(), INTERVAL 6 HOUR) 
+                      WHERE timestamp_iso > DATE_SUB(NOW(), INTERVAL 1 HOUR) 
                       ORDER BY timestamp_iso DESC
-                      LIMIT 10000
+                      LIMIT 3000
                       ''')
                       recent_data = cursor.fetchall()
                       
@@ -97,27 +97,27 @@ spec:
                       for row in recent_data:
                           symbol, timestamp_iso, current_price, price_change_24h, volume_24h, market_cap = row
                           
-                          # Check if this record already exists in materialized table
-                          cursor.execute('SELECT COUNT(*) FROM ml_features_materialized WHERE symbol = %s AND timestamp_iso = %s', (symbol, timestamp_iso))
-                          exists = cursor.fetchone()[0]
-                          
-                          if exists == 0:
-                              try:
-                                  # Extract date and hour from timestamp
-                                  price_date = timestamp_iso.date()
-                                  price_hour = timestamp_iso.hour
-                                  
-                                  # Insert the record with all required fields
-                                  insert_query = '''
-                                  INSERT INTO ml_features_materialized 
-                                  (symbol, price_date, price_hour, timestamp_iso, current_price, price_change_24h, volume_24h, market_cap)
-                                  VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                                  '''
-                                  cursor.execute(insert_query, (symbol, price_date, price_hour, timestamp_iso, current_price, price_change_24h, volume_24h, market_cap))
-                                  inserted_count += 1
-                              except Exception as e:
-                                  logger.error(f'Error inserting {symbol}: {e}')
-                          else:
+                          try:
+                              # Extract date and hour from timestamp
+                              price_date = timestamp_iso.date()
+                              price_hour = timestamp_iso.hour
+                              
+                              # Use INSERT ... ON DUPLICATE KEY UPDATE to handle existing records
+                              insert_query = '''
+                              INSERT INTO ml_features_materialized 
+                              (symbol, price_date, price_hour, timestamp_iso, current_price, price_change_24h, volume_24h, market_cap, created_at, updated_at)
+                              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                              ON DUPLICATE KEY UPDATE
+                              current_price = VALUES(current_price),
+                              price_change_24h = VALUES(price_change_24h),
+                              volume_24h = VALUES(volume_24h),
+                              market_cap = VALUES(market_cap),
+                              updated_at = NOW()
+                              '''
+                              cursor.execute(insert_query, (symbol, price_date, price_hour, timestamp_iso, current_price, price_change_24h, volume_24h, market_cap))
+                              inserted_count += 1
+                          except Exception as e:
+                              logger.error(f'Error inserting {symbol}: {e}')
                               skipped_count += 1
                       
                       conn.commit()
@@ -166,7 +166,7 @@ spec:
                       except Exception as e:
                           logger.error(f"❌ Error in background update: {e}")
                       
-                      # Wait 5 minutes before next update
+                      # Wait 5 minutes before next update (balanced frequency for database size management)
                       time.sleep(300)
 
               if __name__ == "__main__":
