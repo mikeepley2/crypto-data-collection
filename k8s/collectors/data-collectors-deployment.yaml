@@ -1,0 +1,394 @@
+---
+# Onchain Metrics Collector - Kubernetes Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: onchain-collector
+  namespace: crypto-data-collection
+  labels:
+    app: onchain-collector
+    component: data-collection
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: onchain-collector
+  template:
+    metadata:
+      labels:
+        app: onchain-collector
+        component: data-collection
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: data-collector
+      restartPolicy: Always
+      containers:
+      - name: onchain-collector
+        image: python:3.11-slim
+        imagePullPolicy: IfNotPresent
+        workingDir: /app
+        command:
+          - sh
+          - -c
+          - |
+            pip install mysql-connector-python requests schedule python-dotenv > /dev/null 2>&1;
+            python /app/onchain_collector.py
+        env:
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: data-collection-config
+              key: MYSQL_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: data-collection-config
+              key: MYSQL_PORT
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: data-collection-config
+              key: MYSQL_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: data-collection-secrets
+              key: MYSQL_PASSWORD
+        - name: DB_NAME
+          value: "crypto_prices"
+        - name: GLASSNODE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: data-collection-secrets
+              key: GLASSNODE_API_KEY
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "250m"
+        livenessProbe:
+          exec:
+            command:
+              - python
+              - -c
+              - |
+                import os;
+                log_file = "/tmp/onchain_collector_health.txt";
+                if os.path.exists(log_file):
+                  import time;
+                  mtime = os.path.getmtime(log_file);
+                  if time.time() - mtime < 3600:
+                    exit(0);
+                exit(1)
+          initialDelaySeconds: 60
+          periodSeconds: 300
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+              - python
+              - -c
+              - "import mysql.connector; mysql.connector.connect(host=os.environ['DB_HOST'], user=os.environ['DB_USER'], password=os.environ['DB_PASSWORD'], database=os.environ['DB_NAME']).close(); exit(0)"
+          initialDelaySeconds: 30
+          periodSeconds: 60
+          timeoutSeconds: 5
+          failureThreshold: 2
+        volumeMounts:
+        - name: collector-code
+          mountPath: /app/onchain_collector.py
+          subPath: onchain_collector.py
+          readOnly: true
+      volumes:
+      - name: collector-code
+        configMap:
+          name: onchain-collector-code
+          defaultMode: 0755
+
+---
+# Macro Indicators Collector - Kubernetes Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: macro-collector
+  namespace: crypto-data-collection
+  labels:
+    app: macro-collector
+    component: data-collection
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: macro-collector
+  template:
+    metadata:
+      labels:
+        app: macro-collector
+        component: data-collection
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: data-collector
+      restartPolicy: Always
+      containers:
+      - name: macro-collector
+        image: python:3.11-slim
+        imagePullPolicy: IfNotPresent
+        workingDir: /app
+        command:
+          - sh
+          - -c
+          - |
+            pip install mysql-connector-python requests schedule python-dotenv > /dev/null 2>&1;
+            python /app/macro_collector.py
+        env:
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: data-collection-config
+              key: MYSQL_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: data-collection-config
+              key: MYSQL_PORT
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: data-collection-config
+              key: MYSQL_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: data-collection-secrets
+              key: MYSQL_PASSWORD
+        - name: DB_NAME
+          value: "crypto_prices"
+        - name: FRED_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: data-collection-secrets
+              key: FRED_API_KEY
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "250m"
+        livenessProbe:
+          exec:
+            command:
+              - python
+              - -c
+              - |
+                import os;
+                log_file = "/tmp/macro_collector_health.txt";
+                if os.path.exists(log_file):
+                  import time;
+                  mtime = os.path.getmtime(log_file);
+                  if time.time() - mtime < 3600:
+                    exit(0);
+                exit(1)
+          initialDelaySeconds: 60
+          periodSeconds: 300
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+              - python
+              - -c
+              - "import mysql.connector; mysql.connector.connect(host=os.environ['DB_HOST'], user=os.environ['DB_USER'], password=os.environ['DB_PASSWORD'], database=os.environ['DB_NAME']).close(); exit(0)"
+          initialDelaySeconds: 30
+          periodSeconds: 60
+          timeoutSeconds: 5
+          failureThreshold: 2
+        volumeMounts:
+        - name: collector-code
+          mountPath: /app/macro_collector.py
+          subPath: macro_collector.py
+          readOnly: true
+      volumes:
+      - name: collector-code
+        configMap:
+          name: macro-collector-code
+          defaultMode: 0755
+
+---
+# Technical Indicators Calculator - Kubernetes Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: technical-calculator
+  namespace: crypto-data-collection
+  labels:
+    app: technical-calculator
+    component: data-collection
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: technical-calculator
+  template:
+    metadata:
+      labels:
+        app: technical-calculator
+        component: data-collection
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: data-collector
+      restartPolicy: Always
+      containers:
+      - name: technical-calculator
+        image: python:3.11-slim
+        imagePullPolicy: IfNotPresent
+        workingDir: /app
+        command:
+          - sh
+          - -c
+          - |
+            pip install mysql-connector-python requests schedule python-dotenv > /dev/null 2>&1;
+            python /app/technical_calculator.py
+        env:
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: data-collection-config
+              key: MYSQL_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: data-collection-config
+              key: MYSQL_PORT
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: data-collection-config
+              key: MYSQL_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: data-collection-secrets
+              key: MYSQL_PASSWORD
+        - name: DB_NAME
+          value: "crypto_prices"
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "250m"
+        livenessProbe:
+          exec:
+            command:
+              - python
+              - -c
+              - |
+                import os;
+                log_file = "/tmp/technical_calculator_health.txt";
+                if os.path.exists(log_file):
+                  import time;
+                  mtime = os.path.getmtime(log_file);
+                  if time.time() - mtime < 600:
+                    exit(0);
+                exit(1)
+          initialDelaySeconds: 60
+          periodSeconds: 120
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+              - python
+              - -c
+              - "import mysql.connector; mysql.connector.connect(host=os.environ['DB_HOST'], user=os.environ['DB_USER'], password=os.environ['DB_PASSWORD'], database=os.environ['DB_NAME']).close(); exit(0)"
+          initialDelaySeconds: 30
+          periodSeconds: 60
+          timeoutSeconds: 5
+          failureThreshold: 2
+        volumeMounts:
+        - name: collector-code
+          mountPath: /app/technical_calculator.py
+          subPath: technical_calculator.py
+          readOnly: true
+      volumes:
+      - name: collector-code
+        configMap:
+          name: technical-calculator-code
+          defaultMode: 0755
+
+---
+# ServiceAccount for data collectors
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: data-collector
+  namespace: crypto-data-collection
+  labels:
+    app: data-collectors
+
+---
+# ClusterRole for data collectors
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: data-collector-role
+  labels:
+    app: data-collectors
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "watch", "list"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+
+---
+# ClusterRoleBinding for data collectors
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: data-collector-binding
+  labels:
+    app: data-collectors
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: data-collector-role
+subjects:
+- kind: ServiceAccount
+  name: data-collector
+  namespace: crypto-data-collection
