@@ -1,32 +1,37 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: sentiment-collector
+  name: enhanced-sentiment-collector-prebuilt
   namespace: crypto-data-collection
   labels:
-    app: sentiment-collector
+    app: enhanced-sentiment-collector-prebuilt
     component: data-collector
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: sentiment-collector
+      app: enhanced-sentiment-collector-prebuilt
   template:
     metadata:
       labels:
-        app: sentiment-collector
+        app: enhanced-sentiment-collector-prebuilt
         component: data-collector
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
     spec:
       nodeSelector:
         node-type: data-collection # Target the data collection node
+      tolerations:
+        - key: "data-platform"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
       containers:
-        - name: sentiment-collector
-          image: python:3.11-slim
-          command: ["/bin/bash", "-c"]
-          args:
-            - |
-              pip install fastapi uvicorn torch transformers requests mysql-connector-python textblob vaderSentiment &&
-              cd /app && python backend/services/sentiment/sentiment.py
+        - name: enhanced-sentiment-collector-prebuilt
+          image: ml-sentiment-service:latest
+          imagePullPolicy: Never # Use local image
           ports:
             - containerPort: 8000
               name: http
@@ -56,33 +61,45 @@ spec:
                 configMapKeyRef:
                   name: centralized-db-config
                   key: MYSQL_DATABASE
+            - name: PORT
+              value: "8000"
+            - name: LOG_LEVEL
+              value: "INFO"
           resources:
             requests:
               cpu: 200m
               memory: 512Mi
             limits:
-              cpu: 400m
+              cpu: 500m
               memory: 1Gi
-          volumeMounts:
-            - name: app-code
-              mountPath: /app
-      volumes:
-        - name: app-code
-          hostPath:
-            path: E:\git\crypto-data-collection # Mount the entire project directory
-            type: DirectoryOrCreate
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: sentiment-collector
+  name: enhanced-sentiment-collector-prebuilt
   namespace: crypto-data-collection
   labels:
-    app: sentiment-collector
+    app: enhanced-sentiment-collector-prebuilt
     component: data-collector
 spec:
   selector:
-    app: sentiment-collector
+    app: enhanced-sentiment-collector-prebuilt
   ports:
     - protocol: TCP
       port: 8000

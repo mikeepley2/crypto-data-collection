@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-sentiment-collector
+  namespace: crypto-data-collection
+spec:
+  template:
+    spec:
+      containers:
+        - name: enhanced-sentiment-collector
+          args:
+            - |
+              apt-get update && apt-get install -y gcc g++ && \
+              pip install fastapi uvicorn aiohttp mysql-connector-python asyncio && \
+              pip install torch --index-url https://download.pytorch.org/whl/cpu && \
+              pip install transformers numpy && \
+              python /app/sentiment.py
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 180
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - mountPath: /app/sentiment.py
+              name: sentiment-code
+              subPath: enhanced_ml_sentiment.py
+      volumes:
+        - name: sentiment-code
+          configMap:
+            name: enhanced-sentiment-ml-code

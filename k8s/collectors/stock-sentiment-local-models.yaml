@@ -1,0 +1,245 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stock-sentiment-local-models
+  namespace: crypto-data-collection
+  labels:
+    app: stock-sentiment-local-models
+    component: data-collector
+    market-type: stock
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stock-sentiment-local-models
+  template:
+    metadata:
+      labels:
+        app: stock-sentiment-local-models
+        component: data-collector
+        market-type: stock
+    spec:
+      nodeSelector:
+        node-type: data-collection
+      tolerations:
+        - key: "data-platform"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      containers:
+        - name: stock-sentiment-collector
+          image: python:3.11-slim
+          command: ["/bin/bash"]
+          args:
+            - "-c"
+            - |
+              set -e
+              echo "🚀 Starting Stock Sentiment Service with Local FinBERT"
+
+              # Install system dependencies
+              apt-get update && apt-get install -y gcc g++ && rm -rf /var/lib/apt/lists/*
+
+              # Install Python dependencies
+              pip install --no-cache-dir \
+                fastapi \
+                uvicorn \
+                requests \
+                mysql-connector-python \
+                numpy \
+                torch \
+                transformers
+
+              # Download FinBERT model locally
+              echo "📥 Downloading FinBERT model locally..."
+              python -c "
+              from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
+              import os
+
+              model_name = 'ProsusAI/finbert'
+              print(f'Downloading {model_name}...')
+
+              tokenizer = AutoTokenizer.from_pretrained(model_name)
+              model = AutoModelForSequenceClassification.from_pretrained(model_name)
+
+              # Save model locally
+              local_path = '/app/models/finbert'
+              os.makedirs(local_path, exist_ok=True)
+              tokenizer.save_pretrained(local_path)
+              model.save_pretrained(local_path)
+              print(f'Model saved to {local_path}')
+
+              # Create sentiment pipeline
+              sentiment_pipeline = pipeline(
+                  'sentiment-analysis',
+                  model=model,
+                  tokenizer=tokenizer,
+                  device=-1  # CPU only
+              )
+
+              # Test the pipeline
+              test_result = sentiment_pipeline('Stock market shows strong performance')
+              print(f'✅ Model loaded and tested: {test_result}')
+              "
+
+              # Create the sentiment service
+              cat > /app/sentiment.py << 'EOF'
+              #!/usr/bin/env python3
+              """
+              Stock Sentiment Service using Local FinBERT
+              """
+
+              import os
+              import logging
+              from fastapi import FastAPI, HTTPException
+              from pydantic import BaseModel
+              from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
+              import uvicorn
+
+              # Configure logging
+              logging.basicConfig(level=logging.INFO)
+              logger = logging.getLogger(__name__)
+
+              app = FastAPI(title="Stock Sentiment Service", version="1.0.0")
+
+              # Global variables for model
+              sentiment_pipeline = None
+
+              class SentimentRequest(BaseModel):
+                  text: str
+                  market_type: str = "stock"
+
+              class SentimentResponse(BaseModel):
+                  sentiment_score: float
+                  confidence: float
+                  analysis: str
+                  market_type: str
+                  model_used: str
+
+              @app.on_event("startup")
+              async def load_model():
+                  global sentiment_pipeline
+                  try:
+                      logger.info("🔄 Loading local FinBERT model...")
+                      model_path = "/app/models/finbert"
+                      
+                      tokenizer = AutoTokenizer.from_pretrained(model_path)
+                      model = AutoModelForSequenceClassification.from_pretrained(model_path)
+                      
+                      sentiment_pipeline = pipeline(
+                          "sentiment-analysis",
+                          model=model,
+                          tokenizer=tokenizer,
+                          device=-1  # CPU only
+                      )
+                      
+                      logger.info("✅ Local FinBERT model loaded successfully")
+                  except Exception as e:
+                      logger.error(f"❌ Failed to load model: {e}")
+                      raise
+
+              @app.get("/health")
+              async def health_check():
+                  return {
+                      "status": "healthy",
+                      "model_loaded": sentiment_pipeline is not None,
+                      "service": "stock-sentiment-local-models"
+                  }
+
+              @app.post("/sentiment", response_model=SentimentResponse)
+              async def analyze_sentiment(request: SentimentRequest):
+                  if sentiment_pipeline is None:
+                      raise HTTPException(status_code=503, detail="Model not loaded")
+
+                  try:
+                      # Analyze sentiment
+                      result = sentiment_pipeline(request.text)
+
+                      # Extract sentiment information
+                      sentiment_label = result[0]["label"]
+                      confidence = result[0]["score"]
+
+                      # Convert to numeric score
+                      if sentiment_label == "POSITIVE":
+                          sentiment_score = confidence
+                      elif sentiment_label == "NEGATIVE":
+                          sentiment_score = -confidence
+                      else:
+                          sentiment_score = 0.0
+
+                      return SentimentResponse(
+                          sentiment_score=sentiment_score,
+                          confidence=confidence,
+                          analysis=f"Local FinBERT analysis: {sentiment_label} (confidence: {confidence:.3f})",
+                          market_type=request.market_type,
+                          model_used="ProsusAI/finbert-local"
+                      )
+
+                  except Exception as e:
+                      logger.error(f"Error analyzing sentiment: {e}")
+                      raise HTTPException(status_code=500, detail=str(e))
+
+              if __name__ == "__main__":
+                  uvicorn.run(app, host="0.0.0.0", port=8000)
+              EOF
+
+              # Make the script executable
+              chmod +x /app/sentiment.py
+
+              # Start the service
+              echo "🚀 Starting sentiment service..."
+              cd /app && python sentiment.py
+          envFrom:
+            - configMapRef:
+                name: centralized-db-config
+            - secretRef:
+                name: centralized-db-secrets
+          env:
+            - name: MODEL_TYPE
+              value: "stock"
+            - name: MODEL_NAME
+              value: "finbert"
+            - name: PORT
+              value: "8000"
+            - name: LOG_LEVEL
+              value: "INFO"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 180
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: stock-sentiment-local-models
+  namespace: crypto-data-collection
+  labels:
+    app: stock-sentiment-local-models
+    component: data-collector
+    market-type: stock
+spec:
+  selector:
+    app: stock-sentiment-local-models
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP

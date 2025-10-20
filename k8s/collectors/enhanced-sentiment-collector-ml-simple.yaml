@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-sentiment-collector
+  namespace: crypto-data-collection
+spec:
+  template:
+    spec:
+      containers:
+        - name: enhanced-sentiment-collector
+          args:
+            - |
+              apt-get update && apt-get install -y gcc g++ && \
+              pip install fastapi uvicorn aiohttp mysql-connector-python asyncio torch transformers numpy --index-url https://download.pytorch.org/whl/cpu && \
+              python /app/sentiment.py
+          volumeMounts:
+            - mountPath: /app/sentiment.py
+              name: sentiment-code
+              subPath: enhanced_ml_sentiment.py
+      volumes:
+        - name: sentiment-code
+          configMap:
+            name: enhanced-sentiment-ml-code
+
+

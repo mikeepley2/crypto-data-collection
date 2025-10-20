@@ -1,0 +1,288 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sentiment-code-lightweight
+  namespace: crypto-data-collection
+data:
+  crypto_sentiment.py: |
+    #!/usr/bin/env python3
+    """
+    Lightweight Crypto Sentiment Analysis Service
+    Uses CPU-only models for faster startup
+    """
+
+    import os
+    import logging
+    from datetime import datetime
+    from typing import Dict, List, Optional, Tuple
+    from fastapi import FastAPI, HTTPException
+    from pydantic import BaseModel
+    import uvicorn
+    import mysql.connector
+
+    # Configure logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
+
+    app = FastAPI(title="Crypto Sentiment Analysis", version="1.0.0")
+
+    class SentimentRequest(BaseModel):
+        text: str
+        market_type: str = "crypto"
+
+    class SentimentResponse(BaseModel):
+        sentiment_score: float
+        confidence: float
+        analysis: str
+        market_type: str
+
+    def get_db_connection():
+        """Get database connection"""
+        config = {
+            "host": os.getenv("MYSQL_HOST", "host.docker.internal"),
+            "port": int(os.getenv("MYSQL_PORT", "3306")),
+            "user": os.getenv("MYSQL_USER", "news_collector"),
+            "password": os.getenv("MYSQL_PASSWORD", "99Rules!"),
+            "database": os.getenv("MYSQL_DATABASE", "crypto_prices"),
+            "charset": "utf8mb4"
+        }
+        return mysql.connector.connect(**config)
+
+    def analyze_sentiment_with_ml(text: str, market_type: str) -> Tuple[float, float, str]:
+        """Analyze sentiment using lightweight ML models"""
+        try:
+            # Import transformers
+            from transformers import pipeline
+            
+            # Use a lightweight model for crypto sentiment
+            model_name = "cardiffnlp/twitter-roberta-base-sentiment-latest"
+            
+            logger.info(f"Loading {model_name} for {market_type} sentiment analysis...")
+            
+            # Create sentiment analysis pipeline with CPU-only
+            sentiment_pipeline = pipeline(
+                "sentiment-analysis",
+                model=model_name,
+                device=-1,  # Force CPU usage
+                return_all_scores=True
+            )
+            
+            # Truncate text to avoid token limits
+            text = text[:512]
+            
+            # Analyze sentiment
+            results = sentiment_pipeline(text)
+            
+            # Process results
+            if results and len(results) > 0:
+                # Get the highest scoring sentiment
+                best_result = max(results[0], key=lambda x: x['score'])
+                label = best_result['label'].upper()
+                score = best_result['score']
+                
+                # Convert to -1 to 1 scale
+                if "POSITIVE" in label or "LABEL_2" in label:
+                    sentiment_score = score
+                elif "NEGATIVE" in label or "LABEL_0" in label:
+                    sentiment_score = -score
+                else:  # NEUTRAL or LABEL_1
+                    sentiment_score = 0.0
+                
+                confidence = score
+                analysis = f"Lightweight ML {market_type} sentiment: {label} ({sentiment_score:.3f})"
+                
+                logger.info(f"ML sentiment analysis: {sentiment_score:.3f} (confidence: {confidence:.3f})")
+                return sentiment_score, confidence, analysis
+            else:
+                logger.error("No sentiment results returned")
+                return 0.0, 0.0, "No sentiment results"
+                
+        except ImportError as e:
+            logger.error(f"Transformers library not available: {e}")
+            return 0.0, 0.0, "Transformers library not available"
+        except Exception as e:
+            logger.error(f"ML sentiment analysis failed: {e}")
+            return 0.0, 0.0, f"Analysis error: {str(e)}"
+
+    @app.post("/analyze", response_model=SentimentResponse)
+    async def analyze_sentiment(request: SentimentRequest):
+        """Analyze sentiment of text"""
+        try:
+            sentiment_score, confidence, analysis = analyze_sentiment_with_ml(
+                request.text, request.market_type
+            )
+            
+            return SentimentResponse(
+                sentiment_score=sentiment_score,
+                confidence=confidence,
+                analysis=analysis,
+                market_type=request.market_type
+            )
+            
+        except Exception as e:
+            logger.error(f"Error analyzing sentiment: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/health")
+    def health_check():
+        """Health check endpoint"""
+        return {"status": "healthy", "service": "crypto-sentiment-collector"}
+
+    @app.get("/metrics")
+    def metrics():
+        """Prometheus metrics endpoint"""
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse("# HELP crypto_sentiment_collector_health Health status\n# TYPE crypto_sentiment_collector_health gauge\ncrypto_sentiment_collector_health 1\n")
+
+    @app.get("/")
+    def root():
+        """Root endpoint"""
+        return {"message": "Crypto Sentiment Analysis Service", "status": "running"}
+
+    if __name__ == "__main__":
+        logger.info("🚀 Starting Lightweight Crypto Sentiment Analysis Service")
+        uvicorn.run(app, host="0.0.0.0", port=8000)
+
+  stock_sentiment.py: |
+    #!/usr/bin/env python3
+    """
+    Lightweight Stock Sentiment Analysis Service
+    Uses CPU-only models for faster startup
+    """
+
+    import os
+    import logging
+    from datetime import datetime
+    from typing import Dict, List, Optional, Tuple
+    from fastapi import FastAPI, HTTPException
+    from pydantic import BaseModel
+    import uvicorn
+    import mysql.connector
+
+    # Configure logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
+
+    app = FastAPI(title="Stock Sentiment Analysis", version="1.0.0")
+
+    class SentimentRequest(BaseModel):
+        text: str
+        market_type: str = "stock"
+
+    class SentimentResponse(BaseModel):
+        sentiment_score: float
+        confidence: float
+        analysis: str
+        market_type: str
+
+    def get_db_connection():
+        """Get database connection"""
+        config = {
+            "host": os.getenv("MYSQL_HOST", "host.docker.internal"),
+            "port": int(os.getenv("MYSQL_PORT", "3306")),
+            "user": os.getenv("MYSQL_USER", "news_collector"),
+            "password": os.getenv("MYSQL_PASSWORD", "99Rules!"),
+            "database": os.getenv("MYSQL_DATABASE", "crypto_prices"),
+            "charset": "utf8mb4"
+        }
+        return mysql.connector.connect(**config)
+
+    def analyze_sentiment_with_ml(text: str, market_type: str) -> Tuple[float, float, str]:
+        """Analyze sentiment using lightweight ML models"""
+        try:
+            # Import transformers
+            from transformers import pipeline
+            
+            # Use a lightweight model for stock sentiment
+            model_name = "cardiffnlp/twitter-roberta-base-sentiment-latest"
+            
+            logger.info(f"Loading {model_name} for {market_type} sentiment analysis...")
+            
+            # Create sentiment analysis pipeline with CPU-only
+            sentiment_pipeline = pipeline(
+                "sentiment-analysis",
+                model=model_name,
+                device=-1,  # Force CPU usage
+                return_all_scores=True
+            )
+            
+            # Truncate text to avoid token limits
+            text = text[:512]
+            
+            # Analyze sentiment
+            results = sentiment_pipeline(text)
+            
+            # Process results
+            if results and len(results) > 0:
+                # Get the highest scoring sentiment
+                best_result = max(results[0], key=lambda x: x['score'])
+                label = best_result['label'].upper()
+                score = best_result['score']
+                
+                # Convert to -1 to 1 scale
+                if "POSITIVE" in label or "LABEL_2" in label:
+                    sentiment_score = score
+                elif "NEGATIVE" in label or "LABEL_0" in label:
+                    sentiment_score = -score
+                else:  # NEUTRAL or LABEL_1
+                    sentiment_score = 0.0
+                
+                confidence = score
+                analysis = f"Lightweight ML {market_type} sentiment: {label} ({sentiment_score:.3f})"
+                
+                logger.info(f"ML sentiment analysis: {sentiment_score:.3f} (confidence: {confidence:.3f})")
+                return sentiment_score, confidence, analysis
+            else:
+                logger.error("No sentiment results returned")
+                return 0.0, 0.0, "No sentiment results"
+                
+        except ImportError as e:
+            logger.error(f"Transformers library not available: {e}")
+            return 0.0, 0.0, "Transformers library not available"
+        except Exception as e:
+            logger.error(f"ML sentiment analysis failed: {e}")
+            return 0.0, 0.0, f"Analysis error: {str(e)}"
+
+    @app.post("/analyze", response_model=SentimentResponse)
+    async def analyze_sentiment(request: SentimentRequest):
+        """Analyze sentiment of text"""
+        try:
+            sentiment_score, confidence, analysis = analyze_sentiment_with_ml(
+                request.text, request.market_type
+            )
+            
+            return SentimentResponse(
+                sentiment_score=sentiment_score,
+                confidence=confidence,
+                analysis=analysis,
+                market_type=request.market_type
+            )
+            
+        except Exception as e:
+            logger.error(f"Error analyzing sentiment: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/health")
+    def health_check():
+        """Health check endpoint"""
+        return {"status": "healthy", "service": "stock-sentiment-collector"}
+
+    @app.get("/metrics")
+    def metrics():
+        """Prometheus metrics endpoint"""
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse("# HELP stock_sentiment_collector_health Health status\n# TYPE stock_sentiment_collector_health gauge\nstock_sentiment_collector_health 1\n")
+
+    @app.get("/")
+    def root():
+        """Root endpoint"""
+        return {"message": "Stock Sentiment Analysis Service", "status": "running"}
+
+    if __name__ == "__main__":
+        logger.info("🚀 Starting Lightweight Stock Sentiment Analysis Service")
+        uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+
+
+

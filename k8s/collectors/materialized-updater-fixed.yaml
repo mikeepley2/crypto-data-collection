@@ -76,7 +76,7 @@ spec:
                   return symbols
 
               def update_materialized_table():
-                  """Update the materialized table with recent price data"""
+                  """Update the materialized table with recent price data and sentiment aggregation"""
                   try:
                       conn = get_db_connection()
                       cursor = conn.cursor()
@@ -102,19 +102,44 @@ spec:
                               price_date = timestamp_iso.date()
                               price_hour = timestamp_iso.hour
                               
+                              # Get sentiment data for this symbol and time period (last 24 hours)
+                              cursor.execute('''
+                              SELECT 
+                                  AVG(CASE WHEN market_type = 'crypto' THEN sentiment_score ELSE NULL END) as avg_crypto_sentiment,
+                                  AVG(CASE WHEN market_type = 'stock' THEN sentiment_score ELSE NULL END) as avg_stock_sentiment,
+                                  AVG(CASE WHEN market_type = 'social' THEN sentiment_score ELSE NULL END) as avg_social_sentiment,
+                                  AVG(sentiment_score) as avg_overall_sentiment,
+                                  COUNT(*) as sentiment_count
+                              FROM crypto_news 
+                              WHERE published_at >= DATE_SUB(%s, INTERVAL 24 HOUR)
+                              AND (crypto_mentions LIKE %s OR title LIKE %s OR content LIKE %s)
+                              AND sentiment_score IS NOT NULL
+                              ''', (timestamp_iso, f'%{symbol}%', f'%{symbol}%', f'%{symbol}%'))
+                              
+                              sentiment_data = cursor.fetchone()
+                              avg_crypto_sentiment, avg_stock_sentiment, avg_social_sentiment, avg_overall_sentiment, sentiment_count = sentiment_data
+                              
                               # Use INSERT ... ON DUPLICATE KEY UPDATE to handle existing records
                               insert_query = '''
                               INSERT INTO ml_features_materialized 
-                              (symbol, price_date, price_hour, timestamp_iso, current_price, price_change_24h, volume_24h, market_cap, created_at, updated_at)
-                              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                              (symbol, price_date, price_hour, timestamp_iso, current_price, price_change_24h, volume_24h, market_cap, 
+                               avg_ml_crypto_sentiment, avg_ml_stock_sentiment, avg_ml_social_sentiment, avg_ml_overall_sentiment, sentiment_volume,
+                               created_at, updated_at)
+                              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
                               ON DUPLICATE KEY UPDATE
                               current_price = VALUES(current_price),
                               price_change_24h = VALUES(price_change_24h),
                               volume_24h = VALUES(volume_24h),
                               market_cap = VALUES(market_cap),
+                              avg_ml_crypto_sentiment = VALUES(avg_ml_crypto_sentiment),
+                              avg_ml_stock_sentiment = VALUES(avg_ml_stock_sentiment),
+                              avg_ml_social_sentiment = VALUES(avg_ml_social_sentiment),
+                              avg_ml_overall_sentiment = VALUES(avg_ml_overall_sentiment),
+                              sentiment_volume = VALUES(sentiment_volume),
                               updated_at = NOW()
                               '''
-                              cursor.execute(insert_query, (symbol, price_date, price_hour, timestamp_iso, current_price, price_change_24h, volume_24h, market_cap))
+                              cursor.execute(insert_query, (symbol, price_date, price_hour, timestamp_iso, current_price, price_change_24h, volume_24h, market_cap,
+                                                           avg_crypto_sentiment, avg_stock_sentiment, avg_social_sentiment, avg_overall_sentiment, sentiment_count))
                               inserted_count += 1
                           except Exception as e:
                               logger.error(f'Error inserting {symbol}: {e}')

@@ -125,17 +125,30 @@ class CryptoNewsCollector:
             stored_count = 0
             for item in news_items:
                 try:
-                    # Insert into crypto_news table (assuming it exists)
+                    # Insert into crypto_news table with unified schema
                     insert_sql = """
                     INSERT INTO crypto_news (
                         title, content, url, published_at, source, 
-                        category, sentiment_score, crypto_mentions
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        category, sentiment_score, sentiment_confidence,
+                        llm_sentiment_score, llm_sentiment_confidence, llm_sentiment_analysis,
+                        market_type, stock_sentiment_score, stock_sentiment_confidence, stock_sentiment_analysis,
+                        crypto_mentions, url_hash, created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
                     ON DUPLICATE KEY UPDATE
                         content = VALUES(content),
                         sentiment_score = VALUES(sentiment_score),
-                        updated_at = CURRENT_TIMESTAMP
+                        sentiment_confidence = VALUES(sentiment_confidence),
+                        updated_at = NOW()
                     """
+
+                    # Generate URL hash for duplicate detection
+                    import hashlib
+
+                    url_hash = (
+                        hashlib.md5(item["url"].encode()).hexdigest()
+                        if item["url"]
+                        else hashlib.md5(f"no_url_{item['title']}".encode()).hexdigest()
+                    )
 
                     cursor.execute(
                         insert_sql,
@@ -147,7 +160,16 @@ class CryptoNewsCollector:
                             item["source"],
                             item["category"],
                             item["sentiment_score"],
+                            item.get("sentiment_confidence", None),
+                            None,  # llm_sentiment_score
+                            None,  # llm_sentiment_confidence
+                            None,  # llm_sentiment_analysis
+                            "crypto",  # market_type (default for news collector)
+                            None,  # stock_sentiment_score
+                            None,  # stock_sentiment_confidence
+                            None,  # stock_sentiment_analysis
                             ",".join(item["crypto_mentions"]),
+                            url_hash,
                         ),
                     )
                     stored_count += 1

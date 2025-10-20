@@ -16,9 +16,18 @@ spec:
       labels:
         app: sentiment-collector
         component: data-collector
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
     spec:
       nodeSelector:
         node-type: data-collection # Target the data collection node
+      tolerations:
+        - key: "data-platform"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
       containers:
         - name: sentiment-collector
           image: python:3.11-slim
@@ -26,7 +35,10 @@ spec:
           args:
             - |
               pip install fastapi uvicorn requests mysql-connector-python
-
+              
+              # Create app directory
+              mkdir -p /app
+              
               # Create the sentiment collector service
               cat > /app/sentiment_collector.py << 'EOF'
               import os
@@ -78,30 +90,35 @@ spec:
                   
                   return collected_count
 
-              @app.get("/health")
-              def health_check():
-                  return {"status": "healthy", "service": "sentiment-collector"}
+      @app.get("/health")
+      def health_check():
+          return {"status": "healthy", "service": "sentiment-collector"}
+      
+      @app.get("/metrics")
+      def metrics():
+          # Simple metrics endpoint for Prometheus
+          return "# HELP sentiment_collector_health Health status of sentiment collector\n# TYPE sentiment_collector_health gauge\nsentiment_collector_health 1\n"
 
-              @app.post("/collect")
-              def collect_sentiment_endpoint():
-                  try:
-                      count = collect_sentiment()
-                      return {"status": "success", "sources_collected": count}
-                  except Exception as e:
-                      logger.error(f"Collection error: {e}")
-                      return {"status": "error", "message": str(e)}
+      @app.post("/collect")
+      def collect_sentiment_endpoint():
+          try:
+              count = collect_sentiment()
+              return {"status": "success", "sources_collected": count}
+          except Exception as e:
+              logger.error(f"Collection error: {e}")
+              return {"status": "error", "message": str(e)}
 
-              @app.get("/")
-              def root():
-                  return {"message": "Sentiment Collector Service", "status": "running"}
+      @app.get("/")
+      def root():
+          return {"message": "Sentiment Collector Service", "status": "running"}
 
-              if __name__ == "__main__":
-                  logger.info("🚀 Starting Sentiment Collector Service")
-                  uvicorn.run(app, host="0.0.0.0", port=8000)
-              EOF
+      if __name__ == "__main__":
+          logger.info("🚀 Starting Sentiment Collector Service")
+          uvicorn.run(app, host="0.0.0.0", port=8000)
+      EOF
 
-              # Start the service
-              cd /app && python sentiment_collector.py
+      # Start the service
+      cd /app && python sentiment_collector.py
           ports:
             - containerPort: 8000
               name: http
@@ -133,10 +150,10 @@ spec:
                   key: MYSQL_DATABASE
           resources:
             requests:
-              cpu: 200m
+              cpu: 100m
               memory: 256Mi
             limits:
-              cpu: 500m
+              cpu: 200m
               memory: 512Mi
 ---
 apiVersion: v1
