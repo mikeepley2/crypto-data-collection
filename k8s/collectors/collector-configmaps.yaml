@@ -56,18 +56,12 @@ data:
                     try:
                         timestamp = datetime.utcnow()
                         cursor.execute(
-                            """INSERT INTO onchain_metrics (
-                                coin_symbol, collection_date, timestamp, 
-                                active_addresses_24h, transaction_count_24h, 
-                                transaction_volume_usd_24h, price_usd, market_cap_usd
-                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            """INSERT INTO crypto_onchain_data (
+                                coin, coin_symbol, timestamp, collection_date
+                            ) VALUES (%s, %s, %s, %s)
                             ON DUPLICATE KEY UPDATE
-                                active_addresses_24h = VALUES(active_addresses_24h),
-                                transaction_count_24h = VALUES(transaction_count_24h),
-                                transaction_volume_usd_24h = VALUES(transaction_volume_usd_24h),
-                                price_usd = VALUES(price_usd),
-                                market_cap_usd = VALUES(market_cap_usd)""",
-                            (symbol, timestamp, timestamp, None, None, None, None, None),
+                                timestamp = VALUES(timestamp)""",
+                            (symbol, symbol, timestamp, timestamp),
                         )
                         processed += 1
                     except Exception as e:
