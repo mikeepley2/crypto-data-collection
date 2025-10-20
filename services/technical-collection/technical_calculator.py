@@ -2,6 +2,7 @@
 """
 Technical Indicators Calculator
 Calculates and updates technical indicators for price data
+Includes backfill capability for historical data
 """
 
 import os
@@ -30,24 +31,36 @@ def get_db_connection():
         return None
 
 
-def calculate_indicators():
-    """Calculate technical indicators"""
-    logger.info("Starting technical indicators calculation...")
+def calculate_indicators(backfill_days=None):
+    """
+    Calculate technical indicators
+    backfill_days: if set, backfill last N days of data instead of just recent
+    """
+    if backfill_days:
+        logger.info(f"Starting technical indicators backfill for last {backfill_days} days...")
+    else:
+        logger.info("Starting technical indicators calculation...")
 
     conn = get_db_connection()
     if not conn:
-        return
+        return 0
 
     try:
         cursor = conn.cursor(dictionary=True)
 
         # Get unique symbols with recent price data
+        time_filter = ""
+        if backfill_days:
+            time_filter = f"WHERE timestamp > DATE_SUB(NOW(), INTERVAL {backfill_days} DAY)"
+        else:
+            time_filter = "WHERE timestamp > DATE_SUB(NOW(), INTERVAL 30 DAY)"
+
         cursor.execute(
-            """
+            f"""
             SELECT DISTINCT symbol FROM price_data_real
-            WHERE timestamp > DATE_SUB(NOW(), INTERVAL 30 DAY)
+            {time_filter}
             ORDER BY symbol
-            LIMIT 50
+            LIMIT 500
         """
         )
 
@@ -65,7 +78,7 @@ def calculate_indicators():
                     FROM price_data_real
                     WHERE symbol = %s
                     ORDER BY timestamp DESC
-                    LIMIT 200
+                    LIMIT 300
                 """,
                     (symbol,),
                 )
@@ -105,7 +118,7 @@ def calculate_indicators():
                 cursor.execute(
                     """
                     INSERT INTO technical_indicators (
-                        symbol, timestamp, sma_20, sma_50, rsi, 
+                        symbol, timestamp, sma_20, sma_50, rsi,
                         macd, bb_upper, bb_lower
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE
@@ -127,6 +140,8 @@ def calculate_indicators():
 
         conn.commit()
         logger.info(f"Processed {processed} symbols")
+        with open("/tmp/technical_calculator_health.txt", "w") as f:
+            f.write(str(datetime.utcnow()))
 
     except Exception as e:
         logger.error(f"Calculation error: {e}")
@@ -135,9 +150,21 @@ def calculate_indicators():
         cursor.close()
         conn.close()
 
+    return processed
+
 
 def main():
     logger.info("Technical Indicators Calculator starting...")
+
+    # Check for backfill request
+    backfill_days = os.getenv("BACKFILL_DAYS")
+    if backfill_days:
+        logger.info(f"BACKFILL MODE: Processing last {backfill_days} days")
+        calculate_indicators(backfill_days=int(backfill_days))
+        logger.info("Backfill complete. Exiting.")
+        return
+
+    # Normal operation: schedule every 5 minutes
     schedule.every(5).minutes.do(calculate_indicators)
     calculate_indicators()
 
