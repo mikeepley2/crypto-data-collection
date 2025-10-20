@@ -37,7 +37,9 @@ def calculate_indicators(backfill_days=None):
     backfill_days: if set, backfill last N days of data instead of just recent
     """
     if backfill_days:
-        logger.info(f"Starting technical indicators backfill for last {backfill_days} days...")
+        logger.info(
+            f"Starting technical indicators backfill for last {backfill_days} days..."
+        )
     else:
         logger.info("Starting technical indicators calculation...")
 
@@ -51,9 +53,13 @@ def calculate_indicators(backfill_days=None):
         # Get unique symbols with recent price data
         time_filter = ""
         if backfill_days:
-            time_filter = f"WHERE timestamp > DATE_SUB(NOW(), INTERVAL {backfill_days} DAY)"
+            # Convert backfill_days to milliseconds (Unix timestamps in price_data_real)
+            cutoff_ms = int((datetime.utcnow().timestamp() - backfill_days * 86400) * 1000)
+            time_filter = f"WHERE timestamp > {cutoff_ms}"
         else:
-            time_filter = "WHERE timestamp > DATE_SUB(NOW(), INTERVAL 30 DAY)"
+            # For normal operation, use last 30 days
+            cutoff_ms = int((datetime.utcnow().timestamp() - 30 * 86400) * 1000)
+            time_filter = f"WHERE timestamp > {cutoff_ms}"
 
         cursor.execute(
             f"""
