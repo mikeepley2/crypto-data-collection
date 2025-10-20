@@ -54,8 +54,13 @@ def calculate_indicators(backfill_days=None):
         time_filter = ""
         if backfill_days:
             # Convert backfill_days to milliseconds (Unix timestamps in price_data_real)
-            cutoff_ms = int((datetime.utcnow().timestamp() - backfill_days * 86400) * 1000)
-            time_filter = f"WHERE timestamp > {cutoff_ms}"
+            # If backfill_days is 0 or very large, backfill ALL data
+            if backfill_days == 0:
+                time_filter = ""  # No filter = all data
+                logger.info("BACKFILL MODE: Processing ALL available data")
+            else:
+                cutoff_ms = int((datetime.utcnow().timestamp() - backfill_days * 86400) * 1000)
+                time_filter = f"WHERE timestamp > {cutoff_ms}"
         else:
             # For normal operation, use last 30 days
             cutoff_ms = int((datetime.utcnow().timestamp() - 30 * 86400) * 1000)
@@ -80,7 +85,7 @@ def calculate_indicators(backfill_days=None):
                 # Get recent OHLC data for the symbol
                 cursor.execute(
                     """
-                    SELECT timestamp, close, high, low, volume
+                    SELECT timestamp, current_price as close, high_24h as high, low_24h as low, volume_usd_24h as volume
                     FROM price_data_real
                     WHERE symbol = %s
                     ORDER BY timestamp DESC
@@ -118,25 +123,26 @@ def calculate_indicators(backfill_days=None):
                 bb_upper = sma_20 * 1.02
                 bb_lower = sma_20 * 0.98
 
-                # Update technical_indicators table
-                timestamp = prices[0]["timestamp"] if prices else datetime.utcnow()
+                # Convert Unix milliseconds timestamp to datetime
+                timestamp_ms = prices[0]["timestamp"] if prices else int(datetime.utcnow().timestamp() * 1000)
+                timestamp_iso = datetime.utcfromtimestamp(timestamp_ms / 1000)
 
                 cursor.execute(
                     """
                     INSERT INTO technical_indicators (
-                        symbol, timestamp, sma_20, sma_50, rsi,
-                        macd, bb_upper, bb_lower
+                        symbol, timestamp_iso, sma_20, sma_50, rsi,
+                        macd, bollinger_upper, bollinger_lower
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE
                         sma_20 = VALUES(sma_20),
                         sma_50 = VALUES(sma_50),
                         rsi = VALUES(rsi),
                         macd = VALUES(macd),
-                        bb_upper = VALUES(bb_upper),
-                        bb_lower = VALUES(bb_lower),
+                        bollinger_upper = VALUES(bollinger_upper),
+                        bollinger_lower = VALUES(bollinger_lower),
                         updated_at = NOW()
                 """,
-                    (symbol, timestamp, sma_20, sma_50, rsi, macd, bb_upper, bb_lower),
+                    (symbol, timestamp_iso, sma_20, sma_50, rsi, macd, bb_upper, bb_lower),
                 )
 
                 processed += 1
