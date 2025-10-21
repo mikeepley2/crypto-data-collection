@@ -24,15 +24,15 @@ FRED_API_KEY = os.getenv("FRED_API_KEY", "")
 
 # Mapping of indicator names to FRED series IDs
 FRED_SERIES = {
-    "US_UNEMPLOYMENT": "UNRATE",           # Unemployment Rate
-    "US_INFLATION": "CPIAUCSL",            # Consumer Price Index
-    "US_GDP": "A191RO1Q156NBEA",           # Real GDP
-    "FEDERAL_FUNDS_RATE": "FEDFUNDS",      # Federal Funds Rate
-    "10Y_YIELD": "DFF10",                  # 10-Year Treasury Yield
-    "VIX": "VIXCLS",                       # VIX Index
-    "DXY": "DEXUSEU",                      # Dollar Index
-    "GOLD_PRICE": "GOLDAMND",              # Gold Price
-    "OIL_PRICE": "DCOILWTICO",             # Oil Price
+    "US_UNEMPLOYMENT": "UNRATE",  # Unemployment Rate
+    "US_INFLATION": "CPIAUCSL",  # Consumer Price Index
+    "US_GDP": "A191RO1Q156NBEA",  # Real GDP
+    "FEDERAL_FUNDS_RATE": "FEDFUNDS",  # Federal Funds Rate
+    "10Y_YIELD": "DFF10",  # 10-Year Treasury Yield
+    "VIX": "VIXCLS",  # VIX Index
+    "DXY": "DEXUSEU",  # Dollar Index
+    "GOLD_PRICE": "GOLDAMND",  # Gold Price
+    "OIL_PRICE": "DCOILWTICO",  # Oil Price
 }
 
 
@@ -98,7 +98,9 @@ def collect_macro_indicators(backfill_days=None):
     backfill_days: if set, backfill last N days instead of just recent
     """
     if backfill_days:
-        logger.info(f"Starting macro indicators backfill for last {backfill_days} days...")
+        logger.info(
+            f"Starting macro indicators backfill for last {backfill_days} days..."
+        )
     else:
         logger.info("Starting macro indicators collection...")
 

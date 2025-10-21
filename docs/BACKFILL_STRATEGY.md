@@ -396,3 +396,4 @@ kubectl exec -it deployment/technical-calculator -- \
 ---
 
 *This strategy replaces placeholder data with real, API-sourced metrics for accurate ML model training.*
+

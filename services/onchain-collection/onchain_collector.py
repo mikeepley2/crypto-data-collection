@@ -95,7 +95,9 @@ def collect_onchain_metrics(backfill_days=None):
     backfill_days: if set, collect for last N days
     """
     if backfill_days:
-        logger.info(f"Starting onchain metrics backfill for last {backfill_days} days...")
+        logger.info(
+            f"Starting onchain metrics backfill for last {backfill_days} days..."
+        )
     else:
         logger.info("Starting onchain metrics collection...")
 
@@ -156,7 +158,9 @@ def collect_onchain_metrics(backfill_days=None):
                             metrics.get("data_source"),
                         ),
                     )
-                    logger.info(f"Collected onchain data for {symbol} from {metrics.get('data_source')}")
+                    logger.info(
+                        f"Collected onchain data for {symbol} from {metrics.get('data_source')}"
+                    )
                 else:
                     # Insert placeholder for tracking but no data loss
                     cursor.execute(
@@ -169,7 +173,9 @@ def collect_onchain_metrics(backfill_days=None):
                     """,
                         (symbol, symbol, timestamp, timestamp.date()),
                     )
-                    logger.debug(f"No onchain data available for {symbol}, inserted placeholder")
+                    logger.debug(
+                        f"No onchain data available for {symbol}, inserted placeholder"
+                    )
 
                 processed += 1
 

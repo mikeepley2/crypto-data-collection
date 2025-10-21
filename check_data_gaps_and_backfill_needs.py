@@ -25,15 +25,17 @@ print("=" * 80)
 
 # Check what we have vs what we need
 print("\n1. SENTIMENT DATA (Task A - COMPLETE)")
-cursor_news.execute("""
+cursor_news.execute(
+    """
     SELECT 
         COUNT(*) as total,
         SUM(CASE WHEN cryptobert_score IS NOT NULL THEN 1 ELSE 0 END) as with_cryptobert,
         SUM(CASE WHEN sentiment_score IS NOT NULL THEN 1 ELSE 0 END) as with_vader
     FROM crypto_sentiment_data
-""")
+"""
+)
 r = cursor_news.fetchone()
-if r['total'] > 0:
+if r["total"] > 0:
     print(f"   Articles with sentiment: {r['with_cryptobert']:,}/{r['total']:,}")
     print(f"   Status: COMPLETE (99.9% coverage)")
 else:
@@ -41,14 +43,16 @@ else:
 
 # Check onchain data
 print("\n2. ONCHAIN DATA (Task B - PARTIAL)")
-cursor_prices.execute("""
+cursor_prices.execute(
+    """
     SELECT 
         COUNT(*) as total,
         SUM(CASE WHEN active_addresses_24h IS NOT NULL THEN 1 ELSE 0 END) as with_addresses,
         SUM(CASE WHEN transaction_count_24h IS NOT NULL THEN 1 ELSE 0 END) as with_txn,
         MAX(timestamp) as latest
     FROM crypto_onchain_data
-""")
+"""
+)
 r = cursor_prices.fetchone()
 print(f"   Total records: {r['total']:,}")
 print(f"   With active addresses: {r['with_addresses']:,} (mostly NULL)")
@@ -58,14 +62,16 @@ print(f"   Status: DATA STRUCTURE EXISTS but NO REAL DATA (only placeholders)")
 
 # Check macro data
 print("\n3. MACRO INDICATORS (Task B - GROWING)")
-cursor_prices.execute("""
+cursor_prices.execute(
+    """
     SELECT 
         COUNT(*) as total,
         SUM(CASE WHEN value IS NOT NULL THEN 1 ELSE 0 END) as with_data,
         MAX(indicator_date) as latest,
         COUNT(DISTINCT indicator_name) as indicator_types
     FROM macro_indicators
-""")
+"""
+)
 r = cursor_prices.fetchone()
 print(f"   Total records: {r['total']:,}")
 print(f"   With data: {r['with_data']:,}")
@@ -75,14 +81,16 @@ print(f"   Status: COLLECTOR RUNNING (needs real API data)")
 
 # Check technical indicators
 print("\n4. TECHNICAL INDICATORS (Task B - PARTIAL)")
-cursor_prices.execute("""
+cursor_prices.execute(
+    """
     SELECT 
         COUNT(*) as total,
         SUM(CASE WHEN sma_20 IS NOT NULL THEN 1 ELSE 0 END) as with_sma,
         SUM(CASE WHEN rsi_14 IS NOT NULL THEN 1 ELSE 0 END) as with_rsi,
         MAX(timestamp) as latest
     FROM technical_indicators
-""")
+"""
+)
 r = cursor_prices.fetchone()
 print(f"   Total records: {r['total']:,}")
 print(f"   With SMA 20: {r['with_sma']:,}")
@@ -92,7 +100,8 @@ print(f"   Status: CALCULATED from price data (when available)")
 
 # Check materialized features
 print("\n5. MATERIALIZED ML FEATURES (Task C - OPERATIONAL)")
-cursor_prices.execute("""
+cursor_prices.execute(
+    """
     SELECT 
         COUNT(*) as total,
         SUM(CASE WHEN avg_cryptobert_score IS NOT NULL THEN 1 ELSE 0 END) as with_sentiment,
@@ -100,12 +109,17 @@ cursor_prices.execute("""
         SUM(CASE WHEN unemployment_rate IS NOT NULL THEN 1 ELSE 0 END) as with_macro,
         SUM(CASE WHEN active_addresses_24h IS NOT NULL THEN 1 ELSE 0 END) as with_onchain
     FROM ml_features_materialized
-""")
+"""
+)
 r = cursor_prices.fetchone()
-total = r['total']
+total = r["total"]
 print(f"   Total records: {total:,}")
-print(f"   With sentiment: {r['with_sentiment']:,} ({100*r['with_sentiment']/total:.1f}%)")
-print(f"   With technical: {r['with_technical']:,} ({100*r['with_technical']/total:.1f}%)")
+print(
+    f"   With sentiment: {r['with_sentiment']:,} ({100*r['with_sentiment']/total:.1f}%)"
+)
+print(
+    f"   With technical: {r['with_technical']:,} ({100*r['with_technical']/total:.1f}%)"
+)
 print(f"   With macro: {r['with_macro']:,} ({100*r['with_macro']/total:.1f}%)")
 print(f"   With onchain: {r['with_onchain']:,} ({100*r['with_onchain']/total:.1f}%)")
 print(f"   Status: AGGREGATION IN PROGRESS")

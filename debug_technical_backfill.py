@@ -23,15 +23,13 @@ print(f"   Records: {r['cnt']:,}")
 print(f"   Date range: {r['oldest']} to {r['newest']}")
 
 # Check if timestamps are Unix milliseconds
-if r['newest'] and r['newest'] > 9999999999:
+if r["newest"] and r["newest"] > 9999999999:
     print("   Timestamp format: UNIX MILLISECONDS (needs division by 1000)")
-elif r['newest']:
+elif r["newest"]:
     print("   Timestamp format: UNIX SECONDS or datetime")
 
 # Check symbols in price data
-cursor.execute(
-    "SELECT COUNT(DISTINCT symbol) as symbols FROM price_data_real"
-)
+cursor.execute("SELECT COUNT(DISTINCT symbol) as symbols FROM price_data_real")
 print(f"   Symbols: {cursor.fetchone()['symbols']}")
 
 # Check what's in technical_indicators
@@ -47,9 +45,7 @@ print(f"   Symbols: {r['symbols']:,}")
 cursor.execute(
     "SELECT MAX(updated_at) as latest FROM technical_indicators WHERE updated_at IS NOT NULL"
 )
-print(
-    f"   Latest update: {cursor.fetchone()['latest']}"
-)
+print(f"   Latest update: {cursor.fetchone()['latest']}")
 
 # Sample technical data
 print("\n3. SAMPLE TECHNICAL DATA:")
@@ -63,11 +59,13 @@ for row in cursor.fetchall():
 
 # Check backfill query result
 print("\n4. BACKFILL QUERY TEST (last 365 days):")
-cursor.execute("""
+cursor.execute(
+    """
     SELECT DISTINCT symbol FROM price_data_real
     WHERE timestamp > DATE_SUB(NOW(), INTERVAL 365 DAY)
     LIMIT 10
-""")
+"""
+)
 symbols = cursor.fetchall()
 print(f"   Query returned {len(symbols)} symbols")
 for s in symbols[:5]:
@@ -84,3 +82,4 @@ print("\n" + "=" * 70)
 print("ISSUE FOUND: Timestamps in price_data_real are Unix milliseconds")
 print("The backfill code needs to convert them or use a different filter")
 print("=" * 70)
+

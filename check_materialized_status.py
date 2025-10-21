@@ -21,8 +21,8 @@ r = cursor.fetchone()
 print(f"\nTable Status:")
 print(f"  Total records: {r['total']:,}")
 print(f"  Latest update: {r['latest_update']}")
-if r['latest_update']:
-    time_diff = datetime.now() - r['latest_update']
+if r["latest_update"]:
+    time_diff = datetime.now() - r["latest_update"]
     print(f"  Time since update: {time_diff}")
 
 # Get all columns
@@ -54,7 +54,7 @@ sentiment_cols = [
     "avg_ml_overall_sentiment",
 ]
 
-col_names = [col['Field'] for col in columns]
+col_names = [col["Field"] for col in columns]
 present_sentiment = [col for col in sentiment_cols if col in col_names]
 
 print(f"  Total available: {len(present_sentiment)}")
@@ -63,7 +63,7 @@ for col in present_sentiment:
         f"SELECT COUNT(*) as cnt FROM ml_features_materialized WHERE {col} IS NOT NULL"
     )
     count = cursor.fetchone()["cnt"]
-    pct = (100 * count / r['total']) if r['total'] > 0 else 0
+    pct = (100 * count / r["total"]) if r["total"] > 0 else 0
     status = "[Y]" if pct > 0 else "[N]"
     print(f"  {status} {col:<40} {count:>10,} ({pct:>5.1f}%)")
 
@@ -76,19 +76,24 @@ for col in key_cols:
             f"SELECT COUNT(*) as cnt FROM ml_features_materialized WHERE {col} IS NOT NULL"
         )
         count = cursor.fetchone()["cnt"]
-        pct = (100 * count / r['total']) if r['total'] > 0 else 0
+        pct = (100 * count / r["total"]) if r["total"] > 0 else 0
         status = "[Y]" if pct > 50 else "[?]"
         print(f"  {status} {col:<40} {count:>10,} ({pct:>5.1f}%)")
 
 print(f"\nOnchain Metrics:")
-onchain_cols = ["active_addresses_24h", "transaction_count_24h", "exchange_net_flow_24h", "onchain_price_volatility_7d"]
+onchain_cols = [
+    "active_addresses_24h",
+    "transaction_count_24h",
+    "exchange_net_flow_24h",
+    "onchain_price_volatility_7d",
+]
 for col in onchain_cols:
     if col in col_names:
         cursor.execute(
             f"SELECT COUNT(*) as cnt FROM ml_features_materialized WHERE {col} IS NOT NULL"
         )
         count = cursor.fetchone()["cnt"]
-        pct = (100 * count / r['total']) if r['total'] > 0 else 0
+        pct = (100 * count / r["total"]) if r["total"] > 0 else 0
         status = "[Y]" if pct > 50 else "[?]"
         print(f"  {status} {col:<40} {count:>10,} ({pct:>5.1f}%)")
 
@@ -100,7 +105,7 @@ for col in macro_cols:
             f"SELECT COUNT(*) as cnt FROM ml_features_materialized WHERE {col} IS NOT NULL"
         )
         count = cursor.fetchone()["cnt"]
-        pct = (100 * count / r['total']) if r['total'] > 0 else 0
+        pct = (100 * count / r["total"]) if r["total"] > 0 else 0
         status = "[Y]" if pct > 50 else "[?]"
         print(f"  {status} {col:<40} {count:>10,} ({pct:>5.1f}%)")
 
@@ -118,9 +123,13 @@ if r["latest_update"]:
     elif hours_ago < 24:
         print(f"[OK] Materialized table IS BEING UPDATED ({hours_ago:.1f} hours ago)")
     elif hours_ago < 72:
-        print(f"[WARN] Materialized table updated but stale ({hours_ago:.1f} hours ago)")
+        print(
+            f"[WARN] Materialized table updated but stale ({hours_ago:.1f} hours ago)"
+        )
     else:
-        print(f"[ERROR] Materialized table NOT BEING UPDATED ({hours_ago:.1f} hours ago)")
+        print(
+            f"[ERROR] Materialized table NOT BEING UPDATED ({hours_ago:.1f} hours ago)"
+        )
 else:
     print("[ERROR] Materialized table has NO updates")
 

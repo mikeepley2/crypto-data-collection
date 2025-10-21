@@ -17,12 +17,16 @@ print(f"Cutoff for {backfill_days} days ago: {cutoff_ms}")
 print(f"That equals: {datetime.utcfromtimestamp(cutoff_ms / 1000)}")
 
 # Check how many symbols match
-cursor.execute(f"SELECT COUNT(DISTINCT symbol) as cnt FROM price_data_real WHERE timestamp > {cutoff_ms}")
+cursor.execute(
+    f"SELECT COUNT(DISTINCT symbol) as cnt FROM price_data_real WHERE timestamp > {cutoff_ms}"
+)
 r = cursor.fetchone()
 print(f"Symbols with data in last {backfill_days} days: {r['cnt']:,}")
 
 # Check overall data range
-cursor.execute("SELECT MIN(timestamp) as oldest, MAX(timestamp) as newest FROM price_data_real")
+cursor.execute(
+    "SELECT MIN(timestamp) as oldest, MAX(timestamp) as newest FROM price_data_real"
+)
 r = cursor.fetchone()
 oldest_date = datetime.utcfromtimestamp(r["oldest"] / 1000) if r["oldest"] else None
 newest_date = datetime.utcfromtimestamp(r["newest"] / 1000) if r["newest"] else None
@@ -33,3 +37,4 @@ print(f"\n[NOTICE] Price data doesn't cover last {backfill_days} days!")
 print(f"Consider backfilling ALL available data instead")
 
 conn.close()
+

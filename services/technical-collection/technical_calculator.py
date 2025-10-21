@@ -59,7 +59,9 @@ def calculate_indicators(backfill_days=None):
                 time_filter = ""  # No filter = all data
                 logger.info("BACKFILL MODE: Processing ALL available data")
             else:
-                cutoff_ms = int((datetime.utcnow().timestamp() - backfill_days * 86400) * 1000)
+                cutoff_ms = int(
+                    (datetime.utcnow().timestamp() - backfill_days * 86400) * 1000
+                )
                 time_filter = f"WHERE timestamp > {cutoff_ms}"
         else:
             # For normal operation, use last 30 days
@@ -124,7 +126,11 @@ def calculate_indicators(backfill_days=None):
                 bb_lower = sma_20 * 0.98
 
                 # Convert Unix milliseconds timestamp to datetime
-                timestamp_ms = prices[0]["timestamp"] if prices else int(datetime.utcnow().timestamp() * 1000)
+                timestamp_ms = (
+                    prices[0]["timestamp"]
+                    if prices
+                    else int(datetime.utcnow().timestamp() * 1000)
+                )
                 timestamp_iso = datetime.utcfromtimestamp(timestamp_ms / 1000)
 
                 cursor.execute(
@@ -142,7 +148,16 @@ def calculate_indicators(backfill_days=None):
                         bollinger_lower = VALUES(bollinger_lower),
                         updated_at = NOW()
                 """,
-                    (symbol, timestamp_iso, sma_20, sma_50, rsi, macd, bb_upper, bb_lower),
+                    (
+                        symbol,
+                        timestamp_iso,
+                        sma_20,
+                        sma_50,
+                        rsi,
+                        macd,
+                        bb_upper,
+                        bb_lower,
+                    ),
                 )
 
                 processed += 1
