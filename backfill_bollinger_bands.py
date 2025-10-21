@@ -21,10 +21,10 @@ def calculate_bollinger_bands():
 
     try:
         conn = mysql.connector.connect(**config)
-        cursor = conn.cursor()
         
-        # Create a separate cursor for nested queries to avoid cursor reuse issues
-        price_cursor = mysql.connector.connect(**config).cursor()
+        # Use two cursors from the SAME connection
+        cursor = conn.cursor()
+        price_cursor = conn.cursor()
 
         print("=" * 80)
         print("BOLLINGER BANDS BACKFILL")
@@ -42,10 +42,13 @@ def calculate_bollinger_bands():
 
         total_processed = 0
         total_updated = 0
+        updates_batch = []
 
         for idx, symbol in enumerate(symbols, 1):
             if idx % 50 == 0:
-                print(f"Progress: {idx}/{len(symbols)} symbols processed, Updated: {total_updated:,}...")
+                print(
+                    f"Progress: {idx}/{len(symbols)} symbols processed, Updated: {total_updated:,}..."
+                )
 
             try:
                 # Get all technical records for this symbol, ordered by time
@@ -72,8 +75,9 @@ def calculate_bollinger_bands():
 
                     # Convert datetime to Unix milliseconds for comparison with price_data_real
                     from datetime import datetime as dt
+
                     timestamp_ms = int(dt.timestamp(timestamp_iso) * 1000)
-                    
+
                     # Get last 20 prices before this timestamp using separate cursor
                     price_cursor.execute(
                         """
@@ -103,33 +107,52 @@ def calculate_bollinger_bands():
                         bb_upper = sma_20 + (2 * std_dev)
                         bb_lower = sma_20 - (2 * std_dev)
 
-                        # Update the record using main cursor
-                        cursor.execute(
-                            """
-                        UPDATE technical_indicators
-                        SET 
-                            bollinger_upper = %s,
-                            bollinger_lower = %s,
-                            updated_at = NOW()
-                        WHERE id = %s
-                        """,
-                            (bb_upper, bb_lower, record_id),
-                        )
-
+                        # Batch the update
+                        updates_batch.append((bb_upper, bb_lower, record_id))
                         total_updated += 1
 
                     total_processed += 1
 
                     # Commit every 1000 records
                     if total_processed % 1000 == 0:
+                        # Execute all batched updates
+                        for bb_upper, bb_lower, rec_id in updates_batch:
+                            cursor.execute(
+                                """
+                            UPDATE technical_indicators
+                            SET 
+                                bollinger_upper = %s,
+                                bollinger_lower = %s,
+                                updated_at = NOW()
+                            WHERE id = %s
+                            """,
+                                (bb_upper, bb_lower, rec_id),
+                            )
                         conn.commit()
-                        print(f"  Processed {total_processed:,} records, Updated: {total_updated:,}")
+                        updates_batch = []
+                        print(
+                            f"  Processed {total_processed:,} records, Updated: {total_updated:,}"
+                        )
 
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
                 conn.rollback()
+                updates_batch = []
                 continue
 
+        # Execute remaining batched updates
+        for bb_upper, bb_lower, rec_id in updates_batch:
+            cursor.execute(
+                """
+            UPDATE technical_indicators
+            SET 
+                bollinger_upper = %s,
+                bollinger_lower = %s,
+                updated_at = NOW()
+            WHERE id = %s
+            """,
+                (bb_upper, bb_lower, rec_id),
+            )
         conn.commit()
 
         print()
