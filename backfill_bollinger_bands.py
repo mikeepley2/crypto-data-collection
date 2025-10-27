@@ -21,7 +21,7 @@ def calculate_bollinger_bands():
 
     try:
         conn = mysql.connector.connect(**config)
-        
+
         # Use two cursors from the SAME connection
         cursor = conn.cursor()
         price_cursor = conn.cursor()
@@ -98,14 +98,18 @@ def calculate_bollinger_bands():
                             prices, reverse=False
                         )  # Get in chronological order
 
+                        # Convert all prices to float to avoid Decimal type issues
+                        prices = [float(p) for p in prices]
+                        sma_20_float = float(sma_20)
+
                         # Calculate standard deviation
                         mean = sum(prices) / len(prices)
                         variance = sum((x - mean) ** 2 for x in prices) / len(prices)
                         std_dev = math.sqrt(variance)
 
-                        # Calculate Bollinger Bands
-                        bb_upper = sma_20 + (2 * std_dev)
-                        bb_lower = sma_20 - (2 * std_dev)
+                        # Calculate Bollinger Bands (now all float types)
+                        bb_upper = sma_20_float + (2 * std_dev)
+                        bb_lower = sma_20_float - (2 * std_dev)
 
                         # Batch the update
                         updates_batch.append((bb_upper, bb_lower, record_id))

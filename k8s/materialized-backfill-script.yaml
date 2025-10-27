@@ -1,0 +1,246 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: materialized-backfill-script
+  namespace: crypto-data-collection
+data:
+  backfill_script.py: |
+    #!/usr/bin/env python3
+    """
+    Efficient Materialized Table Backfill
+    Integrates onchain and sentiment data in batches to avoid database locks
+    """
+
+    import mysql.connector
+    import os
+    import logging
+    from datetime import datetime, timedelta
+    import time
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    logger = logging.getLogger("materialized-backfill")
+
+    def get_db_connection():
+        try:
+            return mysql.connector.connect(
+                host=os.environ['DB_HOST'],
+                user=os.environ['DB_USER'],
+                password=os.environ['DB_PASSWORD'],
+                database=os.environ['DB_NAME'],
+                autocommit=False
+            )
+        except Exception as e:
+            logger.error(f"Database connection failed: {e}")
+            return None
+
+    def normalize_symbol(symbol):
+        """Normalize symbol by removing common suffixes for matching"""
+        if not symbol:
+            return symbol
+        normalized = symbol.replace('-USD', '').replace('-USDT', '').replace('-BTC', '').replace('-ETH', '')
+        return normalized
+
+    def backfill_onchain_data():
+        """Backfill onchain data for symbols that have both price and onchain data"""
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            # Get symbols that have both price and onchain data
+            logger.info("Finding symbols with both price and onchain data...")
+            cursor.execute('''
+                SELECT DISTINCT coin_symbol 
+                FROM crypto_onchain_data 
+                WHERE active_addresses_24h IS NOT NULL 
+                AND coin_symbol IS NOT NULL
+            ''')
+            onchain_symbols = [row[0] for row in cursor.fetchall()]
+            logger.info(f"Found {len(onchain_symbols)} symbols with onchain data")
+            
+            # Get symbols that also have price data
+            matching_symbols = []
+            for symbol in onchain_symbols:
+                cursor.execute('SELECT COUNT(*) FROM price_data_real WHERE symbol = %s', (symbol,))
+                count = cursor.fetchone()[0]
+                if count > 0:
+                    matching_symbols.append(symbol)
+            
+            logger.info(f"Found {len(matching_symbols)} symbols with both price and onchain data")
+            
+            total_processed = 0
+            total_updated = 0
+            
+            # Process each symbol in batches
+            for symbol in matching_symbols:
+                logger.info(f"Processing symbol: {symbol}")
+                
+                # Get price data for this symbol in batches
+                cursor.execute('''
+                    SELECT symbol, timestamp_iso, current_price 
+                    FROM price_data_real 
+                    WHERE symbol = %s 
+                    ORDER BY timestamp_iso DESC
+                ''', (symbol,))
+                price_records = cursor.fetchall()
+                
+                symbol_processed = 0
+                symbol_updated = 0
+                
+                # Process in batches of 100
+                for i in range(0, len(price_records), 100):
+                    batch = price_records[i:i+100]
+                    
+                    for symbol_name, timestamp_iso, current_price in batch:
+                        try:
+                            # Get onchain data for this symbol and time
+                            cursor.execute('''
+                                SELECT active_addresses_24h, transaction_count_24h, exchange_net_flow_24h, price_volatility_7d
+                                FROM crypto_onchain_data 
+                                WHERE coin_symbol = %s 
+                                AND collection_date >= DATE_SUB(%s, INTERVAL 24 HOUR)
+                                AND active_addresses_24h IS NOT NULL
+                                ORDER BY collection_date DESC
+                                LIMIT 1
+                            ''', (symbol, timestamp_iso))
+                            
+                            onchain_data = cursor.fetchone()
+                            
+                            if onchain_data:
+                                active_addresses, transaction_count, exchange_flow, price_volatility = onchain_data
+                                
+                                # Update materialized table
+                                cursor.execute('''
+                                    UPDATE ml_features_materialized 
+                                    SET active_addresses_24h = %s,
+                                        transaction_count_24h = %s,
+                                        exchange_net_flow_24h = %s,
+                                        price_volatility_7d = %s,
+                                        updated_at = NOW()
+                                    WHERE symbol = %s AND timestamp_iso = %s
+                                ''', (active_addresses, transaction_count, exchange_flow, price_volatility, symbol, timestamp_iso))
+                                
+                                symbol_updated += 1
+                            
+                            symbol_processed += 1
+                            
+                        except Exception as e:
+                            logger.error(f"Error processing {symbol} at {timestamp_iso}: {e}")
+                            continue
+                    
+                    # Commit batch
+                    conn.commit()
+                    logger.info(f"Committed batch for {symbol}: {symbol_processed} processed, {symbol_updated} updated")
+                
+                total_processed += symbol_processed
+                total_updated += symbol_updated
+                logger.info(f"Completed {symbol}: {symbol_processed} processed, {symbol_updated} updated")
+            
+            logger.info(f"✅ Onchain backfill completed!")
+            logger.info(f"  Total processed: {total_processed:,} records")
+            logger.info(f"  Total updated: {total_updated:,} records")
+            
+        except Exception as e:
+            logger.error(f"Onchain backfill error: {e}")
+            if conn:
+                conn.rollback()
+        finally:
+            if conn:
+                cursor.close()
+                conn.close()
+
+    def backfill_sentiment_data():
+        """Backfill sentiment data for all materialized records"""
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            logger.info("Starting sentiment data backfill...")
+            
+            # Get all materialized records that don't have sentiment data
+            cursor.execute('''
+                SELECT symbol, timestamp_iso 
+                FROM ml_features_materialized 
+                WHERE (avg_ml_crypto_sentiment IS NULL OR avg_ml_crypto_sentiment = 0)
+                ORDER BY timestamp_iso DESC
+                LIMIT 50000
+            ''')
+            records_to_update = cursor.fetchall()
+            
+            logger.info(f"Found {len(records_to_update):,} records without sentiment data")
+            
+            total_updated = 0
+            
+            # Process in batches
+            for i in range(0, len(records_to_update), 1000):
+                batch = records_to_update[i:i+1000]
+                
+                for symbol, timestamp_iso in batch:
+                    try:
+                        # Get sentiment data for this symbol and time
+                        cursor.execute('''
+                            SELECT 
+                                AVG(ml_sentiment_score) as avg_sentiment,
+                                COUNT(*) as sentiment_count
+                            FROM crypto_news 
+                            WHERE published_at >= DATE_SUB(%s, INTERVAL 24 HOUR)
+                            AND published_at <= %s
+                            AND ml_sentiment_score IS NOT NULL
+                            AND (title LIKE %s OR content LIKE %s)
+                        ''', (timestamp_iso, timestamp_iso, f'%{symbol}%', f'%{symbol}%'))
+                        
+                        sentiment_data = cursor.fetchone()
+                        
+                        if sentiment_data and sentiment_data[0] is not None:
+                            avg_sentiment, sentiment_count = sentiment_data
+                            
+                            # Update materialized table
+                            cursor.execute('''
+                                UPDATE ml_features_materialized 
+                                SET avg_ml_crypto_sentiment = %s,
+                                    avg_ml_overall_sentiment = %s,
+                                    sentiment_volume = %s,
+                                    updated_at = NOW()
+                                WHERE symbol = %s AND timestamp_iso = %s
+                            ''', (avg_sentiment, avg_sentiment, sentiment_count, symbol, timestamp_iso))
+                            
+                            total_updated += 1
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing sentiment for {symbol}: {e}")
+                        continue
+                
+                # Commit batch
+                conn.commit()
+                logger.info(f"Committed sentiment batch: {total_updated:,} updated so far")
+            
+            logger.info(f"✅ Sentiment backfill completed!")
+            logger.info(f"  Total updated: {total_updated:,} records")
+            
+        except Exception as e:
+            logger.error(f"Sentiment backfill error: {e}")
+            if conn:
+                conn.rollback()
+        finally:
+            if conn:
+                cursor.close()
+                conn.close()
+
+    def main():
+        logger.info("🚀 Starting comprehensive materialized table backfill...")
+        
+        # Backfill onchain data first
+        logger.info("Phase 1: Backfilling onchain data...")
+        backfill_onchain_data()
+        
+        # Wait a bit to avoid database locks
+        logger.info("Waiting 30 seconds before sentiment backfill...")
+        time.sleep(30)
+        
+        # Backfill sentiment data
+        logger.info("Phase 2: Backfilling sentiment data...")
+        backfill_sentiment_data()
+        
+        logger.info("✅ Comprehensive backfill completed!")
+
+    if __name__ == "__main__":
+        main()
