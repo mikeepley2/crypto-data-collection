@@ -1,0 +1,265 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: technical-calculator-code
+  namespace: crypto-data-collection
+data:
+  technical_calculator.py: |
+    #!/usr/bin/env python3
+    """
+    Technical Indicators Calculator with Connection Pooling
+    Calculates and updates technical indicators for price data
+    Includes backfill capability for historical data
+    """
+
+    import os
+    import logging
+    import time
+    import mysql.connector
+    from mysql.connector import pooling
+    from datetime import datetime, timedelta
+    import schedule
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    logger = logging.getLogger("technical-calculator")
+
+    # Global connection pool
+    db_pool = None
+
+    def init_connection_pool():
+        """Initialize database connection pool"""
+        global db_pool
+        try:
+            db_pool = pooling.MySQLConnectionPool(
+                pool_name="technical_pool",
+                pool_size=2,  # Small pool for technical calculator
+                pool_reset_session=True,
+                host=os.getenv("DB_HOST", "127.0.0.1"),
+                user=os.getenv("DB_USER", "news_collector"),
+                password=os.getenv("DB_PASSWORD", "99Rules!"),
+                database=os.getenv("DB_NAME", "crypto_prices"),
+                autocommit=False,  # We'll handle commits manually
+                charset="utf8mb4"
+            )
+            logger.info("✅ Database connection pool initialized")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Database pool initialization failed: {e}")
+            return False
+
+    def get_db_connection():
+        """Get database connection from pool"""
+        try:
+            if db_pool is None:
+                logger.error("Database pool not initialized")
+                return None
+            return db_pool.get_connection()
+        except Exception as e:
+            logger.error(f"Failed to get database connection: {e}")
+            return None
+
+    def calculate_indicators(backfill_days=None):
+        """
+        Calculate technical indicators for price data
+        """
+        logger.info("Starting technical indicators calculation...")
+        conn = get_db_connection()
+        if not conn:
+            return
+
+        try:
+            cursor = conn.cursor(dictionary=True)
+            
+            # Determine time filter
+            if backfill_days:
+                time_filter = f"WHERE timestamp > 0"  # Process all historical data
+                logger.info(f"Backfill mode: processing all historical data")
+            else:
+                time_filter = "WHERE timestamp > 0"  # Process all data
+                logger.info("Normal mode: processing all data")
+            
+            # Get symbols to process
+            cursor.execute(f"""
+                SELECT DISTINCT symbol 
+                FROM price_data_real 
+                {time_filter}
+                ORDER BY symbol
+            """)
+            symbols = [row['symbol'] for row in cursor.fetchall()]
+            logger.info(f"Found {len(symbols)} symbols to process")
+            
+            processed_count = 0
+            error_count = 0
+            
+            for symbol in symbols:
+                try:
+                    # Get price data for this symbol
+                    cursor.execute(f"""
+                        SELECT timestamp, timestamp_iso, current_price, volume_usd_24h
+                        FROM price_data_real 
+                        WHERE symbol = %s 
+                        {time_filter.replace('WHERE', 'AND')}
+                        ORDER BY timestamp ASC
+                    """, (symbol,))
+                    
+                    price_data = cursor.fetchall()
+                    if len(price_data) < 20:  # Need at least 20 data points for SMA20
+                        logger.warning(f"Insufficient data for {symbol}: {len(price_data)} points")
+                        continue
+                    
+                    # Calculate indicators
+                    for i, row in enumerate(price_data):
+                        timestamp = row['timestamp']
+                        timestamp_iso = row['timestamp_iso']
+                        current_price = row['current_price']
+                        volume = row['volume_usd_24h']
+                        
+                        # Calculate SMA20 (Simple Moving Average 20)
+                        if i >= 19:  # Need at least 20 data points
+                            sma_20 = sum([price_data[j]['current_price'] for j in range(i-19, i+1)]) / 20
+                        else:
+                            sma_20 = None
+                        
+                        # Calculate RSI14 (Relative Strength Index 14)
+                        if i >= 14:
+                            gains = []
+                            losses = []
+                            for j in range(i-13, i+1):
+                                if j > 0:
+                                    change = price_data[j]['current_price'] - price_data[j-1]['current_price']
+                                    if change > 0:
+                                        gains.append(change)
+                                        losses.append(0)
+                                    else:
+                                        gains.append(0)
+                                        losses.append(abs(change))
+                            
+                            if gains and losses:
+                                avg_gain = sum(gains) / len(gains)
+                                avg_loss = sum(losses) / len(losses)
+                                if avg_loss != 0:
+                                    rs = avg_gain / avg_loss
+                                    rsi_14 = 100 - (100 / (1 + rs))
+                                else:
+                                    rsi_14 = 100
+                            else:
+                                rsi_14 = None
+                        else:
+                            rsi_14 = None
+                        
+                        # Calculate MACD (Moving Average Convergence Divergence)
+                        if i >= 25:  # Need at least 26 data points for MACD
+                            # EMA12
+                            ema_12 = price_data[i-25]['current_price']  # Start with first value
+                            for j in range(i-24, i+1):
+                                ema_12 = (price_data[j]['current_price'] * 2 / 13) + (ema_12 * 11 / 13)
+                            
+                            # EMA26
+                            ema_26 = price_data[i-25]['current_price']  # Start with first value
+                            for j in range(i-24, i+1):
+                                ema_26 = (price_data[j]['current_price'] * 2 / 27) + (ema_26 * 25 / 27)
+                            
+                            macd_line = ema_12 - ema_26
+                            
+                            # Signal line (EMA9 of MACD) - simplified
+                            if i >= 33:  # Need more data for signal line
+                                signal_line = macd_line  # Simplified
+                                histogram = macd_line - signal_line
+                            else:
+                                signal_line = None
+                                histogram = None
+                        else:
+                            macd_line = None
+                            signal_line = None
+                            histogram = None
+                        
+                        # Calculate Bollinger Bands
+                        if i >= 19:  # Need at least 20 data points
+                            prices_20 = [price_data[j]['current_price'] for j in range(i-19, i+1)]
+                            sma = sum(prices_20) / 20
+                            variance = sum([(p - sma) ** 2 for p in prices_20]) / 20
+                            std_dev = variance ** 0.5
+                            
+                            bb_upper = sma + (2 * std_dev)
+                            bb_lower = sma - (2 * std_dev)
+                            bb_middle = sma
+                        else:
+                            bb_upper = None
+                            bb_lower = None
+                            bb_middle = None
+                        
+                        # Insert or update technical indicators
+                        cursor.execute("""
+                            INSERT INTO technical_indicators 
+                            (symbol, timestamp, timestamp_iso, sma_20, rsi_14, macd_line, macd_signal, macd_histogram, 
+                             bb_upper, bb_middle, bb_lower, created_at, updated_at)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                            ON DUPLICATE KEY UPDATE
+                            sma_20 = VALUES(sma_20),
+                            rsi_14 = VALUES(rsi_14),
+                            macd_line = VALUES(macd_line),
+                            macd_signal = VALUES(macd_signal),
+                            macd_histogram = VALUES(macd_histogram),
+                            bb_upper = VALUES(bb_upper),
+                            bb_middle = VALUES(bb_middle),
+                            bb_lower = VALUES(bb_lower),
+                            updated_at = NOW()
+                        """, (symbol, timestamp, timestamp_iso, sma_20, rsi_14, macd_line, signal_line, histogram,
+                              bb_upper, bb_middle, bb_lower))
+                    
+                    processed_count += 1
+                    if processed_count % 10 == 0:
+                        logger.info(f"Processed {processed_count}/{len(symbols)} symbols")
+                        conn.commit()  # Commit every 10 symbols
+                
+                except Exception as e:
+                    logger.error(f"Error processing {symbol}: {e}")
+                    error_count += 1
+                    continue
+            
+            conn.commit()
+            logger.info(f"✅ Technical indicators calculation complete: {processed_count} symbols processed, {error_count} errors")
+            
+            # Write health check file
+            with open("/tmp/technical_calculator_health.txt", "w") as f:
+                f.write(str(datetime.utcnow()))
+                
+        except Exception as e:
+            logger.error(f"Calculation error: {e}")
+            conn.rollback()
+        finally:
+            if conn:
+                conn.close()  # Return connection to pool
+
+    def scheduled_calculation():
+        """Scheduled calculation function"""
+        logger.info("🔄 Starting scheduled technical indicators calculation...")
+        calculate_indicators()
+        logger.info("✅ Scheduled calculation completed")
+
+    def main():
+        """Main function"""
+        logger.info("🚀 Starting Technical Calculator with Connection Pooling")
+        
+        # Initialize connection pool
+        if not init_connection_pool():
+            logger.error("Failed to initialize connection pool. Exiting.")
+            return
+        
+        # Schedule calculations every 30 minutes
+        schedule.every(30).minutes.do(scheduled_calculation)
+        
+        # Run initial calculation
+        logger.info("Running initial calculation...")
+        calculate_indicators()
+        
+        # Keep running and process scheduled tasks
+        logger.info("Technical calculator running with scheduled updates...")
+        while True:
+            schedule.run_pending()
+            time.sleep(60)  # Check every minute
+
+    if __name__ == "__main__":
+        main()

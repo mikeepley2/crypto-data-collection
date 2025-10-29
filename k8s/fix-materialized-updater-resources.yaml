@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: materialized-updater
+  namespace: crypto-data-collection
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: materialized-updater
+  template:
+    metadata:
+      labels:
+        app: materialized-updater
+        component: data-collector
+    spec:
+      nodeSelector:
+        node-type: data-collection
+      tolerations:
+        - effect: NoSchedule
+          key: data-platform
+          operator: Equal
+          value: "true"
+      containers:
+        - name: materialized-updater
+          image: python:3.11-slim
+          command:
+            - sh
+            - -c
+            - |
+              pip install mysql-connector-python requests schedule python-dotenv > /dev/null 2>&1;
+              python /app/materialized_updater.py
+          env:
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  key: DB_HOST
+                  name: data-collection-config
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  key: DB_PORT
+                  name: data-collection-config
+            - name: DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  key: DB_USER
+                  name: data-collection-config
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: MYSQL_PASSWORD
+                  name: data-collection-secrets
+            - name: DB_NAME
+              value: crypto_prices
+            - name: LOG_LEVEL
+              value: INFO
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - |
+                  import os
+                  log_file = "/tmp/materialized_updater_health.txt"
+                  if os.path.exists(log_file):
+                    import time
+                    mtime = os.path.getmtime(log_file)
+                    if time.time() - mtime < 600:
+                      exit(0)
+                  exit(1)
+            failureThreshold: 3
+            initialDelaySeconds: 60
+            periodSeconds: 120
+            successThreshold: 1
+            timeoutSeconds: 5
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - |
+                  import os
+                  import mysql.connector
+                  mysql.connector.connect(
+                    host=os.environ['DB_HOST'],
+                    user=os.environ['DB_USER'],
+                    password=os.environ['DB_PASSWORD'],
+                    database=os.environ['DB_NAME']
+                  ).close()
+                  exit(0)
+            failureThreshold: 2
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            successThreshold: 1
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: collector-code
+              mountPath: /app/materialized_updater.py
+              subPath: materialized_updater.py
+              readOnly: true
+          workingDir: /app
+      volumes:
+        - name: collector-code
+          configMap:
+            name: materialized-updater-code

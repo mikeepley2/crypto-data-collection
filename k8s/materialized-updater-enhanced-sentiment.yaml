@@ -1,0 +1,221 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: materialized-updater-code
+  namespace: crypto-data-collection
+data:
+  materialized_updater.py: |
+    import os
+    import mysql.connector
+    import logging
+    from datetime import datetime, timedelta
+    import time
+    import schedule
+    import requests
+    from fastapi import FastAPI, HTTPException
+    import uvicorn
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    logger = logging.getLogger("materialized-updater")
+
+    app = FastAPI()
+
+    # Configuration
+    HEALTH_CHECK_FILE = "/tmp/materialized_updater_health.txt"
+    SENTIMENT_SERVICE_URL = os.getenv("SENTIMENT_SERVICE_URL", "http://enhanced-sentiment-collector:8000")
+
+    def get_db_connection():
+        try:
+            return mysql.connector.connect(
+                host=os.getenv("DB_HOST", "127.0.0.1"),
+                user=os.getenv("DB_USER", "news_collector"),
+                password=os.getenv("DB_PASSWORD", "99Rules!"),
+                database=os.getenv("DB_NAME", "crypto_prices"),
+            )
+        except Exception as e:
+            logger.error(f"Database connection failed: {e}")
+            return None
+
+    def update_materialized_table():
+        """Update materialized table with enhanced sentiment processing"""
+        logger.info("🚀 Starting enhanced materialized table update...")
+        
+        conn = get_db_connection()
+        if not conn:
+            return
+        
+        try:
+            cursor = conn.cursor()
+            
+            # Get recent price data (last 1 hour)
+            cursor.execute('''
+                SELECT symbol, timestamp_iso, current_price, price_change_24h, volume_usd_24h, market_cap
+                FROM price_data_real
+                WHERE timestamp_iso >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
+                ORDER BY timestamp_iso DESC
+                LIMIT 1000
+            ''')
+            
+            recent_data = cursor.fetchall()
+            logger.info(f"Found {len(recent_data)} recent price records")
+            
+            inserted_count = 0
+            updated_count = 0
+            skipped_count = 0
+            
+            for row in recent_data:
+                symbol, timestamp_iso, current_price, price_change_24h, volume_usd_24h, market_cap = row
+                
+                try:
+                    # Extract date and hour from timestamp
+                    price_date = timestamp_iso.date()
+                    price_hour = timestamp_iso.hour
+                    
+                    # Enhanced sentiment data with time-based decay
+                    cursor.execute('''
+                        SELECT 
+                            AVG(CASE 
+                                WHEN published_at >= DATE_SUB(%s, INTERVAL 1 HOUR) THEN ml_sentiment_score * 1.0
+                                WHEN published_at >= DATE_SUB(%s, INTERVAL 6 HOUR) THEN ml_sentiment_score * 0.8
+                                WHEN published_at >= DATE_SUB(%s, INTERVAL 24 HOUR) THEN ml_sentiment_score * 0.6
+                                ELSE ml_sentiment_score * 0.3
+                            END) as weighted_sentiment,
+                            COUNT(*) as sentiment_count,
+                            AVG(ml_sentiment_score) as raw_sentiment
+                        FROM crypto_news
+                        WHERE published_at >= DATE_SUB(%s, INTERVAL 24 HOUR)
+                        AND published_at <= %s
+                        AND ml_sentiment_score IS NOT NULL
+                    ''', (timestamp_iso, timestamp_iso, timestamp_iso, timestamp_iso, timestamp_iso))
+                    
+                    sentiment_data = cursor.fetchone()
+                    avg_sentiment, sentiment_count = sentiment_data if sentiment_data else (None, 0)
+                    
+                    # Use weighted sentiment if available, otherwise raw sentiment
+                    if avg_sentiment is None and sentiment_data and sentiment_data[2] is not None:
+                        avg_sentiment = sentiment_data[2]
+                    
+                    # Get onchain data with forward-fill strategy
+                    normalized_symbol = symbol.replace('-USD', '')
+                    onchain_data = None
+                    
+                    # Try current day first
+                    cursor.execute('''
+                        SELECT active_addresses_24h, transaction_count_24h, exchange_net_flow_24h, price_volatility_7d
+                        FROM crypto_onchain_data
+                        WHERE coin_symbol COLLATE utf8mb4_unicode_ci = %s
+                        AND DATE(collection_date) = DATE(%s)
+                        AND active_addresses_24h IS NOT NULL
+                        ORDER BY collection_date DESC
+                        LIMIT 1
+                    ''', (normalized_symbol, timestamp_iso))
+                    onchain_data = cursor.fetchone()
+                    
+                    # If no current day data, try previous day
+                    if not onchain_data:
+                        cursor.execute('''
+                            SELECT active_addresses_24h, transaction_count_24h, exchange_net_flow_24h, price_volatility_7d
+                            FROM crypto_onchain_data
+                            WHERE coin_symbol COLLATE utf8mb4_unicode_ci = %s
+                            AND DATE(collection_date) = DATE(DATE_SUB(%s, INTERVAL 1 DAY))
+                            AND active_addresses_24h IS NOT NULL
+                            ORDER BY collection_date DESC
+                            LIMIT 1
+                        ''', (normalized_symbol, timestamp_iso))
+                        onchain_data = cursor.fetchone()
+                    
+                    if onchain_data:
+                        active_addresses_24h, transaction_count_24h, exchange_net_flow_24h, price_volatility_7d = onchain_data
+                    else:
+                        active_addresses_24h, transaction_count_24h, exchange_net_flow_24h, price_volatility_7d = None, None, None, None
+                    
+                    # Use INSERT ... ON DUPLICATE KEY UPDATE
+                    insert_query = '''
+                    INSERT INTO ml_features_materialized
+                    (symbol, price_date, price_hour, timestamp_iso, current_price, price_change_24h, volume_24h, market_cap,
+                     avg_ml_overall_sentiment, sentiment_volume,
+                     active_addresses_24h, transaction_count_24h, exchange_net_flow_24h, price_volatility_7d,
+                     created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                    ON DUPLICATE KEY UPDATE
+                    current_price = VALUES(current_price),
+                    price_change_24h = VALUES(price_change_24h),
+                    volume_24h = VALUES(volume_24h),
+                    market_cap = VALUES(market_cap),
+                    avg_ml_overall_sentiment = VALUES(avg_ml_overall_sentiment),
+                    sentiment_volume = VALUES(sentiment_volume),
+                    active_addresses_24h = VALUES(active_addresses_24h),
+                    transaction_count_24h = VALUES(transaction_count_24h),
+                    exchange_net_flow_24h = VALUES(exchange_net_flow_24h),
+                    price_volatility_7d = VALUES(price_volatility_7d),
+                    updated_at = NOW()
+                    '''
+                    cursor.execute(insert_query, (symbol, price_date, price_hour, timestamp_iso, current_price, price_change_24h, volume_usd_24h, market_cap,
+                                                   avg_sentiment, sentiment_count,
+                                                  active_addresses_24h, transaction_count_24h, exchange_net_flow_24h, price_volatility_7d))
+                    
+                    if cursor.rowcount > 0:
+                        if cursor.rowcount == 1:
+                            inserted_count += 1
+                        else:
+                            updated_count += 1
+                    else:
+                        skipped_count += 1
+                        
+                except Exception as e:
+                    logger.error(f'Error processing {symbol} at {timestamp_iso}: {e}')
+                    skipped_count += 1
+            
+            conn.commit()
+            logger.info(f"✅ Enhanced materialized table update complete: {inserted_count} inserted, {updated_count} updated, {skipped_count} skipped")
+            
+            # Write health check file
+            with open(HEALTH_CHECK_FILE, "w") as f:
+                f.write(str(datetime.utcnow()))
+                
+        except Exception as e:
+            logger.error(f"Update error: {e}")
+            conn.rollback()
+        finally:
+            if conn:
+                conn.close()
+
+    def health_check():
+        if not os.path.exists(HEALTH_CHECK_FILE):
+            return False
+        file_mod_time = datetime.utcfromtimestamp(os.path.getmtime(HEALTH_CHECK_FILE))
+        return (datetime.utcnow() - file_mod_time) < timedelta(minutes=10)
+
+    @app.get("/health")
+    def read_health():
+        if health_check():
+            return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+        raise HTTPException(status_code=503, detail="Materialized updater not healthy")
+
+    @app.get("/")
+    def root():
+        return {"message": "Enhanced Materialized Updater Service", "status": "running"}
+
+    def background_update_loop():
+        """Background loop to automatically update materialized table"""
+        while True:
+            try:
+                logger.info("🔄 Starting automatic enhanced materialized table update...")
+                update_materialized_table()
+                logger.info("✅ Automatic update completed")
+            except Exception as e:
+                logger.error(f"❌ Error in background update: {e}")
+            
+            # Wait 5 minutes before next update
+            time.sleep(300)
+
+    if __name__ == "__main__":
+        logger.info("🚀 Starting Enhanced Materialized Updater Service")
+        
+        # Start background update thread
+        import threading
+        update_thread = threading.Thread(target=background_update_loop, daemon=True)
+        update_thread.start()
+        
+        # Start the web service
+        uvicorn.run(app, host="0.0.0.0", port=8000)
