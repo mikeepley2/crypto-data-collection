@@ -272,3 +272,5 @@ spec:
                 configMapKeyRef:
                   key: MYSQL_DATABASE
                   name: centralized-db-config
+
+

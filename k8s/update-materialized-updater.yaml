@@ -215,3 +215,5 @@ spec:
 
               # Start the service
               python materialized_updater.py
+
+

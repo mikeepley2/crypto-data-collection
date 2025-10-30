@@ -99,3 +99,5 @@ Recent complete records show the system is working:
 The materialized table has **excellent price data coverage** but needs significant improvement in **sentiment and onchain data coverage**. The recent fixes to the onchain collector should help improve onchain coverage over time. The next priority should be investigating and fixing the sentiment data collection to achieve better overall completeness.
 
 **Current Status**: 🟡 **PARTIALLY COMPLETE** - Good foundation, needs sentiment and onchain improvements
+
+

@@ -197,6 +197,50 @@ def collect_onchain_metrics(backfill_days=None):
     return processed
 
 
+def detect_gap():
+    """
+    Detect gaps in onchain data collection
+    Returns number of hours since last update, or None if no data exists
+    """
+    conn = get_db_connection()
+    if not conn:
+        return None
+
+    try:
+        cursor = conn.cursor(dictionary=True)
+        # Check last update timestamp
+        cursor.execute(
+            """
+            SELECT MAX(timestamp) as last_update
+            FROM crypto_onchain_data
+        """
+        )
+        result = cursor.fetchone()
+
+        if result and result["last_update"]:
+            last_update = result["last_update"]
+            if isinstance(last_update, str):
+                last_update = datetime.fromisoformat(last_update.replace("Z", "+00:00"))
+            elif isinstance(last_update, datetime):
+                pass  # Already datetime
+            else:
+                return None
+
+            now = datetime.utcnow()
+            gap_hours = (now - last_update).total_seconds() / 3600
+            return gap_hours
+        else:
+            logger.info("No existing onchain data found - first run")
+            return None
+    except Exception as e:
+        logger.error(f"Error detecting gap: {e}")
+        return None
+    finally:
+        if conn:
+            cursor.close()
+            conn.close()
+
+
 def health_check():
     """Health check endpoint status"""
     logger.debug("Health check: OK")
@@ -213,6 +257,27 @@ def main():
         collect_onchain_metrics(backfill_days=int(backfill_days))
         logger.info("Backfill complete. Exiting.")
         return
+
+    # Auto-detect and backfill gaps on startup
+    gap_hours = detect_gap()
+    if gap_hours:
+        collection_interval_hours = 6
+        if gap_hours > collection_interval_hours:
+            gap_days = int(gap_hours / 24) + 1  # Add 1 day buffer
+            logger.warning(f"⚠️  Gap detected: {gap_hours:.1f} hours since last update")
+            logger.info(f"🔄 Auto-backfilling last {gap_days} days to fill gap...")
+
+            # Limit backfill to reasonable maximum (30 days)
+            if gap_days > 30:
+                logger.warning(
+                    f"⚠️  Gap too large ({gap_days} days), limiting to 30 days"
+                )
+                gap_days = 30
+
+            collect_onchain_metrics(backfill_days=gap_days)
+            logger.info("✅ Gap backfill complete, resuming normal operation")
+        else:
+            logger.info(f"✅ No significant gap detected ({gap_hours:.1f} hours)")
 
     # Schedule collection every 6 hours
     schedule.every(6).hours.do(collect_onchain_metrics)

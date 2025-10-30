@@ -210,3 +210,5 @@ WHERE bollinger_upper IS NOT NULL;
 *Ready to proceed? Run: `python backfill_bollinger_bands.py`*
 
 
+
+

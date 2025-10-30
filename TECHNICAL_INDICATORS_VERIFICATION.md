@@ -233,3 +233,5 @@ All technical indicators in the database contain **REAL CALCULATED DATA**:
 *All columns confirmed to contain real calculated indicator data*
 
 
+
+

@@ -105,3 +105,5 @@ except Exception as e:
 
 cursor.close()
 conn.close()
+
+

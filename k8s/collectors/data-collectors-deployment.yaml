@@ -8,7 +8,7 @@ metadata:
   labels:
     app: data-collectors
 data:
-  MYSQL_HOST: "host.docker.internal"
+  MYSQL_HOST: "127.0.0.1"
   MYSQL_PORT: "3306"
   MYSQL_USER: "news_collector"
 
@@ -45,105 +45,105 @@ spec:
       serviceAccountName: data-collector
       restartPolicy: Always
       tolerations:
-      - key: data-platform
-        operator: Equal
-        value: "true"
-        effect: NoSchedule
-      - key: analytics-infrastructure
-        operator: Equal
-        value: "true"
-        effect: NoSchedule
-      - key: trading-engine
-        operator: Equal
-        value: "true"
-        effect: NoSchedule
+        - key: data-platform
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+        - key: analytics-infrastructure
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+        - key: trading-engine
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
       containers:
-      - name: onchain-collector
-        image: python:3.11-slim
-        imagePullPolicy: IfNotPresent
-        workingDir: /app
-        command:
-          - sh
-          - -c
-          - |
-            pip install mysql-connector-python requests schedule python-dotenv > /dev/null 2>&1;
-            python /app/onchain_collector.py
-        env:
-        - name: DB_HOST
-          valueFrom:
-            configMapKeyRef:
-              name: data-collection-config
-              key: MYSQL_HOST
-        - name: DB_PORT
-          valueFrom:
-            configMapKeyRef:
-              name: data-collection-config
-              key: MYSQL_PORT
-        - name: DB_USER
-          valueFrom:
-            configMapKeyRef:
-              name: data-collection-config
-              key: MYSQL_USER
-        - name: DB_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: data-collection-secrets
-              key: MYSQL_PASSWORD
-        - name: DB_NAME
-          value: "crypto_prices"
-        - name: GLASSNODE_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: data-collection-secrets
-              key: GLASSNODE_API_KEY
-              optional: true
-        - name: LOG_LEVEL
-          value: "INFO"
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "100m"
-          limits:
-            memory: "512Mi"
-            cpu: "250m"
-        livenessProbe:
-          exec:
-            command:
-              - python
-              - -c
-              - |
-                import os;
-                log_file = "/tmp/onchain_collector_health.txt";
-                if os.path.exists(log_file):
-                  import time;
-                  mtime = os.path.getmtime(log_file);
-                  if time.time() - mtime < 3600:
-                    exit(0);
-                exit(1)
-          initialDelaySeconds: 60
-          periodSeconds: 300
-          timeoutSeconds: 5
-          failureThreshold: 3
-        readinessProbe:
-          exec:
-            command:
-              - python
-              - -c
-              - "import os; import mysql.connector; mysql.connector.connect(host=os.environ['DB_HOST'], user=os.environ['DB_USER'], password=os.environ['DB_PASSWORD'], database=os.environ['DB_NAME']).close(); exit(0)"
-          initialDelaySeconds: 30
-          periodSeconds: 60
-          timeoutSeconds: 5
-          failureThreshold: 2
-        volumeMounts:
-        - name: collector-code
-          mountPath: /app/onchain_collector.py
-          subPath: onchain_collector.py
-          readOnly: true
+        - name: onchain-collector
+          image: python:3.11-slim
+          imagePullPolicy: IfNotPresent
+          workingDir: /app
+          command:
+            - sh
+            - -c
+            - |
+              pip install mysql-connector-python requests schedule python-dotenv > /dev/null 2>&1;
+              python /app/onchain_collector.py
+          env:
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: data-collection-config
+                  key: MYSQL_HOST
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: data-collection-config
+                  key: MYSQL_PORT
+            - name: DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: data-collection-config
+                  key: MYSQL_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: data-collection-secrets
+                  key: MYSQL_PASSWORD
+            - name: DB_NAME
+              value: "crypto_prices"
+            - name: GLASSNODE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: data-collection-secrets
+                  key: GLASSNODE_API_KEY
+                  optional: true
+            - name: LOG_LEVEL
+              value: "INFO"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "250m"
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - |
+                  import os;
+                  log_file = "/tmp/onchain_collector_health.txt";
+                  if os.path.exists(log_file):
+                    import time;
+                    mtime = os.path.getmtime(log_file);
+                    if time.time() - mtime < 3600:
+                      exit(0);
+                  exit(1)
+            initialDelaySeconds: 60
+            periodSeconds: 300
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import os; import mysql.connector; mysql.connector.connect(host=os.environ['DB_HOST'], user=os.environ['DB_USER'], password=os.environ['DB_PASSWORD'], database=os.environ['DB_NAME']).close(); exit(0)"
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            timeoutSeconds: 5
+            failureThreshold: 2
+          volumeMounts:
+            - name: collector-code
+              mountPath: /app/onchain_collector.py
+              subPath: onchain_collector.py
+              readOnly: true
       volumes:
-      - name: collector-code
-        configMap:
-          name: onchain-collector-code
-          defaultMode: 0755
+        - name: collector-code
+          configMap:
+            name: onchain-collector-code
+            defaultMode: 0755
 
 ---
 # Macro Indicators Collector - Kubernetes Deployment
@@ -178,104 +178,104 @@ spec:
       serviceAccountName: data-collector
       restartPolicy: Always
       tolerations:
-      - key: data-platform
-        operator: Equal
-        value: "true"
-        effect: NoSchedule
-      - key: analytics-infrastructure
-        operator: Equal
-        value: "true"
-        effect: NoSchedule
-      - key: trading-engine
-        operator: Equal
-        value: "true"
-        effect: NoSchedule
+        - key: data-platform
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+        - key: analytics-infrastructure
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+        - key: trading-engine
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
       containers:
-      - name: macro-collector
-        image: python:3.11-slim
-        imagePullPolicy: IfNotPresent
-        workingDir: /app
-        command:
-          - sh
-          - -c
-          - |
-            pip install mysql-connector-python requests schedule python-dotenv > /dev/null 2>&1;
-            python /app/macro_collector.py
-        env:
-        - name: DB_HOST
-          valueFrom:
-            configMapKeyRef:
-              name: data-collection-config
-              key: MYSQL_HOST
-        - name: DB_PORT
-          valueFrom:
-            configMapKeyRef:
-              name: data-collection-config
-              key: MYSQL_PORT
-        - name: DB_USER
-          valueFrom:
-            configMapKeyRef:
-              name: data-collection-config
-              key: MYSQL_USER
-        - name: DB_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: data-collection-secrets
-              key: MYSQL_PASSWORD
-        - name: DB_NAME
-          value: "crypto_prices"
-        - name: FRED_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: data-collection-secrets
-              key: FRED_API_KEY
-        - name: LOG_LEVEL
-          value: "INFO"
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "100m"
-          limits:
-            memory: "512Mi"
-            cpu: "250m"
-        livenessProbe:
-          exec:
-            command:
-              - python
-              - -c
-              - |
-                import os;
-                log_file = "/tmp/macro_collector_health.txt";
-                if os.path.exists(log_file):
-                  import time;
-                  mtime = os.path.getmtime(log_file);
-                  if time.time() - mtime < 3600:
-                    exit(0);
-                exit(1)
-          initialDelaySeconds: 60
-          periodSeconds: 300
-          timeoutSeconds: 5
-          failureThreshold: 3
-        readinessProbe:
-          exec:
-            command:
-              - python
-              - -c
-              - "import os; import mysql.connector; mysql.connector.connect(host=os.environ['DB_HOST'], user=os.environ['DB_USER'], password=os.environ['DB_PASSWORD'], database=os.environ['DB_NAME']).close(); exit(0)"
-          initialDelaySeconds: 30
-          periodSeconds: 60
-          timeoutSeconds: 5
-          failureThreshold: 2
-        volumeMounts:
-        - name: collector-code
-          mountPath: /app/macro_collector.py
-          subPath: macro_collector.py
-          readOnly: true
+        - name: macro-collector
+          image: python:3.11-slim
+          imagePullPolicy: IfNotPresent
+          workingDir: /app
+          command:
+            - sh
+            - -c
+            - |
+              pip install mysql-connector-python requests schedule python-dotenv > /dev/null 2>&1;
+              python /app/macro_collector.py
+          env:
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: data-collection-config
+                  key: MYSQL_HOST
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: data-collection-config
+                  key: MYSQL_PORT
+            - name: DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: data-collection-config
+                  key: MYSQL_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: data-collection-secrets
+                  key: MYSQL_PASSWORD
+            - name: DB_NAME
+              value: "crypto_prices"
+            - name: FRED_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: data-collection-secrets
+                  key: FRED_API_KEY
+            - name: LOG_LEVEL
+              value: "INFO"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "250m"
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - |
+                  import os;
+                  log_file = "/tmp/macro_collector_health.txt";
+                  if os.path.exists(log_file):
+                    import time;
+                    mtime = os.path.getmtime(log_file);
+                    if time.time() - mtime < 3600:
+                      exit(0);
+                  exit(1)
+            initialDelaySeconds: 60
+            periodSeconds: 300
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import os; import mysql.connector; mysql.connector.connect(host=os.environ['DB_HOST'], user=os.environ['DB_USER'], password=os.environ['DB_PASSWORD'], database=os.environ['DB_NAME']).close(); exit(0)"
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            timeoutSeconds: 5
+            failureThreshold: 2
+          volumeMounts:
+            - name: collector-code
+              mountPath: /app/macro_collector.py
+              subPath: macro_collector.py
+              readOnly: true
       volumes:
-      - name: collector-code
-        configMap:
-          name: macro-collector-code
-          defaultMode: 0755
+        - name: collector-code
+          configMap:
+            name: macro-collector-code
+            defaultMode: 0755
 
 ---
 # Technical Indicators Calculator - Kubernetes Deployment
@@ -310,99 +310,99 @@ spec:
       serviceAccountName: data-collector
       restartPolicy: Always
       tolerations:
-      - key: data-platform
-        operator: Equal
-        value: "true"
-        effect: NoSchedule
-      - key: analytics-infrastructure
-        operator: Equal
-        value: "true"
-        effect: NoSchedule
-      - key: trading-engine
-        operator: Equal
-        value: "true"
-        effect: NoSchedule
+        - key: data-platform
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+        - key: analytics-infrastructure
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+        - key: trading-engine
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
       containers:
-      - name: technical-calculator
-        image: python:3.11-slim
-        imagePullPolicy: IfNotPresent
-        workingDir: /app
-        command:
-          - sh
-          - -c
-          - |
-            pip install mysql-connector-python requests schedule python-dotenv > /dev/null 2>&1;
-            python /app/technical_calculator.py
-        env:
-        - name: DB_HOST
-          valueFrom:
-            configMapKeyRef:
-              name: data-collection-config
-              key: MYSQL_HOST
-        - name: DB_PORT
-          valueFrom:
-            configMapKeyRef:
-              name: data-collection-config
-              key: MYSQL_PORT
-        - name: DB_USER
-          valueFrom:
-            configMapKeyRef:
-              name: data-collection-config
-              key: MYSQL_USER
-        - name: DB_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: data-collection-secrets
-              key: MYSQL_PASSWORD
-        - name: DB_NAME
-          value: "crypto_prices"
-        - name: LOG_LEVEL
-          value: "INFO"
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "100m"
-          limits:
-            memory: "512Mi"
-            cpu: "250m"
-        livenessProbe:
-          exec:
-            command:
-              - python
-              - -c
-              - |
-                import os;
-                log_file = "/tmp/technical_calculator_health.txt";
-                if os.path.exists(log_file):
-                  import time;
-                  mtime = os.path.getmtime(log_file);
-                  if time.time() - mtime < 600:
-                    exit(0);
-                exit(1)
-          initialDelaySeconds: 60
-          periodSeconds: 120
-          timeoutSeconds: 5
-          failureThreshold: 3
-        readinessProbe:
-          exec:
-            command:
-              - python
-              - -c
-              - "import os; import mysql.connector; mysql.connector.connect(host=os.environ['DB_HOST'], user=os.environ['DB_USER'], password=os.environ['DB_PASSWORD'], database=os.environ['DB_NAME']).close(); exit(0)"
-          initialDelaySeconds: 30
-          periodSeconds: 60
-          timeoutSeconds: 5
-          failureThreshold: 2
-        volumeMounts:
-        - name: collector-code
-          mountPath: /app/technical_calculator.py
-          subPath: technical_calculator.py
-          readOnly: true
+        - name: technical-calculator
+          image: python:3.11-slim
+          imagePullPolicy: IfNotPresent
+          workingDir: /app
+          command:
+            - sh
+            - -c
+            - |
+              pip install mysql-connector-python requests schedule python-dotenv > /dev/null 2>&1;
+              python /app/technical_calculator.py
+          env:
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: data-collection-config
+                  key: MYSQL_HOST
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: data-collection-config
+                  key: MYSQL_PORT
+            - name: DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: data-collection-config
+                  key: MYSQL_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: data-collection-secrets
+                  key: MYSQL_PASSWORD
+            - name: DB_NAME
+              value: "crypto_prices"
+            - name: LOG_LEVEL
+              value: "INFO"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "250m"
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - |
+                  import os;
+                  log_file = "/tmp/technical_calculator_health.txt";
+                  if os.path.exists(log_file):
+                    import time;
+                    mtime = os.path.getmtime(log_file);
+                    if time.time() - mtime < 600:
+                      exit(0);
+                  exit(1)
+            initialDelaySeconds: 60
+            periodSeconds: 120
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import os; import mysql.connector; mysql.connector.connect(host=os.environ['DB_HOST'], user=os.environ['DB_USER'], password=os.environ['DB_PASSWORD'], database=os.environ['DB_NAME']).close(); exit(0)"
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            timeoutSeconds: 5
+            failureThreshold: 2
+          volumeMounts:
+            - name: collector-code
+              mountPath: /app/technical_calculator.py
+              subPath: technical_calculator.py
+              readOnly: true
       volumes:
-      - name: collector-code
-        configMap:
-          name: technical-calculator-code
-          defaultMode: 0755
+        - name: collector-code
+          configMap:
+            name: technical-calculator-code
+            defaultMode: 0755
 
 ---
 # ServiceAccount for data collectors
@@ -423,12 +423,12 @@ metadata:
   labels:
     app: data-collectors
 rules:
-- apiGroups: [""]
-  resources: ["configmaps"]
-  verbs: ["get", "watch", "list"]
-- apiGroups: [""]
-  resources: ["secrets"]
-  verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
 
 ---
 # ClusterRoleBinding for data collectors
@@ -443,6 +443,6 @@ roleRef:
   kind: ClusterRole
   name: data-collector-role
 subjects:
-- kind: ServiceAccount
-  name: data-collector
-  namespace: crypto-data-collection
+  - kind: ServiceAccount
+    name: data-collector
+    namespace: crypto-data-collection
