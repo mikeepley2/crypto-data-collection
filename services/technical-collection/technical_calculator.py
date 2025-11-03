@@ -84,8 +84,7 @@ def calculate_indicators(backfill_days=None):
             symbol = row["symbol"]
 
             try:
-                # Get recent OHLC data for the symbol
-                # Use timestamp_iso for accurate date filtering
+                # Get all OHLC data for the symbol in the time range
                 if backfill_days:
                     cutoff_date = datetime.utcnow() - timedelta(days=backfill_days)
                     cursor.execute(
@@ -94,8 +93,8 @@ def calculate_indicators(backfill_days=None):
                         FROM price_data_real
                         WHERE symbol = %s
                         AND timestamp_iso >= %s
-                        ORDER BY timestamp_iso DESC
-                        LIMIT 300
+                        ORDER BY timestamp_iso ASC
+                        LIMIT 10000
                     """,
                         (symbol, cutoff_date),
                     )
@@ -107,7 +106,7 @@ def calculate_indicators(backfill_days=None):
                         FROM price_data_real
                         WHERE symbol = %s
                         AND timestamp_iso >= %s
-                        ORDER BY timestamp_iso DESC
+                        ORDER BY timestamp_iso ASC
                         LIMIT 300
                     """,
                         (symbol, cutoff_date),
@@ -117,74 +116,148 @@ def calculate_indicators(backfill_days=None):
                 if not prices:
                     continue
 
-                # Calculate simple indicators
-                close_prices = [
-                    float(p["close"]) for p in prices if p["close"] is not None
-                ]
-
-                if not close_prices:
+                # Filter valid prices
+                valid_prices = [p for p in prices if p["close"] is not None]
+                if len(valid_prices) < 20:  # Need at least 20 for indicators
                     continue
 
-                # Simple Moving Averages
-                sma_20 = (
-                    sum(close_prices[:20]) / min(20, len(close_prices))
-                    if close_prices
-                    else 0
-                )
-                sma_50 = (
-                    sum(close_prices[:50]) / min(50, len(close_prices))
-                    if close_prices
-                    else 0
-                )
+                # For backfill mode, calculate indicators for each timestamp
+                # For normal mode, calculate for latest only
+                if backfill_days:
+                    # Process each price point that needs indicators
+                    price_values = [float(p["close"]) for p in valid_prices]
 
-                # RSI (simplified)
-                rsi = 50.0
+                    for i in range(
+                        19, len(valid_prices)
+                    ):  # Start from index 19 to have 20 prices
+                        current_prices = price_values[: i + 1]
+                        price_record = valid_prices[i]
 
-                # MACD (simplified)
-                macd = 0.0
-
-                # Bollinger Bands (simplified)
-                bb_upper = sma_20 * 1.02
-                bb_lower = sma_20 * 0.98
-
-                # Use timestamp_iso directly
-                if prices and prices[0].get("timestamp_iso"):
-                    timestamp_iso = prices[0]["timestamp_iso"]
-                    if isinstance(timestamp_iso, str):
-                        timestamp_iso = datetime.fromisoformat(
-                            timestamp_iso.replace("Z", "+00:00")
+                        # Calculate indicators based on historical prices up to this point
+                        sma_20 = (
+                            sum(current_prices[-20:]) / min(20, len(current_prices))
+                            if len(current_prices) >= 20
+                            else sum(current_prices) / len(current_prices)
                         )
+                        sma_50 = (
+                            sum(current_prices[-50:]) / min(50, len(current_prices))
+                            if len(current_prices) >= 50
+                            else sum(current_prices) / len(current_prices)
+                        )
+
+                        # RSI (simplified)
+                        rsi = 50.0
+
+                        # MACD (simplified)
+                        macd = 0.0
+
+                        # Bollinger Bands (simplified)
+                        bb_upper = sma_20 * 1.02
+                        bb_lower = sma_20 * 0.98
+
+                        # Get timestamp_iso
+                        timestamp_iso = price_record["timestamp_iso"]
+                        if isinstance(timestamp_iso, str):
+                            timestamp_iso = datetime.fromisoformat(
+                                timestamp_iso.replace("Z", "+00:00")
+                            )
+
+                        # Always insert/update - ON DUPLICATE KEY UPDATE handles existing records
+                        cursor.execute(
+                            """
+                            INSERT INTO technical_indicators (
+                                symbol, timestamp_iso, sma_20, sma_50, rsi,
+                                macd, bollinger_upper, bollinger_lower
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            ON DUPLICATE KEY UPDATE
+                                sma_20 = VALUES(sma_20),
+                                sma_50 = VALUES(sma_50),
+                                rsi = VALUES(rsi),
+                                macd = VALUES(macd),
+                                bollinger_upper = VALUES(bollinger_upper),
+                                bollinger_lower = VALUES(bollinger_lower),
+                                updated_at = NOW()
+                        """,
+                            (
+                                symbol,
+                                timestamp_iso,
+                                sma_20,
+                                sma_50,
+                                rsi,
+                                macd,
+                                bb_upper,
+                                bb_lower,
+                            ),
+                        )
+                        if cursor.rowcount > 0:  # Count if inserted or updated
+                            processed += 1
                 else:
-                    timestamp_iso = datetime.utcnow()
+                    # Normal mode: calculate for latest only
+                    close_prices = [
+                        float(p["close"])
+                        for p in valid_prices
+                        if p["close"] is not None
+                    ]
 
-                cursor.execute(
-                    """
-                    INSERT INTO technical_indicators (
-                        symbol, timestamp_iso, sma_20, sma_50, rsi,
-                        macd, bollinger_upper, bollinger_lower
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON DUPLICATE KEY UPDATE
-                        sma_20 = VALUES(sma_20),
-                        sma_50 = VALUES(sma_50),
-                        rsi = VALUES(rsi),
-                        macd = VALUES(macd),
-                        bollinger_upper = VALUES(bollinger_upper),
-                        bollinger_lower = VALUES(bollinger_lower),
-                        updated_at = NOW()
-                """,
-                    (
-                        symbol,
-                        timestamp_iso,
-                        sma_20,
-                        sma_50,
-                        rsi,
-                        macd,
-                        bb_upper,
-                        bb_lower,
-                    ),
-                )
+                    # Simple Moving Averages
+                    sma_20 = (
+                        sum(close_prices[-20:]) / min(20, len(close_prices))
+                        if close_prices
+                        else 0
+                    )
+                    sma_50 = (
+                        sum(close_prices[-50:]) / min(50, len(close_prices))
+                        if close_prices
+                        else 0
+                    )
 
-                processed += 1
+                    # RSI (simplified)
+                    rsi = 50.0
+
+                    # MACD (simplified)
+                    macd = 0.0
+
+                    # Bollinger Bands (simplified)
+                    bb_upper = sma_20 * 1.02
+                    bb_lower = sma_20 * 0.98
+
+                    # Use latest timestamp
+                    if valid_prices and valid_prices[-1].get("timestamp_iso"):
+                        timestamp_iso = valid_prices[-1]["timestamp_iso"]
+                        if isinstance(timestamp_iso, str):
+                            timestamp_iso = datetime.fromisoformat(
+                                timestamp_iso.replace("Z", "+00:00")
+                            )
+                    else:
+                        timestamp_iso = datetime.utcnow()
+
+                    cursor.execute(
+                        """
+                        INSERT INTO technical_indicators (
+                            symbol, timestamp_iso, sma_20, sma_50, rsi,
+                            macd, bollinger_upper, bollinger_lower
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON DUPLICATE KEY UPDATE
+                            sma_20 = VALUES(sma_20),
+                            sma_50 = VALUES(sma_50),
+                            rsi = VALUES(rsi),
+                            macd = VALUES(macd),
+                            bollinger_upper = VALUES(bollinger_upper),
+                            bollinger_lower = VALUES(bollinger_lower),
+                            updated_at = NOW()
+                    """,
+                        (
+                            symbol,
+                            timestamp_iso,
+                            sma_20,
+                            sma_50,
+                            rsi,
+                            macd,
+                            bb_upper,
+                            bb_lower,
+                        ),
+                    )
+                    processed += 1
 
             except Exception as e:
                 logger.error(f"Error for {symbol}: {e}")

@@ -156,6 +156,7 @@ def collect_macro_indicators(backfill_days=None):
 
                 if backfill_days and isinstance(data, list):
                     # Backfill mode: insert all historical observations
+                    inserted_count = 0
                     for obs in data:
                         try:
                             cursor.execute(
@@ -169,13 +170,17 @@ def collect_macro_indicators(backfill_days=None):
                             """,
                                 (indicator_name, obs["date"], obs["value"], "FRED API"),
                             )
-                            processed += 1
+                            if (
+                                cursor.rowcount > 0
+                            ):  # Only count if actually inserted/updated
+                                inserted_count += 1
+                                processed += 1
                         except Exception as e:
                             logger.debug(
                                 f"Error inserting {indicator_name} for {obs['date']}: {e}"
                             )
                     logger.info(
-                        f"Backfilled {len(data)} observations for {indicator_name}"
+                        f"Backfilled {inserted_count} observations for {indicator_name}"
                     )
                 else:
                     # Normal mode: insert latest value

@@ -101,3 +101,5 @@ The materialized table has **excellent price data coverage** but needs significa
 **Current Status**: 🟡 **PARTIALLY COMPLETE** - Good foundation, needs sentiment and onchain improvements
 
 
+
+

@@ -32,16 +32,17 @@ data:
                 self.api_key = os.getenv('COINGECKO_API_KEY', '')
                 if self.api_key:
                     self.base_url = "https://pro-api.coingecko.com/api/v3"
-                    self.headers = {"x-cg-demo-api-key": self.api_key}
-                    logger.info("Using CoinGecko Premium API for onchain data")
+                    self.headers = {"x-cg-pro-api-key": self.api_key}
+                    logger.info("✅ Using CoinGecko Premium API for onchain data")
                 else:
                     self.base_url = "https://api.coingecko.com/api/v3"
                     self.headers = {}
-                    logger.warning("Using CoinGecko Free API - limited onchain data")
+                    logger.warning("⚠️  COINGECKO_API_KEY not found - using free API (will be rate limited)")
                 
                 # Rate limiting for premium API
                 self.last_call = 0
-                self.min_interval = 2.0  # 2 seconds between calls to avoid rate limits
+                # Premium API: 0.5s between calls (120 calls/min), Free API: 2s between calls (30 calls/min)
+                self.min_interval = 0.5 if self.api_key else 2.0
                 
                 # Symbol to CoinGecko ID mapping
                 self.coin_mapping = {
@@ -166,7 +167,11 @@ data:
                         logger.warning(f"No CoinGecko mapping for {symbol}")
                         return None
                     
-                    url = f"{self.base_url}/coins/{coin_id}"
+                    # Use query parameter authentication for premium API (required by CoinGecko)
+                    if self.api_key and "pro-api" in self.base_url:
+                        url = f"{self.base_url}/coins/{coin_id}?x_cg_pro_api_key={self.api_key}"
+                    else:
+                        url = f"{self.base_url}/coins/{coin_id}"
                     response = requests.get(url, headers=self.headers, timeout=10)
                     
                     if response.status_code == 200:

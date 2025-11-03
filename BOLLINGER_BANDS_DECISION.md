@@ -212,3 +212,5 @@ WHERE bollinger_upper IS NOT NULL;
 
 
 
+
+

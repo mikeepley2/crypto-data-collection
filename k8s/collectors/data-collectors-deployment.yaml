@@ -8,7 +8,7 @@ metadata:
   labels:
     app: data-collectors
 data:
-  MYSQL_HOST: "127.0.0.1"
+  MYSQL_HOST: "host.docker.internal"
   MYSQL_PORT: "3306"
   MYSQL_USER: "news_collector"
 
@@ -96,6 +96,12 @@ spec:
                 secretKeyRef:
                   name: data-collection-secrets
                   key: GLASSNODE_API_KEY
+                  optional: true
+            - name: COINGECKO_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: data-collection-secrets
+                  key: COINGECKO_API_KEY
                   optional: true
             - name: LOG_LEVEL
               value: "INFO"

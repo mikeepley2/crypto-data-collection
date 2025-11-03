@@ -1,0 +1,37 @@
+# API Keys Configuration Backup
+# Last Updated: November 3, 2025
+# Status: TESTED AND WORKING
+
+## FRED API Key (Federal Reserve Economic Data)
+# Status: ✅ WORKING - Successfully fetching macro economic data
+# Last Tested: 2025-11-03 18:26 UTC
+# Test Results: 7/9 indicators successful (VIX: 17.44, DXY: 1.1626, OIL: 62.13)
+FRED_API_KEY=35478996c5e061d0fc99fc73f5ce348d
+
+## CoinGecko Pro API Key  
+# Status: ✅ WORKING - Successfully collecting onchain data
+# Last Tested: 2025-11-03 18:16 UTC
+# Note: Key stored in Kubernetes secret, working properly
+COINGECKO_API_KEY=[stored in k8s secret data-collection-secrets]
+
+## Kubernetes Secret Update Commands
+# To update FRED API key in cluster:
+# echo -n "35478996c5e061d0fc99fc73f5ce348d" | base64
+# Result: MzU0Nzg5OTZjNWUwNjFkMGZjOTlmYzczZjVjZTM0OGQ=
+#
+# kubectl patch secret data-collection-secrets -n crypto-data-collection \
+#   -p '{"data":{"FRED_API_KEY":"MzU0Nzg5OTZjNWUwNjFkMGZjOTlmYzczZjVjZTM0OGQ="}}'
+
+## Source Information
+# FRED Key found in: services/macro-collection/macro_collector.py line 24
+# Original comment: "check env var first, then use valid default from aitest folder"
+# This suggests the key originated from the aitest directory
+
+## Verification Commands
+# Test FRED API directly:
+# curl "https://api.stlouisfed.org/fred/series/observations?series_id=FEDFUNDS&api_key=35478996c5e061d0fc99fc73f5ce348d&file_type=json&limit=1"
+
+## Backup Location
+# File: api_keys_backup.txt
+# Location: crypto-data-collection repository root
+# Purpose: Prevent loss of working API keys

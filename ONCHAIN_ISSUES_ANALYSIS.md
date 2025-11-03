@@ -106,3 +106,5 @@ price_volatility_7d = VALUES(price_volatility_7d),
 The onchain data collection is working perfectly, but the **materialized updater is missing onchain data integration**. This is a configuration issue, not a data collection issue. Once fixed, the onchain data will flow properly into the ML features materialized table.
 
 
+
+
