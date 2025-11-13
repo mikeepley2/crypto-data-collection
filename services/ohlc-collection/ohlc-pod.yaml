@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: enhanced-ohlc-collector-pod
+  namespace: crypto-data-collection
+  labels:
+    app: enhanced-ohlc-collector
+    component: ohlc-collection
+    tier: data-collection
+spec:
+  containers:
+  - name: ohlc-collector
+    image: python:3.11-slim
+    command: ["/bin/bash"]
+    args: 
+      - -c
+      - |
+        set -e
+        echo "🔧 Installing dependencies..."
+        apt-get update && apt-get install -y gcc default-libmysqlclient-dev pkg-config curl
+        pip install fastapi==0.104.1 uvicorn[standard]==0.24.0 mysql-connector-python==8.2.0 requests==2.31.0 schedule==1.2.0 prometheus-client==0.19.0 python-multipart==0.0.6 pydantic==2.5.0
+        
+        echo "📥 Downloading application code..."
+        curl -s -o enhanced_ohlc_collector.py https://raw.githubusercontent.com/mikeepley2/crypto-data-collection/dev/services/ohlc-collection/enhanced_ohlc_collector.py || exit 1
+        
+        echo "🚀 Starting Enhanced OHLC Collector..."
+        python enhanced_ohlc_collector.py --mode api --host 0.0.0.0 --port 8002
+    ports:
+    - containerPort: 8002
+      name: http
+      protocol: TCP
+    env:
+    - name: MYSQL_HOST
+      value: "mysql-service"
+    - name: MYSQL_PORT
+      value: "3306"
+    - name: MYSQL_USER
+      valueFrom:
+        secretKeyRef:
+          name: mysql-secret
+          key: username
+    - name: MYSQL_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: mysql-secret
+          key: password
+    - name: MYSQL_DATABASE
+      value: "crypto_data_collection"
+    - name: COINGECKO_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: coingecko-secret
+          key: api-key
+          optional: true
+    - name: COLLECTION_INTERVAL
+      value: "3600"
+    - name: PYTHON_UNBUFFERED
+      value: "1"
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8002
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 3
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8002
+      initialDelaySeconds: 45
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 2
+  tolerations:
+  - key: "data-platform"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+  nodeSelector:
+    kubernetes.io/hostname: "cryptoai-k8s-trading-engine-worker"
+  restartPolicy: Always

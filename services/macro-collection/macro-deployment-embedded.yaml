@@ -1,0 +1,814 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-macro-collector
+  namespace: crypto-data-collection
+  labels:
+    app: enhanced-macro-collector
+    version: "2.0"
+    component: data-collection
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-macro-collector
+  template:
+    metadata:
+      labels:
+        app: enhanced-macro-collector
+        version: "2.0"
+        component: data-collection
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2025-11-11T19:30:00Z"
+    spec:
+      # Use the data-platform node with toleration
+      tolerations:
+        - key: "data-platform"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      nodeSelector:
+        solution-area: "data-platform"
+      
+      containers:
+        - name: enhanced-macro-collector
+          image: python:3.11-slim
+          ports:
+            - containerPort: 8003
+              name: http
+          
+          # Embedded code installation and startup
+          command: ["/bin/bash"]
+          args:
+            - -c
+            - |
+              set -e
+              echo "🚀 Installing dependencies..."
+              pip install --no-cache-dir fastapi uvicorn mysql-connector-python requests python-multipart
+              
+              echo "📁 Creating service directory..."
+              mkdir -p /app/services/macro-collection
+              
+              echo "📝 Creating enhanced macro collector..."
+              cat > /app/services/macro-collection/enhanced_macro_collector_v2.py << 'EOF'
+              #!/usr/bin/env python3
+              """
+              Enhanced Macro Indicators Collector - Production Ready
+              Collects comprehensive macroeconomic indicators with real-time monitoring
+              Follows production template standard established by enhanced OHLC collector
+              Includes health scoring, automated gap detection, and Kubernetes compatibility
+              """
+              
+              import os
+              import sys
+              import logging
+              import mysql.connector
+              import time
+              import json
+              import requests
+              from datetime import datetime, timedelta, date
+              from typing import Dict, List, Optional, Any
+              from fastapi import FastAPI, BackgroundTasks
+              from fastapi.responses import JSONResponse, PlainTextResponse
+              import uvicorn
+              from dataclasses import dataclass
+              from enum import Enum
+              
+              # Configure logging
+              logging.basicConfig(level=logging.INFO)
+              logger = logging.getLogger("enhanced-macro-collector")
+              
+              class DataFrequency(Enum):
+                  """Data collection frequency types"""
+                  DAILY = "daily"
+                  WEEKLY = "weekly" 
+                  MONTHLY = "monthly"
+                  QUARTERLY = "quarterly"
+                  ANNUAL = "annual"
+              
+              @dataclass
+              class MacroIndicator:
+                  """Macro indicator configuration"""
+                  name: str
+                  fred_series_id: str
+                  frequency: DataFrequency
+                  description: str
+                  category: str
+                  active: bool = True
+              
+              class EnhancedMacroCollector:
+                  """Production-ready macro indicators collector with comprehensive monitoring and FastAPI endpoints"""
+                  
+                  def __init__(self):
+                      # Database configuration
+                      self.db_config = {
+                          "host": os.getenv("MYSQL_HOST", "172.22.32.1"),
+                          "user": os.getenv("MYSQL_USER", "news_collector"),
+                          "password": os.getenv("MYSQL_PASSWORD", "99Rules!"),
+                          "database": os.getenv("MYSQL_DATABASE", "crypto_prices"),
+                          "charset": "utf8mb4"
+                      }
+                      
+                      # FRED API configuration
+                      self.fred_api_key = os.getenv("FRED_API_KEY", "35478996c5e061d0fc99fc73f5ce348d")
+                      self.fred_base_url = "https://api.stlouisfed.org/fred"
+                      
+                      # Service configuration
+                      self.service_name = "Enhanced Macro Indicators Collector"
+                      self.collection_interval = 3600  # 1 hour
+                      self.rate_limit_delay = 1.0  # FRED API rate limit
+                      self.last_request_time = 0
+                      self.max_retries = 3
+                      
+                      # Initialize session
+                      self.session = requests.Session()
+                      self.session.headers.update({
+                          'User-Agent': 'Enhanced-Macro-Collector/2.0',
+                          'Accept': 'application/json'
+                      })
+                      
+                      # Load indicators configuration
+                      self.indicators = self._load_indicators()
+                      
+                      # Statistics tracking (aligned with OHLC template)
+                      self.stats = {
+                          'total_collections': 0,
+                          'successful_collections': 0,
+                          'failed_collections': 0,
+                          'records_collected': 0,
+                          'api_calls_made': 0,
+                          'last_collection': None,
+                          'last_success': None,
+                          'last_error': None,
+                          'database_writes': 0,
+                          'indicators_processed': 0
+                      }
+                      
+                      # Health tracking (aligned with OHLC template)
+                      self.health_metrics = {
+                          'service_start_time': datetime.now(),
+                          'consecutive_failures': 0,
+                          'api_error_count': 0,
+                          'database_error_count': 0,
+                          'gap_days_detected': 0,
+                          'last_gap_check': None
+                      }
+                      
+                      # FastAPI setup
+                      self.app = FastAPI(title="Enhanced Macro Indicators Collector", version="2.0.0")
+                      self._setup_api_endpoints()
+                      
+                      logger.info(f"🚀 {self.service_name} initialized")
+                      logger.info(f"📊 Tracking {len([i for i in self.indicators if i.active])} active indicators")
+                      logger.info(f"🔑 Using FRED API: {self.fred_api_key[:8]}...")
+              
+                  def _load_indicators(self) -> List[MacroIndicator]:
+                      """Load macro indicators configuration"""
+                      indicators = [
+                          # Daily Indicators
+                          MacroIndicator(
+                              name="10Y_TREASURY",
+                              fred_series_id="DGS10",
+                              frequency=DataFrequency.DAILY,
+                              description="10-Year Treasury Constant Maturity Rate",
+                              category="interest_rates"
+                          ),
+                          MacroIndicator(
+                              name="2Y_TREASURY", 
+                              fred_series_id="DGS2",
+                              frequency=DataFrequency.DAILY,
+                              description="2-Year Treasury Constant Maturity Rate",
+                              category="interest_rates"
+                          ),
+                          MacroIndicator(
+                              name="USD_JPY",
+                              fred_series_id="DEXJPUS",
+                              frequency=DataFrequency.DAILY,
+                              description="US Dollar to Japanese Yen Exchange Rate",
+                              category="exchange_rates"
+                          ),
+                          MacroIndicator(
+                              name="USD_EUR",
+                              fred_series_id="DEXUSEU", 
+                              frequency=DataFrequency.DAILY,
+                              description="US Dollar to Euro Exchange Rate",
+                              category="exchange_rates"
+                          ),
+                          MacroIndicator(
+                              name="VIX",
+                              fred_series_id="VIXCLS",
+                              frequency=DataFrequency.DAILY,
+                              description="CBOE Volatility Index",
+                              category="volatility"
+                          ),
+                          MacroIndicator(
+                              name="DOLLAR_INDEX",
+                              fred_series_id="DTWEXBGS",
+                              frequency=DataFrequency.DAILY,
+                              description="Trade Weighted US Dollar Index",
+                              category="exchange_rates"
+                          ),
+                          
+                          # Weekly Indicators
+                          MacroIndicator(
+                              name="UNEMPLOYMENT_CLAIMS",
+                              fred_series_id="ICSA",
+                              frequency=DataFrequency.WEEKLY,
+                              description="Initial Claims for Unemployment Insurance",
+                              category="labor_market"
+                          ),
+                          
+                          # Monthly Indicators
+                          MacroIndicator(
+                              name="UNEMPLOYMENT_RATE",
+                              fred_series_id="UNRATE",
+                              frequency=DataFrequency.MONTHLY,
+                              description="Civilian Unemployment Rate",
+                              category="labor_market"
+                          ),
+                          MacroIndicator(
+                              name="CPI_INFLATION",
+                              fred_series_id="CPIAUCSL",
+                              frequency=DataFrequency.MONTHLY,
+                              description="Consumer Price Index for All Urban Consumers",
+                              category="inflation"
+                          ),
+                          MacroIndicator(
+                              name="FEDERAL_FUNDS_RATE",
+                              fred_series_id="FEDFUNDS",
+                              frequency=DataFrequency.MONTHLY,
+                              description="Federal Funds Effective Rate",
+                              category="interest_rates"
+                          ),
+                          MacroIndicator(
+                              name="INDUSTRIAL_PRODUCTION",
+                              fred_series_id="INDPRO",
+                              frequency=DataFrequency.MONTHLY,
+                              description="Industrial Production Index",
+                              category="economic_activity"
+                          ),
+                          MacroIndicator(
+                              name="RETAIL_SALES",
+                              fred_series_id="RSAFS",
+                              frequency=DataFrequency.MONTHLY,
+                              description="Advance Retail Sales",
+                              category="economic_activity"
+                          ),
+                          MacroIndicator(
+                              name="HOUSING_STARTS",
+                              fred_series_id="HOUST",
+                              frequency=DataFrequency.MONTHLY,
+                              description="Housing Starts",
+                              category="housing"
+                          ),
+                          MacroIndicator(
+                              name="CONSUMER_CONFIDENCE",
+                              fred_series_id="UMCSENT",
+                              frequency=DataFrequency.MONTHLY,
+                              description="University of Michigan Consumer Sentiment",
+                              category="sentiment"
+                          ),
+                          
+                          # Quarterly Indicators
+                          MacroIndicator(
+                              name="REAL_GDP",
+                              fred_series_id="GDPC1",
+                              frequency=DataFrequency.QUARTERLY,
+                              description="Real Gross Domestic Product",
+                              category="economic_activity"
+                          ),
+                          MacroIndicator(
+                              name="GDP_DEFLATOR",
+                              fred_series_id="GDPDEF",
+                              frequency=DataFrequency.QUARTERLY,
+                              description="Gross Domestic Product Implicit Price Deflator",
+                              category="inflation"
+                          ),
+                      ]
+                      
+                      active_indicators = [i for i in indicators if i.active]
+                      logger.info(f"✅ Loaded {len(active_indicators)} active macro indicators")
+                      return indicators
+              
+                  def rate_limit(self):
+                      """Enforce rate limiting for FRED API calls"""
+                      elapsed = time.time() - self.last_request_time
+                      if elapsed < self.rate_limit_delay:
+                          time.sleep(self.rate_limit_delay - elapsed)
+                      self.last_request_time = time.time()
+              
+                  def make_request(self, endpoint: str, params: Dict = None) -> Optional[Dict]:
+                      """Make FRED API request with rate limiting and error handling"""
+                      self.rate_limit()
+                      self.stats['api_calls_made'] += 1
+                      
+                      url = f"{self.fred_base_url}/{endpoint}"
+                      
+                      try:
+                          if params is None:
+                              params = {}
+                          params['api_key'] = self.fred_api_key
+                          params['file_type'] = 'json'
+                          
+                          response = self.session.get(url, params=params, timeout=30)
+                          response.raise_for_status()
+                          return response.json()
+                          
+                      except requests.exceptions.RequestException as e:
+                          logger.error(f"❌ FRED API request failed for {endpoint}: {e}")
+                          self.health_metrics['api_error_count'] += 1
+                          return None
+              
+                  def fetch_indicator_data(self, indicator: MacroIndicator, start_date: date = None, end_date: date = None) -> List[Dict]:
+                      """Fetch data from FRED API for a specific indicator"""
+                      try:
+                          params = {
+                              "series_id": indicator.fred_series_id,
+                              "sort_order": "asc"
+                          }
+                          
+                          if start_date:
+                              params["observation_start"] = start_date.strftime("%Y-%m-%d")
+                          if end_date:
+                              params["observation_end"] = end_date.strftime("%Y-%m-%d")
+                              
+                          logger.debug(f"📡 Fetching {indicator.name} from FRED API")
+                          data = self.make_request("series/observations", params)
+                          
+                          if not data or 'observations' not in data:
+                              logger.warning(f"⚠️ No observations returned for {indicator.name}")
+                              return []
+                              
+                          observations = data["observations"]
+                          results = []
+                          
+                          for obs in observations:
+                              try:
+                                  value = obs.get("value")
+                                  if value != "." and value is not None:  # FRED uses "." for missing values
+                                      obs_date = datetime.strptime(obs.get("date"), "%Y-%m-%d").date()
+                                      results.append({
+                                          "indicator_name": indicator.name,
+                                          "indicator_date": obs_date,
+                                          "value": float(value),
+                                          "fred_series_id": indicator.fred_series_id,
+                                          "frequency": indicator.frequency.value,
+                                          "category": indicator.category
+                                      })
+                              except (ValueError, TypeError) as e:
+                                  logger.debug(f"Could not parse observation for {indicator.name}: {e}")
+                                  continue
+                                  
+                          logger.info(f"✅ Retrieved {len(results)} observations for {indicator.name}")
+                          return results
+                          
+                      except Exception as e:
+                          logger.error(f"❌ Error fetching {indicator.name}: {e}")
+                          return []
+              
+                  def store_indicator_data(self, data_points: List[Dict]) -> int:
+                      """Store indicator data with duplicate detection"""
+                      if not data_points:
+                          return 0
+                          
+                      try:
+                          conn = mysql.connector.connect(**self.db_config)
+                          cursor = conn.cursor()
+                          stored_count = 0
+                          
+                          for point in data_points:
+                              try:
+                                  # Insert with ON DUPLICATE KEY UPDATE
+                                  insert_sql = """
+                                  INSERT INTO macro_indicators (
+                                      indicator_name, indicator_date, value, 
+                                      fred_series_id, frequency, category,
+                                      data_source, collected_at, created_at, updated_at
+                                  ) VALUES (
+                                      %s, %s, %s, %s, %s, %s, %s, NOW(), NOW(), NOW()
+                                  ) ON DUPLICATE KEY UPDATE
+                                      value = VALUES(value),
+                                      updated_at = NOW()
+                                  """
+                                  
+                                  cursor.execute(insert_sql, (
+                                      point["indicator_name"],
+                                      point["indicator_date"],
+                                      point["value"],
+                                      point["fred_series_id"],
+                                      point["frequency"],
+                                      point["category"],
+                                      "FRED_API"
+                                  ))
+                                  
+                                  if cursor.rowcount > 0:
+                                      stored_count += 1
+                                      
+                              except Exception as e:
+                                  logger.error(f"❌ Error storing data point: {e}")
+                                  self.health_metrics['database_error_count'] += 1
+                                  continue
+                                  
+                          conn.commit()
+                          conn.close()
+                          
+                          self.stats['database_writes'] += stored_count
+                          logger.info(f"✅ Stored {stored_count} macro indicator records")
+                          return stored_count
+                          
+                      except Exception as e:
+                          logger.error(f"❌ Error storing indicator data: {e}")
+                          self.health_metrics['database_error_count'] += 1
+                          return 0
+              
+                  def collect_all_macro_data(self) -> Dict[str, Any]:
+                      """Run one complete collection cycle for all indicators"""
+                      start_time = datetime.now()
+                      logger.info("🚀 Starting macro indicators collection cycle...")
+                      
+                      total_collected = 0
+                      total_stored = 0
+                      indicators_processed = 0
+                      failed_count = 0
+                      
+                      # Get appropriate lookback period based on frequency
+                      lookback_days = {
+                          DataFrequency.DAILY: 7,      # 1 week
+                          DataFrequency.WEEKLY: 14,    # 2 weeks
+                          DataFrequency.MONTHLY: 35,   # ~1 month
+                          DataFrequency.QUARTERLY: 95, # ~3 months
+                      }
+                      
+                      for indicator in self.indicators:
+                          if not indicator.active:
+                              continue
+                              
+                          try:
+                              # Calculate date range based on frequency
+                              end_date = date.today()
+                              days_back = lookback_days.get(indicator.frequency, 30)
+                              start_date = end_date - timedelta(days=days_back)
+                              
+                              # Fetch data
+                              data_points = self.fetch_indicator_data(indicator, start_date, end_date)
+                              
+                              if data_points:
+                                  stored = self.store_indicator_data(data_points)
+                                  total_collected += len(data_points)
+                                  total_stored += stored
+                              else:
+                                  failed_count += 1
+                                  
+                              indicators_processed += 1
+                              
+                          except Exception as e:
+                              logger.error(f"❌ Error processing {indicator.name}: {e}")
+                              failed_count += 1
+                              continue
+                              
+                      end_time = datetime.now()
+                      duration = (end_time - start_time).total_seconds()
+                      
+                      # Update stats
+                      self.stats["total_collections"] += 1
+                      self.stats["records_collected"] += total_collected
+                      self.stats["indicators_processed"] += indicators_processed
+                      self.stats["last_collection"] = end_time
+                      
+                      if failed_count == 0:
+                          self.stats["successful_collections"] += 1
+                          self.stats["last_success"] = end_time
+                          self.health_metrics["consecutive_failures"] = 0
+                      else:
+                          self.stats["failed_collections"] += 1
+                          self.stats["last_error"] = f"Failed indicators: {failed_count}"
+                          self.health_metrics["consecutive_failures"] += 1
+                      
+                      result = {
+                          "status": "completed",
+                          "duration_seconds": duration,
+                          "indicators_processed": indicators_processed,
+                          "data_points_collected": total_collected,
+                          "records_stored": total_stored,
+                          "failed_indicators": failed_count,
+                          "timestamp": end_time.isoformat()
+                      }
+                      
+                      logger.info(f"✅ Collection cycle completed: {result}")
+                      return result
+              
+                  def detect_data_gaps(self) -> Optional[int]:
+                      """Detect gaps in macro indicator data"""
+                      try:
+                          conn = mysql.connector.connect(**self.db_config)
+                          cursor = conn.cursor()
+                          
+                          # Check latest data across all indicators
+                          cursor.execute("""
+                              SELECT 
+                                  MAX(indicator_date) as last_date,
+                                  COUNT(DISTINCT indicator_name) as active_indicators,
+                                  COUNT(*) as total_records
+                              FROM macro_indicators 
+                              WHERE indicator_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+                          """)
+                          
+                          result = cursor.fetchone()
+                          conn.close()
+                          
+                          if result and result[0]:
+                              last_date = result[0]
+                              now_date = date.today()
+                              gap_days = (now_date - last_date).days
+                              
+                              self.health_metrics["gap_days_detected"] = gap_days
+                              self.health_metrics["last_gap_check"] = datetime.now()
+                              
+                              logger.info(f"📊 Gap analysis: {gap_days} days since last data")
+                              return gap_days
+                          else:
+                              logger.info("ℹ️ No recent macro data found")
+                              return None
+                              
+                      except Exception as e:
+                          logger.error(f"❌ Error detecting gaps: {e}")
+                          self.health_metrics['database_error_count'] += 1
+                          return None
+              
+                  def calculate_health_score(self) -> float:
+                      """Calculate service health score (aligned with OHLC template)"""
+                      try:
+                          health_score = 100.0
+                          
+                          # Check data freshness
+                          gap_days = self.detect_data_gaps()
+                          if gap_days:
+                              if gap_days > 7:
+                                  health_score -= min(40, gap_days * 2)
+                              elif gap_days > 3:
+                                  health_score -= gap_days * 5
+                                  
+                          # Check API success rate
+                          total_requests = self.stats["api_calls_made"]
+                          if total_requests > 0:
+                              error_rate = self.health_metrics["api_error_count"] / total_requests
+                              health_score -= error_rate * 30
+                              
+                          # Check consecutive failures
+                          health_score -= min(30, self.health_metrics["consecutive_failures"] * 10)
+                              
+                          # Check database errors
+                          if self.health_metrics["database_error_count"] > 0:
+                              health_score -= min(20, self.health_metrics["database_error_count"] * 2)
+                              
+                          health_score = max(0.0, health_score)
+                          
+                          return health_score
+                          
+                      except Exception as e:
+                          logger.error(f"❌ Error calculating health score: {e}")
+                          return 0.0
+              
+                  def backfill_historical_data(self, start_date: date, end_date: date = None) -> int:
+                      """Backfill macro data for specified date range"""
+                      if end_date is None:
+                          end_date = date.today()
+                          
+                      logger.info(f"🔄 Starting macro backfill from {start_date} to {end_date}")
+                      
+                      total_backfilled = 0
+                      
+                      for indicator in self.indicators:
+                          if not indicator.active:
+                              continue
+                              
+                          try:
+                              logger.info(f"🔄 Backfilling {indicator.name}...")
+                              
+                              # Fetch historical data
+                              data_points = self.fetch_indicator_data(indicator, start_date, end_date)
+                              
+                              if data_points:
+                                  stored = self.store_indicator_data(data_points)
+                                  total_backfilled += stored
+                                  logger.info(f"   ✅ {indicator.name}: {stored} records backfilled")
+                                  
+                          except Exception as e:
+                              logger.error(f"❌ Error backfilling {indicator.name}: {e}")
+                              continue
+                              
+                      logger.info(f"✅ Backfill completed: {total_backfilled} total records")
+                      return total_backfilled
+              
+                  def _setup_api_endpoints(self):
+                      """Setup FastAPI endpoints (aligned with OHLC template)"""
+                      
+                      @self.app.get("/health")
+                      async def health():
+                          """Health check endpoint"""
+                          health_score = self.calculate_health_score()
+                          return {
+                              "status": "healthy" if health_score > 70 else "degraded" if health_score > 30 else "unhealthy",
+                              "score": health_score,
+                              "service": "enhanced-macro-collector"
+                          }
+                          
+                      @self.app.get("/status")
+                      async def get_status():
+                          """Get comprehensive service status"""
+                          gap_days = self.detect_data_gaps()
+                          health_score = self.calculate_health_score()
+                          
+                          return {
+                              "service": "enhanced-macro-collector",
+                              "version": "2.0.0",
+                              "statistics": self.stats,
+                              "health_metrics": {
+                                  "consecutive_failures": self.health_metrics["consecutive_failures"],
+                                  "api_error_count": self.health_metrics["api_error_count"],
+                                  "database_error_count": self.health_metrics["database_error_count"]
+                              },
+                              "indicators": {
+                                  "total": len(self.indicators),
+                                  "active": len([i for i in self.indicators if i.active])
+                              },
+                              "data_freshness": {
+                                  "gap_days": gap_days,
+                                  "status": "healthy" if (gap_days or 0) < 3 else "stale"
+                              },
+                              "health_score": health_score,
+                              "collection_interval": self.collection_interval,
+                              "timestamp": datetime.now().isoformat()
+                          }
+                          
+                      @self.app.get("/indicators")
+                      async def get_indicators():
+                          """Get all configured indicators"""
+                          return {
+                              "indicators": [
+                                  {
+                                      "name": i.name,
+                                      "fred_series_id": i.fred_series_id,
+                                      "frequency": i.frequency.value,
+                                      "description": i.description,
+                                      "category": i.category,
+                                      "active": i.active
+                                  }
+                                  for i in self.indicators
+                              ],
+                              "total": len(self.indicators),
+                              "active": len([i for i in self.indicators if i.active])
+                          }
+                          
+                      @self.app.post("/collect")
+                      async def trigger_collection():
+                          """Trigger macro indicators collection"""
+                          result = self.collect_all_macro_data()
+                          return result
+                          
+                      @self.app.post("/backfill")
+                      async def trigger_backfill(days: int = 30):
+                          """Trigger historical backfill"""
+                          if days > 365:
+                              return {"error": "Maximum backfill period is 365 days"}
+                              
+                          start_date = date.today() - timedelta(days=days)
+                          records = self.backfill_historical_data(start_date)
+                          
+                          return {
+                              "status": "completed",
+                              "records_backfilled": records,
+                              "start_date": start_date.isoformat(),
+                              "days": days
+                          }
+                          
+                      @self.app.get("/version")
+                      async def get_version():
+                          """Get service version info"""
+                          return {
+                              "service": "enhanced-macro-collector",
+                              "version": "2.0.0",
+                              "template_alignment": "enhanced-ohlc-collector",
+                              "production_ready": True
+                          }
+              
+                  def run_service(self, host: str = "0.0.0.0", port: int = 8003):
+                      """Run the FastAPI service"""
+                      logger.info(f"🚀 Starting {self.service_name} on {host}:{port}")
+                      uvicorn.run(self.app, host=host, port=port, log_level="info")
+              
+              
+              def main():
+                  """Main entry point"""
+                  import argparse
+                  
+                  parser = argparse.ArgumentParser(description="Enhanced Macro Indicators Collector")
+                  parser.add_argument("--host", default="0.0.0.0", help="API host")
+                  parser.add_argument("--port", type=int, default=8003, help="API port")
+                  parser.add_argument("--auto-backfill", action="store_true", default=True,
+                                     help="Run automatic backfill on startup")
+                  
+                  args = parser.parse_args()
+                  
+                  collector = EnhancedMacroCollector()
+                  
+                  try:
+                      # Run initial backfill if requested
+                      if args.auto_backfill:
+                          logger.info("🔍 Running startup backfill...")
+                          start_date = date.today() - timedelta(days=30)
+                          collector.backfill_historical_data(start_date)
+                          logger.info("✅ Startup backfill complete")
+                          
+                      collector.run_service(host=args.host, port=args.port)
+                  except KeyboardInterrupt:
+                      logger.info("⚠️ Service interrupted by user")
+                  except Exception as e:
+                      logger.error(f"❌ Service failed: {e}")
+              
+              
+              if __name__ == "__main__":
+                  main()
+              EOF
+              
+              echo "🔧 Setting up secrets from environment..."
+              echo "MYSQL_HOST: ${MYSQL_HOST}"
+              echo "FRED_API_KEY configured: $(echo ${FRED_API_KEY} | cut -c1-8)..."
+              
+              echo "🚀 Starting Enhanced Macro Collector..."
+              cd /app/services/macro-collection
+              python enhanced_macro_collector_v2.py --host 0.0.0.0 --port 8003 --auto-backfill
+          
+          env:
+            - name: MYSQL_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: host
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: username
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: password
+            - name: MYSQL_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: database
+            - name: FRED_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: fred-secret
+                  key: api-key
+                  
+          # Resource limits
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "50m"
+            limits:
+              memory: "512Mi"
+              cpu: "150m"
+              
+          # Health checks
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+            
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 2
+            
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-macro-collector-service
+  namespace: crypto-data-collection
+  labels:
+    app: enhanced-macro-collector
+spec:
+  selector:
+    app: enhanced-macro-collector
+  ports:
+    - name: http
+      port: 8003
+      targetPort: 8003
+      protocol: TCP
+  type: ClusterIP

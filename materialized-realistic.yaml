@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: materialized-updater-realistic
+  namespace: crypto-data-collection
+  labels:
+    app: materialized-updater-realistic
+    component: ml-features
+    tier: data-processing
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: materialized-updater-realistic
+  template:
+    metadata:
+      labels:
+        app: materialized-updater-realistic
+        component: ml-features
+        tier: data-processing
+    spec:
+      containers:
+      - name: materialized-updater
+        image: crypto-data-collection/materialized-updater:latest
+        env:
+        - name: MYSQL_HOST
+          value: "mysql-service"
+        - name: MYSQL_PORT
+          value: "3306"
+        - name: MYSQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: username
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: password
+        - name: MYSQL_DATABASE
+          value: "crypto_prices"
+        - name: UPDATE_INTERVAL
+          value: "300"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: materialized-updater-service
+  namespace: crypto-data-collection
+  labels:
+    app: materialized-updater-realistic
+spec:
+  selector:
+    app: materialized-updater-realistic
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  type: ClusterIP
