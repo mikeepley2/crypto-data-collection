@@ -1,0 +1,16 @@
+# Requirements for Enhanced Onchain Data Collector
+# Core dependencies for data collection, database interaction, and web serving
+
+# Database connectivity
+mysql-connector-python>=8.0.0
+
+# Async HTTP client for API calls
+aiohttp>=3.8.0
+
+# Type hints support
+typing-extensions>=4.0.0
+
+# Optional: For enhanced functionality
+# fastapi>=0.100.0  # If adding web API endpoints
+# uvicorn>=0.20.0   # ASGI server for FastAPI
+# pydantic>=2.0.0   # Data validation
