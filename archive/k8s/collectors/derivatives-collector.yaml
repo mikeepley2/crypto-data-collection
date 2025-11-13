@@ -1,0 +1,190 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: derivatives-collector-config
+  namespace: crypto-data-collection
+  labels:
+    app: derivatives-collector
+    component: ml-collector
+data:
+  # Centralized configuration 
+  USE_CENTRALIZED_CONFIG: "true"
+  
+  # Collection configuration
+  COLLECTION_INTERVAL_MINUTES: "5"
+  DERIVATIVES_FEATURE_COUNT: "35"
+  
+  # Rate limiting
+  API_REQUEST_DELAY: "0.1"
+  MAX_RETRIES: "3"
+  
+  # Logging
+  LOG_LEVEL: "INFO"
+  
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: derivatives-collector
+  namespace: crypto-data-collection
+  labels:
+    app: derivatives-collector
+    component: ml-collector
+    tier: derivatives-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: derivatives-collector
+  template:
+    metadata:
+      labels:
+        app: derivatives-collector
+        component: ml-collector
+    spec:
+      tolerations:
+      - key: data-platform
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+      containers:
+      - name: derivatives-collector
+        image: python:3.11-slim
+        command: ["/bin/bash"]
+        args:
+        - -c
+        - |
+          # Install dependencies
+          echo "🔧 Installing dependencies..."
+          pip install --no-cache-dir aiohttp fastapi uvicorn mysql-connector-python schedule requests
+
+          # Run the derivatives collector
+          python /app/crypto_derivatives_collector.py
+        
+        env:
+        # Database configuration using centralized config
+        - name: MYSQL_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_HOST
+        - name: MYSQL_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_PORT
+        - name: MYSQL_USER
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_USER
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_PASSWORD
+        - name: MYSQL_DATABASE
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_DATABASE
+        
+        # Derivatives collector specific configuration
+        - name: COLLECTION_INTERVAL_MINUTES
+          valueFrom:
+            configMapKeyRef:
+              name: derivatives-collector-config
+              key: COLLECTION_INTERVAL_MINUTES
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: derivatives-collector-config
+              key: LOG_LEVEL
+        
+        ports:
+        - containerPort: 8000
+          name: api
+        
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 10
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          timeoutSeconds: 5
+        
+        volumeMounts:
+        - name: collector-code
+          mountPath: /app/crypto_derivatives_collector.py
+          subPath: crypto_derivatives_collector.py
+      
+      volumes:
+      - name: collector-code
+        configMap:
+          name: derivatives-collector-code
+          defaultMode: 0755
+          
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: derivatives-collector
+  namespace: crypto-data-collection
+  labels:
+    app: derivatives-collector
+    component: ml-collector
+spec:
+  selector:
+    app: derivatives-collector
+  ports:
+  - protocol: TCP
+    port: 8000
+    targetPort: 8000
+    name: api
+  type: ClusterIP
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: derivatives-collector-trigger
+  namespace: crypto-data-collection
+  labels:
+    app: derivatives-collector
+    component: ml-collector
+spec:
+  schedule: "*/5 * * * *"  # Every 5 minutes (derivatives change rapidly)
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: trigger
+            image: curlimages/curl:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              echo "🚀 Triggering Derivatives Data Collection..."
+              curl -X POST http://derivatives-collector.crypto-data-collection.svc.cluster.local:8000/collect
+              echo "✅ Derivatives collection triggered"
+          restartPolicy: OnFailure
+      backoffLimit: 2

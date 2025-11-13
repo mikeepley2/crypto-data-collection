@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stock-sentiment-collector-with-models
+  namespace: crypto-data-collection
+  labels:
+    app: stock-sentiment-collector-with-models
+    component: data-collector
+    market-type: stock
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8000"
+    prometheus.io/path: "/metrics"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stock-sentiment-collector-with-models
+  template:
+    metadata:
+      labels:
+        app: stock-sentiment-collector-with-models
+        component: data-collector
+        market-type: stock
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      nodeSelector:
+        node-type: data-collection
+      tolerations:
+        - key: "data-platform"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      containers:
+        - name: stock-sentiment-collector
+          image: stock-sentiment-service:latest
+          imagePullPolicy: Never # Use local image
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: MYSQL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_HOST
+            - name: MYSQL_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_PORT
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-user
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-password
+            - name: MYSQL_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_DATABASE
+            - name: MODEL_TYPE
+              value: "stock"
+            - name: MODEL_NAME
+              value: "finbert"
+            - name: PORT
+              value: "8000"
+            - name: LOG_LEVEL
+              value: "INFO"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 400m
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 120 # Longer delay for model loading
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: stock-sentiment-collector-with-models
+  namespace: crypto-data-collection
+  labels:
+    app: stock-sentiment-collector-with-models
+    component: data-collector
+    market-type: stock
+spec:
+  selector:
+    app: stock-sentiment-collector-with-models
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP

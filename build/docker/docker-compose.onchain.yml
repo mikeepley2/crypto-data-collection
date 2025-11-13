@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  onchain-collector:
+    image: crypto-data-collection/onchain-collector:latest
+    container_name: crypto-onchain-collector
+    environment:
+      - MYSQL_HOST=${MYSQL_HOST:-172.22.32.1}
+      - MYSQL_USER=${MYSQL_USER:-news_collector}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-99Rules!}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-crypto_prices}
+      - SERVICE_NAME=onchain-collector
+      - LOG_LEVEL=INFO
+      - COLLECTION_INTERVAL=3600
+      - BACKFILL_ON_START=false
+    ports:
+      - "8001:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - crypto-data-network
+
+  # Optional: Add database if running locally
+  # mysql:
+  #   image: mysql:8.0
+  #   container_name: crypto-mysql
+  #   environment:
+  #     - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-rootpassword}
+  #     - MYSQL_DATABASE=${MYSQL_DATABASE:-crypto_prices}
+  #     - MYSQL_USER=${MYSQL_USER:-news_collector}
+  #     - MYSQL_PASSWORD=${MYSQL_PASSWORD:-99Rules!}
+  #   ports:
+  #     - "3306:3306"
+  #   volumes:
+  #     - mysql_data:/var/lib/mysql
+  #   networks:
+  #     - crypto-data-network
+
+networks:
+  crypto-data-network:
+    driver: bridge
+
+# volumes:
+#   mysql_data:

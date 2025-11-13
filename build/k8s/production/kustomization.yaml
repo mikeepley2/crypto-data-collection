@@ -1,0 +1,48 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: crypto-production-kustomization
+
+namespace: crypto-production
+
+namePrefix: prod-
+
+commonLabels:
+  environment: production
+  app.kubernetes.io/instance: crypto-production
+
+resources:
+- ../base/namespace.yaml
+- ../base/configmap.yaml
+- ../base/rbac-and-policies.yaml
+- ../base/news-collector.yaml
+- ../base/sentiment-ml.yaml
+- ../base/technical-calculator.yaml
+- ../base/materialized-updater.yaml
+
+patchesStrategicMerge:
+- namespace-patch.yaml
+- production-scaling.yaml
+
+configMapGenerator:
+- name: crypto-config-production
+  literals:
+  - ENVIRONMENT=production
+  - LOG_LEVEL=INFO
+  - NEWS_COLLECTION_INTERVAL=300
+  - SENTIMENT_PROCESSING_INTERVAL=300
+  - TECHNICAL_CALCULATION_INTERVAL=900
+  - MATERIALIZED_REFRESH_INTERVAL=300
+  - CIRCUIT_BREAKER_FAILURE_THRESHOLD=3  # Stricter in production
+  - RATE_LIMIT_REQUESTS=200  # Higher limits for production
+
+images:
+- name: crypto/enhanced-news-collector
+  newTag: production-latest
+- name: crypto/enhanced-sentiment-ml
+  newTag: production-latest
+- name: crypto/enhanced-technical-calculator
+  newTag: production-latest
+- name: crypto/enhanced-materialized-updater
+  newTag: production-latest

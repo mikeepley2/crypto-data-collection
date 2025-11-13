@@ -1,0 +1,571 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: enhanced-sentiment-ml-config
+  namespace: crypto-data
+data:
+  # Database configuration
+  DB_HOST: "mysql-service.crypto-data.svc.cluster.local"
+  DB_NAME: "crypto_data"
+  DB_USER: "crypto_user"
+  SERVICE_NAME: "enhanced-sentiment-ml"
+  
+  # Collection configuration
+  COLLECTION_INTERVAL: "300"  # 5 minutes
+  COLLECTION_ENABLED: "true"
+  MAX_RETRIES: "3"
+  RETRY_DELAY: "10"
+  API_TIMEOUT: "60"
+  
+  # Rate limiting configuration
+  ENABLE_RATE_LIMITING: "true"
+  RATE_LIMIT_REQUESTS: "30"  # Lower rate for ML processing
+  RATE_LIMIT_WINDOW: "60"
+  RATE_LIMIT_BURST: "5"
+  
+  # Circuit breaker configuration
+  ENABLE_CIRCUIT_BREAKER: "true"
+  CIRCUIT_BREAKER_FAILURE_THRESHOLD: "3"  # Lower threshold for ML models
+  CIRCUIT_BREAKER_RECOVERY_TIMEOUT: "120"
+  CIRCUIT_BREAKER_EXPECTED_EXCEPTION: "RuntimeError,torch.nn.modules.module.ModuleNotFoundError,OSError"
+  
+  # Data validation configuration
+  ENABLE_DATA_VALIDATION: "true"
+  VALIDATION_SCHEMA_PATH: "/app/schemas/sentiment_schema.json"
+  DUPLICATE_CHECK_FIELDS: "id"
+  
+  # Alerting configuration
+  ENABLE_ALERTING: "true"
+  ALERT_WEBHOOK_URL: "http://alertmanager-webhook.monitoring.svc.cluster.local/webhook"
+  ALERT_ERROR_THRESHOLD: "3"  # Lower threshold for ML failures
+  ALERT_MEMORY_THRESHOLD: "85"  # Higher threshold for ML workload
+  ALERT_CPU_THRESHOLD: "90"
+  
+  # Performance monitoring
+  ENABLE_PERFORMANCE_MONITORING: "true"
+  PERFORMANCE_LOG_INTERVAL: "120"  # More frequent for ML workload
+  
+  # Prometheus metrics
+  PROMETHEUS_PORT: "9090"
+  ENABLE_PROMETHEUS_METRICS: "true"
+  
+  # ML-specific configuration
+  BATCH_PROCESSING_SIZE: "5"
+  PROCESSING_INTERVAL: "300"
+  MODEL_CACHE_SIZE: "2"
+  MAX_TEXT_LENGTH: "2048"
+  DEVICE: "-1"  # Force CPU usage
+  CRYPTO_MODEL: "kk08/CryptoBERT"
+  STOCK_MODEL: "ProsusAI/finbert"
+  FALLBACK_CONFIDENCE: "0.5"
+  DAYS_LOOKBACK: "7"
+  MIN_CONFIDENCE_THRESHOLD: "0.1"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: enhanced-sentiment-ml-secrets
+  namespace: crypto-data
+type: Opaque
+data:
+  DB_PASSWORD: "Y3J5cHRvX3Bhc3N3b3Jk"  # Base64: crypto_password
+  ALERT_WEBHOOK_SECRET: "YWxlcnRfc2VjcmV0XzEyMw=="  # Base64: alert_secret_123
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: enhanced-sentiment-ml-schema
+  namespace: crypto-data
+data:
+  sentiment_schema.json: |
+    {
+      "type": "object",
+      "required": ["id", "title", "text_length"],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "content": {
+          "type": ["string", "null"],
+          "maxLength": 10000
+        },
+        "text_length": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2048
+        },
+        "market_type": {
+          "type": "string",
+          "enum": ["crypto", "stock"]
+        },
+        "ml_sentiment_score": {
+          "type": ["number", "null"],
+          "minimum": -1.0,
+          "maximum": 1.0
+        },
+        "ml_sentiment_confidence": {
+          "type": ["number", "null"],
+          "minimum": 0.0,
+          "maximum": 1.0
+        }
+      },
+      "additionalProperties": true
+    }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-sentiment-ml
+  namespace: crypto-data
+  labels:
+    app: enhanced-sentiment-ml
+    version: template-compliant
+    component: ml-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-sentiment-ml
+  template:
+    metadata:
+      labels:
+        app: enhanced-sentiment-ml
+        version: template-compliant
+        component: ml-collector
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      nodeSelector:
+        workload: ml-intensive
+      tolerations:
+      - key: "ml-workload"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      containers:
+      - name: enhanced-sentiment-ml
+        image: crypto-sentiment-ml:template-compliant
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        env:
+        # Database configuration from ConfigMap
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: DB_HOST
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: DB_NAME
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: enhanced-sentiment-ml-secrets
+              key: DB_PASSWORD
+        - name: SERVICE_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: SERVICE_NAME
+        
+        # Collection configuration from ConfigMap
+        - name: COLLECTION_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: COLLECTION_INTERVAL
+        - name: COLLECTION_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: COLLECTION_ENABLED
+        - name: MAX_RETRIES
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: MAX_RETRIES
+        - name: RETRY_DELAY
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: RETRY_DELAY
+        - name: API_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: API_TIMEOUT
+        
+        # Rate limiting configuration from ConfigMap
+        - name: ENABLE_RATE_LIMITING
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: ENABLE_RATE_LIMITING
+        - name: RATE_LIMIT_REQUESTS
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: RATE_LIMIT_REQUESTS
+        - name: RATE_LIMIT_WINDOW
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: RATE_LIMIT_WINDOW
+        - name: RATE_LIMIT_BURST
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: RATE_LIMIT_BURST
+        
+        # Circuit breaker configuration from ConfigMap
+        - name: ENABLE_CIRCUIT_BREAKER
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: ENABLE_CIRCUIT_BREAKER
+        - name: CIRCUIT_BREAKER_FAILURE_THRESHOLD
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: CIRCUIT_BREAKER_FAILURE_THRESHOLD
+        - name: CIRCUIT_BREAKER_RECOVERY_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: CIRCUIT_BREAKER_RECOVERY_TIMEOUT
+        - name: CIRCUIT_BREAKER_EXPECTED_EXCEPTION
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: CIRCUIT_BREAKER_EXPECTED_EXCEPTION
+        
+        # Data validation configuration from ConfigMap
+        - name: ENABLE_DATA_VALIDATION
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: ENABLE_DATA_VALIDATION
+        - name: VALIDATION_SCHEMA_PATH
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: VALIDATION_SCHEMA_PATH
+        - name: DUPLICATE_CHECK_FIELDS
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: DUPLICATE_CHECK_FIELDS
+        
+        # Alerting configuration from ConfigMap and Secrets
+        - name: ENABLE_ALERTING
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: ENABLE_ALERTING
+        - name: ALERT_WEBHOOK_URL
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: ALERT_WEBHOOK_URL
+        - name: ALERT_WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: enhanced-sentiment-ml-secrets
+              key: ALERT_WEBHOOK_SECRET
+        - name: ALERT_ERROR_THRESHOLD
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: ALERT_ERROR_THRESHOLD
+        - name: ALERT_MEMORY_THRESHOLD
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: ALERT_MEMORY_THRESHOLD
+        - name: ALERT_CPU_THRESHOLD
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: ALERT_CPU_THRESHOLD
+        
+        # Performance monitoring configuration from ConfigMap
+        - name: ENABLE_PERFORMANCE_MONITORING
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: ENABLE_PERFORMANCE_MONITORING
+        - name: PERFORMANCE_LOG_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: PERFORMANCE_LOG_INTERVAL
+        
+        # Prometheus metrics configuration from ConfigMap
+        - name: PROMETHEUS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: PROMETHEUS_PORT
+        - name: ENABLE_PROMETHEUS_METRICS
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: ENABLE_PROMETHEUS_METRICS
+        
+        # ML-specific configuration from ConfigMap
+        - name: BATCH_PROCESSING_SIZE
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: BATCH_PROCESSING_SIZE
+        - name: PROCESSING_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: PROCESSING_INTERVAL
+        - name: MODEL_CACHE_SIZE
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: MODEL_CACHE_SIZE
+        - name: MAX_TEXT_LENGTH
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: MAX_TEXT_LENGTH
+        - name: DEVICE
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: DEVICE
+        - name: CRYPTO_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: CRYPTO_MODEL
+        - name: STOCK_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: STOCK_MODEL
+        - name: FALLBACK_CONFIDENCE
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: FALLBACK_CONFIDENCE
+        - name: DAYS_LOOKBACK
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: DAYS_LOOKBACK
+        - name: MIN_CONFIDENCE_THRESHOLD
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-sentiment-ml-config
+              key: MIN_CONFIDENCE_THRESHOLD
+        
+        volumeMounts:
+        - name: schema-volume
+          mountPath: /app/schemas
+          readOnly: true
+        - name: model-cache
+          mountPath: /root/.cache/huggingface
+        
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "3Gi"  # Higher memory for ML models
+            cpu: "2000m"   # Higher CPU for ML processing
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 120  # Longer delay for model loading
+          periodSeconds: 60
+          timeoutSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 60  # Allow time for model loading
+          periodSeconds: 30
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 5
+      
+      volumes:
+      - name: schema-volume
+        configMap:
+          name: enhanced-sentiment-ml-schema
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: ml-model-cache
+      
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 60  # Longer grace period for model cleanup
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ml-model-cache
+  namespace: crypto-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: ssd
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-sentiment-ml-service
+  namespace: crypto-data
+  labels:
+    app: enhanced-sentiment-ml
+spec:
+  selector:
+    app: enhanced-sentiment-ml
+  ports:
+  - name: http
+    protocol: TCP
+    port: 8000
+    targetPort: 8000
+  - name: metrics
+    protocol: TCP
+    port: 9090
+    targetPort: 9090
+  type: ClusterIP
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: enhanced-sentiment-ml-monitor
+  namespace: crypto-data
+  labels:
+    app: enhanced-sentiment-ml
+spec:
+  selector:
+    matchLabels:
+      app: enhanced-sentiment-ml
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 60s  # Less frequent scraping for ML workload
+    scrapeTimeout: 30s
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: enhanced-sentiment-ml-network-policy
+  namespace: crypto-data
+spec:
+  podSelector:
+    matchLabels:
+      app: enhanced-sentiment-ml
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: crypto-data
+    ports:
+    - protocol: TCP
+      port: 8000
+  egress:
+  - to: []  # Allow all outbound traffic for Hugging Face model downloads
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: crypto-data
+    ports:
+    - protocol: TCP
+      port: 3306  # MySQL
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: enhanced-sentiment-ml-pdb
+  namespace: crypto-data
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: enhanced-sentiment-ml
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: enhanced-sentiment-ml-hpa
+  namespace: crypto-data
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: enhanced-sentiment-ml
+  minReplicas: 1
+  maxReplicas: 2  # Limited scaling for ML workload
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 75

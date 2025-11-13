@@ -1,0 +1,250 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ml-market-collector-config
+  namespace: crypto-data-collection
+  labels:
+    app: ml-market-collector
+    component: data-collector
+data:
+  # Centralized configuration 
+  USE_CENTRALIZED_CONFIG: "true"
+  TABLE_CONFIG_PATH: "/app/shared/table_config.py"
+  DATABASE_CONFIG_PATH: "/app/shared/database_config.py"
+  
+  # Collection configuration
+  COLLECTION_INTERVAL_MINUTES: "30"
+  ML_FEATURE_COUNT_TARGET: "35"
+  
+  # Asset correlation thresholds
+  HIGH_CORRELATION_THRESHOLD: "0.65"
+  MEDIUM_CORRELATION_THRESHOLD: "0.35"
+  
+  # Rate limiting
+  YFINANCE_REQUEST_DELAY: "0.1"
+  MAX_RETRIES: "3"
+  
+  # Logging
+  LOG_LEVEL: "INFO"
+  
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ml-market-collector-code
+  namespace: crypto-data-collection
+  labels:
+    app: ml-market-collector
+data:
+  requirements.txt: |
+    yfinance>=0.2.64
+    fastapi>=0.104.0
+    uvicorn>=0.24.0
+    mysql-connector-python>=8.0.33
+    schedule>=1.2.0
+    python-dotenv>=1.0.0
+    numpy>=1.24.0
+    pandas>=2.0.0
+  
+  install_deps.sh: |
+    #!/bin/bash
+    echo "🔧 Installing ML Market Collector dependencies..."
+    pip install --no-cache-dir -r /app/requirements.txt
+    echo "✅ Dependencies installed successfully"
+  
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-market-collector
+  namespace: crypto-data-collection
+  labels:
+    app: ml-market-collector
+    component: data-collector
+    tier: ml-features
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ml-market-collector
+  template:
+    metadata:
+      labels:
+        app: ml-market-collector
+        component: data-collector
+    spec:
+      containers:
+      - name: ml-market-collector
+        image: python:3.11-slim
+        command: ["/bin/bash"]
+        args:
+        - -c
+        - |
+          # Install dependencies
+          /app/install_deps.sh
+          
+          # Copy collector code to proper location
+          cp /app/ml_market_collector.py /app/shared/
+          
+          # Ensure shared modules are available
+          export PYTHONPATH="/app:/app/shared:$PYTHONPATH"
+          
+          # Run the ML market collector
+          cd /app/shared
+          python ml_market_collector.py
+        
+        env:
+        # Database configuration using centralized config
+        - name: MYSQL_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_HOST
+        - name: MYSQL_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_PORT
+        - name: MYSQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: centralized-db-secrets
+              key: mysql-user
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: centralized-db-secrets
+              key: mysql-password
+        - name: MYSQL_DATABASE
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_DATABASE
+        
+        # ML Market Collector specific configuration
+        - name: COLLECTION_INTERVAL_MINUTES
+          valueFrom:
+            configMapKeyRef:
+              name: ml-market-collector-config
+              key: COLLECTION_INTERVAL_MINUTES
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: ml-market-collector-config
+              key: LOG_LEVEL
+        - name: USE_CENTRALIZED_CONFIG
+          valueFrom:
+            configMapKeyRef:
+              name: ml-market-collector-config
+              key: USE_CENTRALIZED_CONFIG
+        
+        # Database pool configuration
+        - name: DB_POOL_SIZE
+          value: "10"
+        - name: DB_CONNECTION_TIMEOUT
+          value: "30"
+        
+        ports:
+        - containerPort: 8000
+          name: api
+        
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 5
+        
+        volumeMounts:
+        - name: collector-code
+          mountPath: /app/ml_market_collector.py
+          subPath: ml_market_collector.py
+        - name: dependency-scripts
+          mountPath: /app/requirements.txt
+          subPath: requirements.txt
+        - name: dependency-scripts
+          mountPath: /app/install_deps.sh
+          subPath: install_deps.sh
+        - name: shared-code
+          mountPath: /app/shared
+          readOnly: false
+      
+      volumes:
+      - name: collector-code
+        configMap:
+          name: ml-market-collector-code
+          defaultMode: 0755
+      - name: dependency-scripts
+        configMap:
+          name: ml-market-collector-code
+          defaultMode: 0755
+      - name: shared-code
+        hostPath:
+          path: E:\git\crypto-data-collection\src\shared
+          type: Directory
+          
+      restartPolicy: Always
+      
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-market-collector
+  namespace: crypto-data-collection
+  labels:
+    app: ml-market-collector
+    component: data-collector
+spec:
+  selector:
+    app: ml-market-collector
+  ports:
+  - protocol: TCP
+    port: 8000
+    targetPort: 8000
+    name: api
+  type: ClusterIP
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ml-market-collector-manual-trigger
+  namespace: crypto-data-collection
+  labels:
+    app: ml-market-collector
+    component: data-collector
+spec:
+  schedule: "*/30 * * * *"  # Every 30 minutes
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: trigger
+            image: curlimages/curl:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              echo "🚀 Triggering ML Market Data Collection..."
+              curl -X POST http://ml-market-collector.crypto-data-collection.svc.cluster.local:8000/collect
+              echo "✅ Collection triggered"
+          restartPolicy: OnFailure
+      backoffLimit: 2

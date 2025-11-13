@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: database-config
+  namespace: crypto-data-collection
+data:
+  # Database connection configuration
+  DB_HOST: "172.22.32.1"  # Windows MySQL host IP
+  DB_PORT: "3306"
+  DB_NAME: "crypto_prices"
+  DB_CONNECTION_TIMEOUT: "30"
+  DB_MAX_RETRIES: "3"
+  DB_POOL_SIZE: "10"
+  
+  # API Configuration
+  COINGECKO_BASE_URL: "https://pro-api.coingecko.com/api/v3"
+  MESSARI_BASE_URL: "https://data.messari.io/api/v1"
+  BLOCKCHAIN_INFO_URL: "https://blockchain.info"
+  
+  # Collection Configuration
+  COLLECTION_INTERVAL: "300"  # 5 minutes
+  BATCH_SIZE: "100"
+  MAX_RETRIES: "3"
+  
+  # Logging Configuration
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: database-secrets
+  namespace: crypto-data-collection
+type: Opaque
+data:
+  # Base64 encoded values
+  DB_USER: bmV3c19jb2xsZWN0b3I=           # news_collector
+  DB_PASSWORD: OTlSdWxlcyE=               # 99Rules!
+  COINGECKO_PREMIUM_API_KEY: Q0ctOTROQ3ZEMmV1eGFHVFplOTRTMm9Zeg==  # CG-94NCcVD2euxaGTZe94bS2oYz
+  MESSARI_API_KEY: ""                     # Empty for now
+  ETHERSCAN_API_KEY: ""                   # Empty for now
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: crypto-data-collection
+  labels:
+    name: crypto-data-collection
+    purpose: crypto-data-collection-system

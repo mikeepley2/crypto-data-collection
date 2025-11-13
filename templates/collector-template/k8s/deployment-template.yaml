@@ -1,0 +1,297 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: collector-base-config
+  namespace: default
+data:
+  # Database Configuration
+  MYSQL_HOST: "host.docker.internal"
+  MYSQL_PORT: "3306"
+  MYSQL_DATABASE: "crypto_prices"
+  
+  # Collection Configuration
+  COLLECTION_INTERVAL: "900"  # 15 minutes
+  BACKFILL_BATCH_SIZE: "100"
+  MAX_RETRY_ATTEMPTS: "3"
+  API_TIMEOUT: "30"
+  API_RATE_LIMIT: "60"
+  
+  # Date Configuration
+  COLLECTOR_BEGINNING_DATE: "2023-01-01"
+  BACKFILL_LOOKBACK_DAYS: "30"
+  
+  # Logging Configuration
+  LOG_LEVEL: "trace"  # trace, debug, info, warning, error, critical, none
+  LOG_FORMAT: "json"  # json or console
+  ENABLE_AUDIT_LOGGING: "true"
+  
+  # Health Check Configuration
+  HEALTH_CHECK_INTERVAL: "30"
+  
+  # Rate Limiting and Circuit Breaker
+  ENABLE_RATE_LIMITING: "true"
+  API_RATE_LIMIT_PER_MINUTE: "60"
+  CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
+  CIRCUIT_BREAKER_TIMEOUT: "60"
+  
+  # Data Validation and Quality
+  ENABLE_DATA_VALIDATION: "true"
+  ENABLE_DUPLICATE_DETECTION: "true"
+  DATA_RETENTION_DAYS: "365"
+  
+  # Performance and Optimization
+  CONNECTION_POOL_SIZE: "10"
+  QUERY_TIMEOUT: "30"
+  BATCH_COMMIT_SIZE: "1000"
+  
+  # Alerting and Notifications
+  ENABLE_ALERTING: "false"
+  ALERT_ERROR_THRESHOLD: "10"
+  
+  # Service Configuration
+  SERVICE_VERSION: "1.0.0"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: collector-secrets-template
+  namespace: default
+data:
+  # Database Credentials (use Kubernetes secrets in production)
+  MYSQL_USER: "news_collector"  # Change per collector
+  MYSQL_PASSWORD: "99Rules!"    # Use K8s secrets in production
+  
+  # API Keys (use Kubernetes secrets in production)
+  # API_KEY: ""  # Uncomment and use secrets
+  
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: COLLECTOR_NAME-collector
+  namespace: default
+  labels:
+    app: COLLECTOR_NAME-collector
+    version: v1
+    component: data-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: COLLECTOR_NAME-collector
+  template:
+    metadata:
+      labels:
+        app: COLLECTOR_NAME-collector
+        version: v1
+        component: data-collector
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: COLLECTOR_NAME-collector
+        image: python:3.11-slim
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        # Service Configuration
+        - name: SERVICE_NAME
+          value: "COLLECTOR_NAME-collector"
+        
+        # Import from base config
+        - name: MYSQL_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: collector-base-config
+              key: MYSQL_HOST
+        - name: MYSQL_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: collector-base-config
+              key: MYSQL_PORT
+        - name: MYSQL_DATABASE
+          valueFrom:
+            configMapKeyRef:
+              name: collector-base-config
+              key: MYSQL_DATABASE
+        - name: COLLECTION_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: collector-base-config
+              key: COLLECTION_INTERVAL
+        - name: BACKFILL_BATCH_SIZE
+          valueFrom:
+            configMapKeyRef:
+              name: collector-base-config
+              key: BACKFILL_BATCH_SIZE
+        - name: MAX_RETRY_ATTEMPTS
+          valueFrom:
+            configMapKeyRef:
+              name: collector-base-config
+              key: MAX_RETRY_ATTEMPTS
+        - name: API_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: collector-base-config
+              key: API_TIMEOUT
+        - name: API_RATE_LIMIT
+          valueFrom:
+            configMapKeyRef:
+              name: collector-base-config
+              key: API_RATE_LIMIT
+        - name: COLLECTOR_BEGINNING_DATE
+          valueFrom:
+            configMapKeyRef:
+              name: collector-base-config
+              key: COLLECTOR_BEGINNING_DATE
+        - name: BACKFILL_LOOKBACK_DAYS
+          valueFrom:
+            configMapKeyRef:
+              name: collector-base-config
+              key: BACKFILL_LOOKBACK_DAYS
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: collector-base-config
+              key: LOG_LEVEL
+        - name: LOG_FORMAT
+          valueFrom:
+            configMapKeyRef:
+              name: collector-base-config
+              key: LOG_FORMAT
+        - name: ENABLE_AUDIT_LOGGING
+          valueFrom:
+            configMapKeyRef:
+              name: collector-base-config
+              key: ENABLE_AUDIT_LOGGING
+        - name: HEALTH_CHECK_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: collector-base-config
+              key: HEALTH_CHECK_INTERVAL
+        - name: SERVICE_VERSION
+          valueFrom:
+            configMapKeyRef:
+              name: collector-base-config
+              key: SERVICE_VERSION
+              
+        # Import from secrets (customize per collector)
+        - name: MYSQL_USER
+          valueFrom:
+            configMapKeyRef:
+              name: collector-secrets-template
+              key: MYSQL_USER
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            configMapKeyRef:
+              name: collector-secrets-template
+              key: MYSQL_PASSWORD
+              
+        # Collector-specific environment variables
+        # Add collector-specific config here
+        
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+            
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+          
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 2
+          
+        # Volume mounts for logs (if needed)
+        # volumeMounts:
+        # - name: logs
+        #   mountPath: /app/logs
+          
+        command: ["/bin/bash"]
+        args: 
+        - -c
+        - |
+          # Install dependencies
+          pip install --no-cache-dir \
+            mysql-connector-python \
+            fastapi \
+            uvicorn \
+            aiohttp \
+            prometheus-client \
+            structlog \
+            pydantic \
+            asyncio \
+            psutil \
+            feedparser
+          
+          # Install collector-specific dependencies here
+          # pip install additional-dependencies
+          
+          # Download collector code
+          curl -o /app/base_collector.py https://raw.githubusercontent.com/your-repo/base_collector_template.py
+          curl -o /app/collector.py https://raw.githubusercontent.com/your-repo/COLLECTOR_NAME_collector.py
+          
+          # Start the collector
+          cd /app && python collector.py
+          
+      # Volumes for logs (if needed)
+      # volumes:
+      # - name: logs
+      #   emptyDir: {}
+      
+      restartPolicy: Always
+      
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: COLLECTOR_NAME-collector-service
+  namespace: default
+  labels:
+    app: COLLECTOR_NAME-collector
+spec:
+  selector:
+    app: COLLECTOR_NAME-collector
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+    protocol: TCP
+  type: ClusterIP
+  
+---
+# ServiceMonitor for Prometheus scraping
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: COLLECTOR_NAME-collector-monitor
+  namespace: default
+  labels:
+    app: COLLECTOR_NAME-collector
+spec:
+  selector:
+    matchLabels:
+      app: COLLECTOR_NAME-collector
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    honorLabels: true

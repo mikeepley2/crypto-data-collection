@@ -1,0 +1,298 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-onchain-collector
+  namespace: crypto-data-collection
+  labels:
+    app: enhanced-onchain-collector
+    component: data-collection
+    version: enhanced
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-onchain-collector
+  template:
+    metadata:
+      labels:
+        app: enhanced-onchain-collector
+        component: data-collection
+        version: enhanced
+    spec:
+      nodeSelector:
+        node-type: data-collection
+      tolerations:
+        - key: "data-platform"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      containers:
+        - name: enhanced-onchain-collector
+          image: python:3.11-slim
+          ports:
+            - containerPort: 8003
+              name: http
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              pip install mysql-connector-python requests fastapi uvicorn
+              
+              # Create enhanced onchain collector
+              cat > /app/enhanced_onchain_collector.py << 'EOF'
+              #!/usr/bin/env python3
+              """
+              Enhanced OnChain Data Collector for K8s Deployment
+              """
+              
+              import os
+              import logging
+              import time
+              import requests
+              import mysql.connector
+              from datetime import datetime, timedelta
+              from typing import List, Dict, Optional
+              
+              logging.basicConfig(level=logging.INFO)
+              logger = logging.getLogger(__name__)
+              
+              class EnhancedOnChainCollector:
+                  def __init__(self):
+                      self.db_config = {
+                          "host": os.getenv("MYSQL_HOST", "172.22.32.1"),
+                          "port": int(os.getenv("MYSQL_PORT", "3306")),
+                          "user": os.getenv("MYSQL_USER", "news_collector"),
+                          "password": os.getenv("MYSQL_PASSWORD", "99Rules!"),
+                          "database": os.getenv("MYSQL_DATABASE", "crypto_prices")
+                      }
+                      
+                      # Blockchain API endpoints
+                      self.blockchain_apis = {
+                          "bitcoin": {
+                              "base_url": "https://blockstream.info/api",
+                              "endpoints": {
+                                  "stats": "/stats",
+                                  "mempool": "/mempool",
+                                  "fees": "/fee-estimates"
+                              }
+                          },
+                          "ethereum": {
+                              "base_url": "https://api.etherscan.io/api",
+                              "api_key": os.getenv("ETHERSCAN_API_KEY", "YourAPIKeyToken"),
+                              "endpoints": {
+                                  "gas_station": "?module=gastracker&action=gasoracle",
+                                  "supply": "?module=stats&action=ethsupply"
+                              }
+                          }
+                      }
+                      
+                  def get_db_connection(self):
+                      return mysql.connector.connect(**self.db_config)
+                      
+                  def get_active_symbols(self) -> List[str]:
+                      """Get actively tracked symbols from crypto_assets table"""
+                      try:
+                          with self.get_db_connection() as conn:
+                              cursor = conn.cursor()
+                              cursor.execute("""
+                                  SELECT DISTINCT symbol FROM crypto_assets 
+                                  WHERE is_active = 1 
+                                  ORDER BY symbol
+                              """)
+                              return [row[0] for row in cursor.fetchall()]
+                      except Exception as e:
+                          logger.error(f"Error fetching symbols: {e}")
+                          return ["BTC", "ETH"]  # Fallback
+                          
+                  def fetch_bitcoin_onchain_data(self) -> Optional[Dict]:
+                      """Fetch Bitcoin blockchain metrics"""
+                      try:
+                          # Stats endpoint
+                          stats_url = f"{self.blockchain_apis['bitcoin']['base_url']}/stats"
+                          stats_response = requests.get(stats_url, timeout=30)
+                          stats_response.raise_for_status()
+                          stats = stats_response.json()
+                          
+                          # Mempool endpoint  
+                          mempool_url = f"{self.blockchain_apis['bitcoin']['base_url']}/mempool"
+                          mempool_response = requests.get(mempool_url, timeout=30)
+                          mempool_response.raise_for_status()
+                          mempool = mempool_response.json()
+                          
+                          return {
+                              "symbol": "BTC",
+                              "blockchain": "bitcoin",
+                              "block_height": stats.get("funded_txo_count"),
+                              "difficulty": stats.get("difficulty_epoch"),
+                              "hashrate": stats.get("hashrate_1w"),
+                              "mempool_size": mempool.get("count", 0),
+                              "mempool_vsize": mempool.get("vsize", 0),
+                              "total_fees": mempool.get("total_fee", 0),
+                              "tx_count_24h": stats.get("funded_txo_count"),
+                              "metric_date": datetime.now().date()
+                          }
+                          
+                      except Exception as e:
+                          logger.error(f"Error fetching Bitcoin data: {e}")
+                          return None
+                          
+                  def fetch_ethereum_onchain_data(self) -> Optional[Dict]:
+                      """Fetch Ethereum blockchain metrics"""
+                      try:
+                          api_key = self.blockchain_apis["ethereum"]["api_key"]
+                          base_url = self.blockchain_apis["ethereum"]["base_url"]
+                          
+                          # Gas oracle
+                          gas_url = f"{base_url}?module=gastracker&action=gasoracle&apikey={api_key}"
+                          gas_response = requests.get(gas_url, timeout=30)
+                          gas_response.raise_for_status()
+                          gas_data = gas_response.json()
+                          
+                          if gas_data.get("status") == "1":
+                              result = gas_data.get("result", {})
+                              
+                              return {
+                                  "symbol": "ETH",
+                                  "blockchain": "ethereum",
+                                  "gas_price_safe": int(result.get("SafeGasPrice", 0)),
+                                  "gas_price_standard": int(result.get("ProposeGasPrice", 0)),
+                                  "gas_price_fast": int(result.get("FastGasPrice", 0)),
+                                  "metric_date": datetime.now().date()
+                              }
+                              
+                          return None
+                          
+                      except Exception as e:
+                          logger.error(f"Error fetching Ethereum data: {e}")
+                          return None
+                          
+                  def store_onchain_data(self, data: Dict) -> bool:
+                      """Store onchain metrics in database"""
+                      try:
+                          with self.get_db_connection() as conn:
+                              cursor = conn.cursor()
+                              
+                              # Prepare fields dynamically based on data
+                              fields = list(data.keys())
+                              values = list(data.values())
+                              placeholders = ", ".join(["%s"] * len(values))
+                              field_names = ", ".join(fields)
+                              
+                              # Add collected_at timestamp
+                              fields.append("collected_at")
+                              values.append(datetime.now())
+                              
+                              cursor.execute(f"""
+                                  INSERT INTO onchain_data ({", ".join(fields)})
+                                  VALUES ({placeholders}, NOW())
+                                  ON DUPLICATE KEY UPDATE
+                                      {", ".join([f"{field} = VALUES({field})" for field in fields[:-1]])},
+                                      collected_at = NOW()
+                              """, values)
+                              
+                              conn.commit()
+                              return True
+                              
+                      except Exception as e:
+                          logger.error(f"Error storing onchain data: {e}")
+                          return False
+                          
+                  def run_collection_cycle(self):
+                      """Execute one collection cycle"""
+                      logger.info("Starting onchain data collection cycle...")
+                      
+                      collected = 0
+                      stored = 0
+                      
+                      # Bitcoin data
+                      try:
+                          btc_data = self.fetch_bitcoin_onchain_data()
+                          if btc_data:
+                              collected += 1
+                              if self.store_onchain_data(btc_data):
+                                  stored += 1
+                                  logger.info(f"✅ BTC onchain: mempool_size={btc_data.get('mempool_size')}")
+                              
+                          time.sleep(2)  # Rate limiting
+                          
+                      except Exception as e:
+                          logger.error(f"Error processing Bitcoin data: {e}")
+                          
+                      # Ethereum data
+                      try:
+                          eth_data = self.fetch_ethereum_onchain_data()
+                          if eth_data:
+                              collected += 1
+                              if self.store_onchain_data(eth_data):
+                                  stored += 1
+                                  logger.info(f"✅ ETH onchain: gas_standard={eth_data.get('gas_price_standard')}")
+                                  
+                          time.sleep(2)  # Rate limiting
+                          
+                      except Exception as e:
+                          logger.error(f"Error processing Ethereum data: {e}")
+                          
+                      logger.info(f"OnChain collection completed: {collected} collected, {stored} stored")
+                      return {"collected": collected, "stored": stored}
+              
+              if __name__ == "__main__":
+                  collector = EnhancedOnChainCollector()
+                  
+                  while True:
+                      try:
+                          collector.run_collection_cycle()
+                          time.sleep(1800)  # 30 minutes
+                      except KeyboardInterrupt:
+                          break
+                      except Exception as e:
+                          logger.error(f"Collection error: {e}")
+                          time.sleep(600)  # 10 minute retry delay
+              EOF
+              
+              python /app/enhanced_onchain_collector.py
+          env:
+            - name: MYSQL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_HOST
+            - name: MYSQL_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_PORT
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-user
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-password
+            - name: MYSQL_DATABASE
+              value: "crypto_prices"
+            - name: ETHERSCAN_API_KEY
+              value: "YourAPIKeyToken"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "250m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-onchain-collector-service
+  namespace: crypto-data-collection
+spec:
+  selector:
+    app: enhanced-onchain-collector
+  ports:
+    - protocol: TCP
+      port: 8003
+      targetPort: 8003
+  type: ClusterIP

@@ -1,0 +1,488 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: enhanced-technical-calculator-config
+  namespace: crypto-data
+data:
+  # Database configuration
+  DB_HOST: "mysql-service.crypto-data.svc.cluster.local"
+  DB_NAME: "crypto_data"
+  DB_USER: "crypto_user"
+  SERVICE_NAME: "enhanced-technical-calculator"
+  
+  # Collection configuration
+  COLLECTION_INTERVAL: "300"  # 5 minutes
+  COLLECTION_ENABLED: "true"
+  MAX_RETRIES: "3"
+  RETRY_DELAY: "5"
+  API_TIMEOUT: "30"
+  
+  # Rate limiting configuration
+  ENABLE_RATE_LIMITING: "true"
+  RATE_LIMIT_REQUESTS: "50"  # Higher for calculation tasks
+  RATE_LIMIT_WINDOW: "60"
+  RATE_LIMIT_BURST: "15"
+  
+  # Circuit breaker configuration
+  ENABLE_CIRCUIT_BREAKER: "true"
+  CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
+  CIRCUIT_BREAKER_RECOVERY_TIMEOUT: "60"
+  CIRCUIT_BREAKER_EXPECTED_EXCEPTION: "ValueError,mysql.connector.Error,ZeroDivisionError"
+  
+  # Data validation configuration
+  ENABLE_DATA_VALIDATION: "true"
+  VALIDATION_SCHEMA_PATH: "/app/schemas/technical_schema.json"
+  DUPLICATE_CHECK_FIELDS: "symbol"
+  
+  # Alerting configuration
+  ENABLE_ALERTING: "true"
+  ALERT_WEBHOOK_URL: "http://alertmanager-webhook.monitoring.svc.cluster.local/webhook"
+  ALERT_ERROR_THRESHOLD: "5"
+  ALERT_MEMORY_THRESHOLD: "80"
+  ALERT_CPU_THRESHOLD: "85"
+  
+  # Performance monitoring
+  ENABLE_PERFORMANCE_MONITORING: "true"
+  PERFORMANCE_LOG_INTERVAL: "60"
+  
+  # Prometheus metrics
+  PROMETHEUS_PORT: "9090"
+  ENABLE_PROMETHEUS_METRICS: "true"
+  
+  # Technical calculator specific configuration
+  BATCH_PROCESSING_SIZE: "10"
+  PRICE_DATA_LIMIT: "200"
+  MIN_PERIODS_FOR_INDICATORS: "20"
+  SMA_PERIODS: "20,50,200"
+  EMA_PERIODS: "12,26"
+  RSI_PERIODS: "14,7"
+  BOLLINGER_PERIOD: "20"
+  BOLLINGER_STD: "2"
+  STOCHASTIC_K_PERIOD: "14"
+  STOCHASTIC_D_PERIOD: "3"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: enhanced-technical-calculator-secrets
+  namespace: crypto-data
+type: Opaque
+data:
+  DB_PASSWORD: "Y3J5cHRvX3Bhc3N3b3Jk"  # Base64: crypto_password
+  ALERT_WEBHOOK_SECRET: "YWxlcnRfc2VjcmV0XzEyMw=="  # Base64: alert_secret_123
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: enhanced-technical-calculator-schema
+  namespace: crypto-data
+data:
+  technical_schema.json: |
+    {
+      "type": "object",
+      "required": ["symbol", "data_points"],
+      "properties": {
+        "symbol": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 10,
+          "pattern": "^[A-Z0-9]+$"
+        },
+        "data_points": {
+          "type": "integer",
+          "minimum": 20,
+          "maximum": 1000
+        },
+        "latest_timestamp": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "latest_price": {
+          "type": "number",
+          "minimum": 0
+        },
+        "sma_20": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "ema_12": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "rsi_14": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "macd_line": {
+          "type": ["number", "null"]
+        },
+        "bb_upper": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "bb_lower": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "stoch_k": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "additionalProperties": true
+    }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-technical-calculator
+  namespace: crypto-data
+  labels:
+    app: enhanced-technical-calculator
+    version: template-compliant
+    component: calculator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-technical-calculator
+  template:
+    metadata:
+      labels:
+        app: enhanced-technical-calculator
+        version: template-compliant
+        component: calculator
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      nodeSelector:
+        workload: computational
+      tolerations:
+      - key: "compute-intensive"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      containers:
+      - name: enhanced-technical-calculator
+        image: crypto-technical-calculator:template-compliant
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        env:
+        # Database configuration from ConfigMap
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: DB_HOST
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: DB_NAME
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: enhanced-technical-calculator-secrets
+              key: DB_PASSWORD
+        - name: SERVICE_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: SERVICE_NAME
+        
+        # Collection configuration from ConfigMap
+        - name: COLLECTION_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: COLLECTION_INTERVAL
+        - name: COLLECTION_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: COLLECTION_ENABLED
+        - name: MAX_RETRIES
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: MAX_RETRIES
+        - name: RETRY_DELAY
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: RETRY_DELAY
+        - name: API_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: API_TIMEOUT
+        
+        # All other environment variables following the same pattern...
+        - name: ENABLE_RATE_LIMITING
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: ENABLE_RATE_LIMITING
+        - name: RATE_LIMIT_REQUESTS
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: RATE_LIMIT_REQUESTS
+        - name: RATE_LIMIT_WINDOW
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: RATE_LIMIT_WINDOW
+        - name: RATE_LIMIT_BURST
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: RATE_LIMIT_BURST
+        - name: ENABLE_CIRCUIT_BREAKER
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: ENABLE_CIRCUIT_BREAKER
+        - name: CIRCUIT_BREAKER_FAILURE_THRESHOLD
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: CIRCUIT_BREAKER_FAILURE_THRESHOLD
+        - name: CIRCUIT_BREAKER_RECOVERY_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: CIRCUIT_BREAKER_RECOVERY_TIMEOUT
+        - name: CIRCUIT_BREAKER_EXPECTED_EXCEPTION
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: CIRCUIT_BREAKER_EXPECTED_EXCEPTION
+        - name: ENABLE_DATA_VALIDATION
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: ENABLE_DATA_VALIDATION
+        - name: VALIDATION_SCHEMA_PATH
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: VALIDATION_SCHEMA_PATH
+        - name: DUPLICATE_CHECK_FIELDS
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: DUPLICATE_CHECK_FIELDS
+        - name: ENABLE_ALERTING
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: ENABLE_ALERTING
+        - name: ALERT_WEBHOOK_URL
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: ALERT_WEBHOOK_URL
+        - name: ALERT_WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: enhanced-technical-calculator-secrets
+              key: ALERT_WEBHOOK_SECRET
+        - name: ALERT_ERROR_THRESHOLD
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: ALERT_ERROR_THRESHOLD
+        - name: ALERT_MEMORY_THRESHOLD
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: ALERT_MEMORY_THRESHOLD
+        - name: ALERT_CPU_THRESHOLD
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: ALERT_CPU_THRESHOLD
+        - name: ENABLE_PERFORMANCE_MONITORING
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: ENABLE_PERFORMANCE_MONITORING
+        - name: PERFORMANCE_LOG_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: PERFORMANCE_LOG_INTERVAL
+        - name: PROMETHEUS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: PROMETHEUS_PORT
+        - name: ENABLE_PROMETHEUS_METRICS
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: ENABLE_PROMETHEUS_METRICS
+        
+        # Technical calculator specific configuration
+        - name: BATCH_PROCESSING_SIZE
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: BATCH_PROCESSING_SIZE
+        - name: PRICE_DATA_LIMIT
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: PRICE_DATA_LIMIT
+        - name: MIN_PERIODS_FOR_INDICATORS
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: MIN_PERIODS_FOR_INDICATORS
+        - name: SMA_PERIODS
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: SMA_PERIODS
+        - name: EMA_PERIODS
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: EMA_PERIODS
+        - name: RSI_PERIODS
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: RSI_PERIODS
+        - name: BOLLINGER_PERIOD
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: BOLLINGER_PERIOD
+        - name: BOLLINGER_STD
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: BOLLINGER_STD
+        - name: STOCHASTIC_K_PERIOD
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: STOCHASTIC_K_PERIOD
+        - name: STOCHASTIC_D_PERIOD
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-technical-calculator-config
+              key: STOCHASTIC_D_PERIOD
+        
+        volumeMounts:
+        - name: schema-volume
+          mountPath: /app/schemas
+          readOnly: true
+        
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+      
+      volumes:
+      - name: schema-volume
+        configMap:
+          name: enhanced-technical-calculator-schema
+      
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-technical-calculator-service
+  namespace: crypto-data
+  labels:
+    app: enhanced-technical-calculator
+spec:
+  selector:
+    app: enhanced-technical-calculator
+  ports:
+  - name: http
+    protocol: TCP
+    port: 8000
+    targetPort: 8000
+  - name: metrics
+    protocol: TCP
+    port: 9090
+    targetPort: 9090
+  type: ClusterIP
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: enhanced-technical-calculator-monitor
+  namespace: crypto-data
+  labels:
+    app: enhanced-technical-calculator
+spec:
+  selector:
+    matchLabels:
+      app: enhanced-technical-calculator
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: enhanced-technical-calculator-pdb
+  namespace: crypto-data
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: enhanced-technical-calculator

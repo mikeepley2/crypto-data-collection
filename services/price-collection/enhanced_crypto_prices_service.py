@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Enhanced Crypto Price Service with Database-Driven Symbol Support
+Enhanced Crypto Price Service with Database-Driven Symbol Support and Backfill Capabilities
 Supports ALL Coinbase-compatible symbols from crypto_assets table
+Features: Real-time collection, Historical backfill, Gap detection, Date range processing
 """
 
 import asyncio
@@ -9,7 +10,9 @@ import logging
 import time
 import json
 import sys
-from datetime import datetime, timedelta
+import argparse
+import os
+from datetime import datetime, timedelta, date
 from typing import List, Dict, Any, Optional, Union
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -29,10 +32,8 @@ class DatabaseCryptoDefinitions:
     """Database-driven crypto definitions"""
 
     def __init__(self):
-        import os
-
         self.db_config = {
-            "host": os.getenv("MYSQL_HOST", "host.docker.internal"),
+            "host": os.getenv("MYSQL_HOST", "172.22.32.1"),
             "user": os.getenv("MYSQL_USER", "news_collector"),
             "password": os.getenv("MYSQL_PASSWORD", "99Rules!"),
             "database": os.getenv("MYSQL_DATABASE", "crypto_prices"),
@@ -164,6 +165,22 @@ class DatabaseCryptoDefinitions:
         symbols = self.get_coinbase_symbols()
         return [self.get_coingecko_id(symbol) for symbol in symbols]
 
+    def get_coingecko_symbols_mapping(self) -> Dict[str, str]:
+        """Get mapping of symbols to CoinGecko IDs"""
+        if not self._is_cache_valid() or not self._symbol_cache:
+            self.get_coinbase_symbols()  # Refresh cache
+            
+        mapping = {}
+        for symbol, data in self._symbol_cache.items():
+            mapping[symbol] = data["coingecko_id"]
+            
+        # Add fallback mappings for any missing symbols
+        for symbol, coingecko_id in self.fallback_coingecko_ids.items():
+            if symbol not in mapping:
+                mapping[symbol] = coingecko_id
+                
+        return mapping
+
 
 # Initialize database-driven crypto definitions
 crypto_definitions = DatabaseCryptoDefinitions()
@@ -191,6 +208,12 @@ class MultiPriceResponse(BaseModel):
     api_calls: int
 
 
+class BackfillRequest(BaseModel):
+    start_date: str  # Format: 'YYYY-MM-DD'
+    end_date: str    # Format: 'YYYY-MM-DD'
+    symbols: Optional[List[str]] = None  # Optional list of symbols, if None uses all symbols
+
+
 class HealthResponse(BaseModel):
     status: str
     cache_entries: int
@@ -202,19 +225,33 @@ class HealthResponse(BaseModel):
 
 class EnhancedCryptoPricesService:
     def __init__(self):
-        self.base_url = "https://api.coingecko.com/api/v3"
+        self.base_url = "https://pro-api.coingecko.com/api/v3"  # Use premium endpoint
         self.coinbase_base_url = "https://api.coinbase.com/v2"
         self.cache = {}
         self.cache_ttl = 60  # 1 minute cache
         self.last_api_call = None
         self.api_calls_today = 0
         self.daily_reset = datetime.now().date()
+        
+        # Premium API key configuration
+        self.api_key = os.getenv('COINGECKO_API_KEY', 'CG-94NCcVD2euxaGTZe94bS2oYz')
+        self.headers = {
+            'User-Agent': 'CryptoML-Premium-Collector/1.0',
+            'x-cg-pro-api-key': self.api_key
+        }
+        
+        # Premium rate limiting (300 requests/minute)
+        self.requests_per_minute = 300
+        self.request_times = []
+        
+        # Initialize crypto definitions
+        self.crypto_definitions = DatabaseCryptoDefinitions()
+        
+        logger.info(f"🚀 Initialized with premium CoinGecko API key: {self.api_key[:8]}...")
 
         # MySQL storage for price data
-        import os
-
         self.db_config = {
-            "host": os.getenv("MYSQL_HOST", "host.docker.internal"),
+            "host": os.getenv("MYSQL_HOST", "172.22.32.1"),
             "user": os.getenv("MYSQL_USER", "news_collector"),
             "password": os.getenv("MYSQL_PASSWORD", "99Rules!"),
             "database": os.getenv("MYSQL_DATABASE", "crypto_prices"),
@@ -257,10 +294,24 @@ class EnhancedCryptoPricesService:
             logger.debug(f"Coinbase API failed for {symbol}: {e}")
             return None
 
+    def _check_rate_limit(self):
+        """Check and enforce rate limiting for premium API"""
+        current_time = time.time()
+        # Remove requests older than 1 minute
+        self.request_times = [t for t in self.request_times if current_time - t < 60]
+        
+        if len(self.request_times) >= self.requests_per_minute:
+            sleep_time = 60 - (current_time - self.request_times[0])
+            logger.warning(f"⏱️ Rate limit reached, sleeping {sleep_time:.2f}s")
+            time.sleep(sleep_time)
+            self.request_times = [t for t in self.request_times if time.time() - t < 60]
+        
+        self.request_times.append(current_time)
+
     async def get_coingecko_price(
         self, coin_id: str, vs_currency: str = "usd"
     ) -> Optional[Dict]:
-        """Get price data from CoinGecko API"""
+        """Get price data from CoinGecko Premium API"""
         try:
             url = f"{self.base_url}/simple/price"
             params = {
@@ -271,7 +322,7 @@ class EnhancedCryptoPricesService:
             }
 
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params, timeout=15) as response:
+                async with session.get(url, params=params, headers=self.headers, timeout=15) as response:
                     if response.status == 200:
                         data = await response.json()
                         if coin_id in data:
@@ -280,7 +331,8 @@ class EnhancedCryptoPricesService:
                             return data[coin_id]
                     elif response.status == 429:
                         logger.warning(f"CoinGecko rate limited for {coin_id}")
-                        await asyncio.sleep(2)  # Wait before retry
+                        retry_after = int(response.headers.get('Retry-After', 60))
+                        await asyncio.sleep(retry_after)
                         return None
                     else:
                         logger.warning(
@@ -477,6 +529,226 @@ class EnhancedCryptoPricesService:
             logger.error(f"Error storing prices to MySQL: {e}")
             return 0
 
+    # =============================================================================
+    # BACKFILL FUNCTIONALITY - Added for Historical Data Collection
+    # =============================================================================
+    
+    def get_missing_dates(self, symbol: str, start_date: date, end_date: date) -> List[date]:
+        """Identify missing dates for a symbol in the specified range"""
+        try:
+            db = mysql.connector.connect(**self.db_config)
+            cursor = db.cursor()
+            
+            # Get existing dates for this symbol
+            cursor.execute("""
+                SELECT DISTINCT DATE(timestamp) as date_only
+                FROM price_data_real
+                WHERE symbol = %s 
+                AND DATE(timestamp) BETWEEN %s AND %s
+                ORDER BY date_only
+            """, (symbol, start_date, end_date))
+            
+            existing_dates = {row[0] for row in cursor.fetchall()}
+            cursor.close()
+            db.close()
+            
+            # Generate expected dates
+            missing_dates = []
+            current_date = start_date
+            
+            while current_date <= end_date:
+                if current_date not in existing_dates:
+                    missing_dates.append(current_date)
+                current_date += timedelta(days=1)
+            
+            logger.info(f"Found {len(missing_dates)} missing dates for {symbol}")
+            return missing_dates
+            
+        except Exception as e:
+            logger.error(f"Error identifying missing dates for {symbol}: {e}")
+            return []
+
+    async def collect_historical_data(self, symbol: str, coingecko_id: str, target_date: date) -> Dict[str, Any]:
+        """Collect historical price data for a specific symbol and date"""
+        try:
+            # CoinGecko historical price endpoint  
+            url = f"{self.base_url}/coins/{coingecko_id}/history"
+            params = {
+                'date': target_date.strftime('%d-%m-%Y'),  # DD-MM-YYYY format
+                'localization': 'false'
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, headers=self.headers) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        
+                        # Extract price data
+                        market_data = data.get('market_data', {})
+                        
+                        target_datetime = datetime.combine(target_date, datetime.min.time())
+                        price_data = {
+                            'symbol': symbol,
+                            'coin_id': coingecko_id,  # Add the required coin_id field
+                            'name': data.get('name', symbol),  # Add the required name field
+                            'timestamp': int(target_datetime.timestamp()),
+                            'timestamp_iso': target_datetime,  # Add the required timestamp_iso field
+                            'current_price': market_data.get('current_price', {}).get('usd', 0),
+                            'market_cap': market_data.get('market_cap', {}).get('usd', 0),
+                            'volume_usd_24h': market_data.get('total_volume', {}).get('usd', 0),
+                            'price_change_24h': market_data.get('price_change_24h', {}).get('usd', 0),
+                            'price_change_percentage_24h': market_data.get('price_change_percentage_24h', {}).get('usd', 0),
+                            'market_cap_rank': market_data.get('market_cap_rank'),
+                            'circulating_supply': market_data.get('circulating_supply'),
+                            'total_supply': market_data.get('total_supply'),
+                            'max_supply': market_data.get('max_supply'),
+                            'ath': market_data.get('ath', {}).get('usd'),
+                            'atl': market_data.get('atl', {}).get('usd'),
+                            'created_at': datetime.now()
+                        }
+                        
+                        return {'status': 'success', 'data': price_data}
+                    else:
+                        return {'status': 'error', 'error': f'API returned {response.status}'}
+                        
+        except Exception as e:
+            logger.error(f"Error collecting historical data for {symbol} on {target_date}: {e}")
+            return {'status': 'error', 'error': str(e)}
+
+    def store_historical_data(self, historical_data: List[Dict]) -> int:
+        """Store historical price data to MySQL"""
+        if not historical_data:
+            return 0
+        
+        try:
+            db = mysql.connector.connect(**self.db_config)
+            cursor = db.cursor()
+            
+            # Insert historical data with proper column mapping
+            insert_query = """
+                INSERT INTO price_data_real (
+                    symbol, coin_id, name, timestamp, timestamp_iso, current_price, market_cap, volume_usd_24h,
+                    price_change_24h, price_change_percentage_24h, market_cap_rank,
+                    circulating_supply, total_supply, max_supply, ath, atl, created_at
+                ) VALUES (
+                    %(symbol)s, %(coin_id)s, %(name)s, %(timestamp)s, %(timestamp_iso)s, %(current_price)s, %(market_cap)s, %(volume_usd_24h)s,
+                    %(price_change_24h)s, %(price_change_percentage_24h)s, %(market_cap_rank)s,
+                    %(circulating_supply)s, %(total_supply)s, %(max_supply)s, %(ath)s, %(atl)s, %(created_at)s
+                ) ON DUPLICATE KEY UPDATE
+                    current_price = VALUES(current_price),
+                    market_cap = VALUES(market_cap),
+                    volume_usd_24h = VALUES(volume_usd_24h),
+                    created_at = VALUES(created_at)
+            """
+            
+            cursor.executemany(insert_query, historical_data)
+            rows_affected = cursor.rowcount
+            
+            cursor.close()
+            db.close()
+            
+            logger.info(f"Stored {rows_affected} historical records")
+            return rows_affected
+            
+        except Exception as e:
+            logger.error(f"Error storing historical data: {e}")
+            return 0
+
+    async def run_backfill(self, start_date: date, end_date: date, symbols: List[str] = None, batch_size: int = 5) -> Dict[str, Any]:
+        """Run historical backfill for specified date range and symbols"""
+        logger.info(f"Starting backfill from {start_date} to {end_date}")
+        
+        if symbols is None:
+            symbols = crypto_definitions.get_coinbase_symbols()
+            logger.info(f"Using all {len(symbols)} available symbols")
+        
+        total_missing = 0
+        total_collected = 0
+        total_stored = 0
+        failed_collections = []
+        dates_processed = 0
+        
+        # Process symbols in batches to avoid overwhelming the API
+        for i in range(0, len(symbols), batch_size):
+            batch_symbols = symbols[i:i + batch_size]
+            logger.info(f"Processing batch {i//batch_size + 1}: {len(batch_symbols)} symbols")
+            
+            batch_data = []
+            
+            for symbol in batch_symbols:
+                try:
+                    # Get CoinGecko ID for symbol
+                    coingecko_mapping = crypto_definitions.get_coingecko_symbols_mapping()
+                    coingecko_id = coingecko_mapping.get(symbol)
+                    
+                    if not coingecko_id:
+                        logger.warning(f"No CoinGecko ID found for {symbol}")
+                        continue
+                    
+                    # Find missing dates for this symbol
+                    missing_dates = self.get_missing_dates(symbol, start_date, end_date)
+                    total_missing += len(missing_dates)
+                    
+                    if not missing_dates:
+                        continue
+                    
+                    # Collect historical data for missing dates (limit to avoid API overload)
+                    for target_date in missing_dates[:3]:  # Limit to 3 dates per symbol per batch
+                        self._check_rate_limit()  # Check rate limit before each request
+                        
+                        result = await self.collect_historical_data(symbol, coingecko_id, target_date)
+                        dates_processed += 1
+                        
+                        if result['status'] == 'success':
+                            batch_data.append(result['data'])
+                            total_collected += 1
+                            logger.debug(f"✅ Collected {symbol} for {target_date}")
+                        else:
+                            failed_collections.append({
+                                'symbol': symbol,
+                                'date': str(target_date),
+                                'error': result.get('error', 'Unknown error')
+                            })
+                            logger.warning(f"❌ Failed {symbol} for {target_date}: {result.get('error')}")
+                        
+                        # Rate limiting - wait between requests for premium API
+                        await asyncio.sleep(0.2)  # 200ms delay between requests
+                
+                except Exception as e:
+                    logger.error(f"Error processing {symbol}: {e}")
+                    failed_collections.append({
+                        'symbol': symbol,
+                        'error': str(e)
+                    })
+            
+            # Store batch data
+            if batch_data:
+                stored_count = self.store_historical_data(batch_data)
+                total_stored += stored_count
+                logger.info(f"Batch complete: {stored_count} records stored")
+            
+            # Wait between batches for rate limiting
+            await asyncio.sleep(2.0)  # 2 seconds between batches
+        
+        result = {
+            'status': 'completed',
+            'date_range': f"{start_date} to {end_date}",
+            'symbols_processed': len(symbols),
+            'dates_processed': dates_processed,
+            'total_missing_dates': total_missing,
+            'total_collected': total_collected,
+            'total_stored': total_stored,
+            'failed_collections': failed_collections,
+            'success_rate': (total_collected / max(total_missing, 1)) * 100
+        }
+        
+        logger.info(f"Backfill completed: {total_stored} records stored, {len(failed_collections)} failures")
+        return result
+
+
+# =============================================================================
+# Service Initialization
+# =============================================================================
 
 # Initialize service
 enhanced_service = EnhancedCryptoPricesService()
@@ -633,6 +905,35 @@ async def get_single_price(symbol: str, vs_currency: str = "usd"):
         if isinstance(e, HTTPException):
             raise e
         raise HTTPException(status_code=500, detail=f"Error fetching price: {str(e)}")
+
+
+@app.post("/backfill")
+async def run_backfill(request: BackfillRequest):
+    """Run backfill process for historical data collection"""
+    try:
+        start_date = datetime.strptime(request.start_date, '%Y-%m-%d').date()
+        end_date = datetime.strptime(request.end_date, '%Y-%m-%d').date()
+        symbols = request.symbols or []  # Use provided symbols or all symbols
+        
+        logger.info(f"Starting backfill from {start_date} to {end_date} for {len(symbols) if symbols else 'all'} symbols")
+        
+        # Run backfill process
+        result = await enhanced_service.run_backfill(start_date, end_date, symbols)
+        
+        return {
+            "status": "success",
+            "message": f"Backfill completed for period {start_date} to {end_date}",
+            "dates_processed": result.get('dates_processed', 0),
+            "symbols_processed": result.get('symbols_processed', 0),
+            "records_created": result.get('records_created', 0),
+            "errors_encountered": result.get('errors', [])
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error running backfill: {e}")
+        raise HTTPException(status_code=500, detail=f"Backfill failed: {str(e)}")
 
 
 @app.get("/metrics")

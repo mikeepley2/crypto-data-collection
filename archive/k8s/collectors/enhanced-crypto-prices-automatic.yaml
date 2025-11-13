@@ -1,0 +1,414 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-crypto-prices
+  namespace: crypto-data-collection
+  labels:
+    app: enhanced-crypto-prices
+    component: data-collection
+    node-type: data-collection
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-crypto-prices
+  template:
+    metadata:
+      labels:
+        app: enhanced-crypto-prices
+        component: data-collection
+        node-type: data-collection
+    spec:
+      nodeSelector:
+        node-type: data-collection
+      tolerations:
+        - key: "data-platform"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      containers:
+        - name: enhanced-crypto-prices
+          image: python:3.11-slim
+          ports:
+            - containerPort: 8000
+              name: http
+          command:
+            - /bin/bash
+            - -c
+          args:
+            - |
+              # Install dependencies
+              pip install fastapi uvicorn aiohttp mysql-connector-python requests asyncio prometheus-client
+
+              # Create application directory
+              mkdir -p /app
+
+              # Create the enhanced crypto prices service with automatic collection
+              cat > /app/main.py << 'EOF'
+              import asyncio
+              import logging
+              import os
+              import time
+              from datetime import datetime, timedelta
+              from contextlib import contextmanager
+              import mysql.connector
+              import requests
+              import aiohttp
+              from fastapi import FastAPI, BackgroundTasks
+              from prometheus_client import Counter, Histogram, Gauge, generate_latest
+              import uvicorn
+
+              # Configure logging
+              logging.basicConfig(level=logging.INFO)
+              logger = logging.getLogger(__name__)
+
+              # Prometheus metrics
+              PRICE_COLLECTION_TOTAL = Counter('price_collection_requests_total', 'Total price collection requests', ['exchange', 'status'])
+              PRICE_COLLECTION_DURATION = Histogram('price_collection_duration_seconds', 'Price collection duration', ['exchange'])
+              PRICE_RECORDS_STORED = Counter('price_records_stored_total', 'Total price records stored', ['exchange'])
+              PRICE_COLLECTION_ERRORS = Counter('price_collection_errors_total', 'Price collection errors', ['exchange', 'error_type'])
+              ACTIVE_COLLECTION_LOOPS = Gauge('active_collection_loops', 'Number of active collection loops')
+
+              @contextmanager
+              def get_connection_context():
+                  """Database connection context manager"""
+                  conn = None
+                  try:
+                      conn = mysql.connector.connect(
+                          host=os.getenv('MYSQL_HOST', 'host.docker.internal'),
+                          port=int(os.getenv('MYSQL_PORT', 3306)),
+                          user=os.getenv('MYSQL_USER', 'news_collector'),
+                          password=os.getenv('MYSQL_PASSWORD', '99Rules!'),
+                          database=os.getenv('MYSQL_DATABASE', 'crypto_prices')
+                      )
+                      yield conn
+                  except Exception as e:
+                      logger.error(f"Database connection error: {e}")
+                      if conn:
+                          conn.rollback()
+                      raise
+                  finally:
+                      if conn:
+                          conn.close()
+
+              class CryptoPriceCollector:
+                  def __init__(self):
+                      self.app = FastAPI(title="Enhanced Crypto Prices Service", version="2.0.0")
+                      self.setup_routes()
+                      
+                      # Collection configuration
+                      self.collection_interval = int(os.getenv('PRICE_COLLECTION_INTERVAL', 300))  # 5 minutes
+                      self.is_collecting = False
+                      self.collection_task = None
+                      
+                      # API endpoints
+                      self.coingecko_url = "https://api.coingecko.com/api/v3/simple/price"
+                      self.coinbase_url = "https://api.exchange.coinbase.com/products"
+                      
+                      logger.info(f"🚀 Enhanced Crypto Prices Service initialized with {self.collection_interval}s interval")
+
+                  def setup_routes(self):
+                      @self.app.get("/health")
+                      async def health():
+                          return {
+                              "status": "healthy",
+                              "service": "enhanced-crypto-prices",
+                              "version": "2.0.0",
+                              "collection_active": self.is_collecting,
+                              "collection_interval": self.collection_interval,
+                              "last_collection": getattr(self, 'last_collection_time', 'Never')
+                          }
+
+                      @self.app.get("/metrics")
+                      async def metrics():
+                          return generate_latest()
+
+                      @self.app.post("/start-collection")
+                      async def start_collection(background_tasks: BackgroundTasks):
+                          if not self.is_collecting:
+                              background_tasks.add_task(self.start_background_collection)
+                              return {"status": "started", "message": "Price collection started"}
+                          return {"status": "already_running", "message": "Collection already active"}
+
+                      @self.app.post("/stop-collection")
+                      async def stop_collection():
+                          if self.is_collecting:
+                              self.is_collecting = False
+                              if self.collection_task:
+                                  self.collection_task.cancel()
+                              return {"status": "stopped", "message": "Price collection stopped"}
+                          return {"status": "not_running", "message": "Collection not active"}
+
+                      @self.app.post("/collect")
+                      async def manual_collect(background_tasks: BackgroundTasks):
+                          background_tasks.add_task(self.collect_prices_once)
+                          return {"status": "started", "message": "Manual price collection initiated"}
+
+                  async def get_crypto_symbols(self):
+                      """Get list of crypto symbols from database"""
+                      try:
+                          with get_connection_context() as conn:
+                              cursor = conn.cursor()
+                              cursor.execute("""
+                                  SELECT symbol, name, coinbase_supported, coingecko_id
+                                  FROM crypto_assets 
+                                  WHERE coingecko_id IS NOT NULL AND coingecko_id != ''
+                                  ORDER BY COALESCE(market_cap_rank, 999999), symbol
+                                  LIMIT 100
+                              """)
+                              symbols = cursor.fetchall()
+                              cursor.close()
+                              
+                              logger.info(f"Retrieved {len(symbols)} crypto symbols from database")
+                              return symbols
+                      except Exception as e:
+                          logger.error(f"Error getting crypto symbols: {e}")
+                          return []
+
+                  async def collect_coingecko_prices(self, symbols):
+                      """Collect prices from CoinGecko API"""
+                      try:
+                          # Create symbol mapping for names
+                          symbol_map = {symbol[0]: symbol[1] for symbol in symbols}
+                          coingecko_id_map = {symbol[3]: symbol[0] for symbol in symbols}  # Map coingecko_id to symbol
+                          
+                          # Prepare coin ID list for CoinGecko (use coingecko_id from database)
+                          coin_ids = [symbol[3] for symbol in symbols if symbol[3]]  # Use coingecko_id from database
+                          
+                          params = {
+                              'ids': ','.join(coin_ids),
+                              'vs_currencies': 'usd',
+                              'include_24hr_change': 'true',
+                              'include_24hr_vol': 'true',
+                              'include_market_cap': 'true'
+                          }
+                          
+                          async with aiohttp.ClientSession() as session:
+                              async with session.get(self.coingecko_url, params=params) as response:
+                                  if response.status == 200:
+                                      data = await response.json()
+                                      
+                                      prices = []
+                                      for coin_id, price_data in data.items():
+                                          if 'usd' in price_data:
+                                              # Get symbol from coingecko_id mapping
+                                              symbol = coingecko_id_map.get(coin_id, coin_id.upper())
+                                              prices.append({
+                                                  'symbol': symbol,
+                                                  'name': symbol_map.get(symbol, symbol),
+                                                  'price': price_data['usd'],
+                                                  'change_24h': price_data.get('usd_24h_change', 0),
+                                                  'volume_24h': price_data.get('usd_24h_vol', 0),
+                                                  'market_cap': price_data.get('usd_market_cap', 0),
+                                                  'source': 'coingecko'
+                                              })
+                                      
+                                      PRICE_COLLECTION_TOTAL.labels(exchange='coingecko', status='success').inc()
+                                      logger.info(f"Collected {len(prices)} prices from CoinGecko")
+                                      return prices
+                                  else:
+                                      PRICE_COLLECTION_TOTAL.labels(exchange='coingecko', status='error').inc()
+                                      PRICE_COLLECTION_ERRORS.labels(exchange='coingecko', error_type='http_error').inc()
+                                      logger.error(f"CoinGecko API error: {response.status}")
+                                      return []
+                      except Exception as e:
+                          PRICE_COLLECTION_TOTAL.labels(exchange='coingecko', status='error').inc()
+                          PRICE_COLLECTION_ERRORS.labels(exchange='coingecko', error_type='exception').inc()
+                          logger.error(f"Error collecting CoinGecko prices: {e}")
+                          return []
+
+                  async def store_prices(self, prices):
+                      """Store prices in database"""
+                      if not prices:
+                          return 0
+                          
+                      try:
+                          with get_connection_context() as conn:
+                              cursor = conn.cursor()
+                              
+                              stored_count = 0
+                              for price in prices:
+                                  try:
+                                      cursor.execute("""
+                                          INSERT INTO price_data_real (
+                                              symbol, coin_id, name, current_price, price_change_24h, volume_usd_24h, 
+                                              market_cap, timestamp, timestamp_iso, data_source, collection_interval
+                                          ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                      """, (
+                                          price['symbol'],
+                                          price['symbol'].lower(),  # Use symbol as coin_id
+                                          price['name'],
+                                          price['price'],
+                                          price['change_24h'],
+                                          price['volume_24h'],
+                                          price['market_cap'],
+                                          int(time.time()),  # Unix timestamp
+                                          datetime.now(),
+                                          price['source'],
+                                          '5min'  # Collection interval
+                                      ))
+                                      stored_count += 1
+                                  except Exception as e:
+                                      logger.error(f"Error storing price for {price['symbol']}: {e}")
+                                      continue
+                              
+                              conn.commit()
+                              cursor.close()
+                              
+                              PRICE_RECORDS_STORED.labels(exchange=price['source']).inc(stored_count)
+                              logger.info(f"Stored {stored_count} price records in database")
+                              return stored_count
+                      except Exception as e:
+                          logger.error(f"Error storing prices: {e}")
+                          return 0
+
+                  async def collect_prices_once(self):
+                      """Collect prices once from all sources"""
+                      logger.info("Starting price collection cycle...")
+                      start_time = time.time()
+                      
+                      try:
+                          # Get crypto symbols
+                          symbols = await self.get_crypto_symbols()
+                          if not symbols:
+                              logger.warning("No crypto symbols found, skipping collection")
+                              return
+                          
+                          # Collect from CoinGecko
+                          with PRICE_COLLECTION_DURATION.labels(exchange='coingecko').time():
+                              prices = await self.collect_coingecko_prices(symbols)
+                          
+                          # Store prices
+                          stored_count = await self.store_prices(prices)
+                          
+                          # Update last collection time
+                          self.last_collection_time = datetime.now().isoformat()
+                          
+                          duration = time.time() - start_time
+                          logger.info(f"Price collection completed: {stored_count} records in {duration:.2f}s")
+                          
+                      except Exception as e:
+                          logger.error(f"Error in price collection cycle: {e}")
+
+                  async def start_background_collection(self):
+                      """Start background price collection loop"""
+                      if self.is_collecting:
+                          logger.warning("Collection already running")
+                          return
+                      
+                      self.is_collecting = True
+                      ACTIVE_COLLECTION_LOOPS.set(1)
+                      logger.info(f"Starting background price collection every {self.collection_interval} seconds")
+                      
+                      try:
+                          while self.is_collecting:
+                              await self.collect_prices_once()
+                              
+                              # Wait for next collection
+                              for _ in range(self.collection_interval):
+                                  if not self.is_collecting:
+                                      break
+                                  await asyncio.sleep(1)
+                      except asyncio.CancelledError:
+                          logger.info("Price collection loop cancelled")
+                      except Exception as e:
+                          logger.error(f"Error in background collection loop: {e}")
+                      finally:
+                          self.is_collecting = False
+                          ACTIVE_COLLECTION_LOOPS.set(0)
+                          logger.info("Background price collection stopped")
+
+              # Create collector instance
+              collector = CryptoPriceCollector()
+              app = collector.app
+
+              if __name__ == "__main__":
+                  logger.info("🚀 Starting Enhanced Crypto Prices Service with Automatic Collection")
+                  
+                  # Start background collection automatically
+                  import threading
+                  def start_collection_loop():
+                      loop = asyncio.new_event_loop()
+                      asyncio.set_event_loop(loop)
+                      loop.run_until_complete(collector.start_background_collection())
+                  
+                  # Start collection in background thread
+                  collection_thread = threading.Thread(target=start_collection_loop, daemon=True)
+                  collection_thread.start()
+                  
+                  # Start the service
+                  uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+              EOF
+
+              # Start the service
+              cd /app && python main.py
+          env:
+            - name: MYSQL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_HOST
+            - name: MYSQL_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_PORT
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-user
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-password
+            - name: MYSQL_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_DATABASE
+            - name: PRICE_COLLECTION_INTERVAL
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: PRICE_COLLECTION_INTERVAL
+            - name: CRYPTO_PRICES_TABLE
+              value: "price_data_real"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-crypto-prices
+  namespace: crypto-data-collection
+  labels:
+    app: enhanced-crypto-prices
+    component: data-collection
+spec:
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+      name: http
+  selector:
+    app: enhanced-crypto-prices
+  type: ClusterIP

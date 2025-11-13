@@ -1,0 +1,243 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-macro-collector
+  namespace: crypto-data-collection
+  labels:
+    app: enhanced-macro-collector
+    component: data-collection
+    version: enhanced
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-macro-collector
+  template:
+    metadata:
+      labels:
+        app: enhanced-macro-collector
+        component: data-collection
+        version: enhanced
+    spec:
+      nodeSelector:
+        node-type: data-collection
+      tolerations:
+        - key: "data-platform"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      containers:
+        - name: enhanced-macro-collector
+          image: python:3.11-slim
+          ports:
+            - containerPort: 8002
+              name: http
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              pip install mysql-connector-python requests fastapi uvicorn
+              
+              # Create enhanced macro collector
+              cat > /app/enhanced_macro_collector.py << 'EOF'
+              #!/usr/bin/env python3
+              """
+              Enhanced Macro Indicators Collector for K8s Deployment
+              """
+              
+              import os
+              import logging
+              import time
+              import requests
+              import mysql.connector
+              from datetime import datetime, date, timedelta
+              from typing import List, Dict, Optional
+              
+              logging.basicConfig(level=logging.INFO)
+              logger = logging.getLogger(__name__)
+              
+              class EnhancedMacroCollector:
+                  def __init__(self):
+                      self.db_config = {
+                          "host": os.getenv("MYSQL_HOST", "172.22.32.1"),
+                          "port": int(os.getenv("MYSQL_PORT", "3306")),
+                          "user": os.getenv("MYSQL_USER", "news_collector"),
+                          "password": os.getenv("MYSQL_PASSWORD", "99Rules!"),
+                          "database": os.getenv("MYSQL_DATABASE", "crypto_prices")
+                      }
+                      
+                      # FRED API configuration
+                      self.fred_api_key = os.getenv("FRED_API_KEY", "35478996c5e061d0fc99fc73f5ce348d")
+                      self.fred_base_url = "https://api.stlouisfed.org/fred"
+                      
+                      # Macro indicators
+                      self.indicators = {
+                          "10Y_TREASURY": "DGS10",
+                          "2Y_TREASURY": "DGS2", 
+                          "USD_JPY": "DEXJPUS",
+                          "USD_EUR": "DEXUSEU",
+                          "VIX": "VIXCLS",
+                          "UNEMPLOYMENT_RATE": "UNRATE",
+                          "CPI_INFLATION": "CPIAUCSL",
+                          "FEDERAL_FUNDS_RATE": "FEDFUNDS",
+                          "REAL_GDP": "GDPC1"
+                      }
+                      
+                  def get_db_connection(self):
+                      return mysql.connector.connect(**self.db_config)
+                      
+                  def fetch_fred_data(self, indicator_name: str, series_id: str) -> Optional[Dict]:
+                      try:
+                          params = {
+                              "series_id": series_id,
+                              "api_key": self.fred_api_key,
+                              "file_type": "json",
+                              "limit": 1,
+                              "sort_order": "desc"
+                          }
+                          
+                          url = f"{self.fred_base_url}/series/observations"
+                          response = requests.get(url, params=params, timeout=30)
+                          response.raise_for_status()
+                          
+                          data = response.json()
+                          observations = data.get("observations", [])
+                          
+                          if observations:
+                              obs = observations[0]
+                              value = obs.get("value")
+                              
+                              if value != "." and value is not None:
+                                  return {
+                                      "indicator_name": indicator_name,
+                                      "value": float(value),
+                                      "date": datetime.strptime(obs.get("date"), "%Y-%m-%d").date(),
+                                      "series_id": series_id
+                                  }
+                                  
+                          return None
+                          
+                      except Exception as e:
+                          logger.error(f"Error fetching {indicator_name}: {e}")
+                          return None
+                          
+                  def store_indicator_data(self, data: Dict) -> bool:
+                      try:
+                          with self.get_db_connection() as conn:
+                              cursor = conn.cursor()
+                              
+                              cursor.execute("""
+                                  INSERT INTO macro_indicators (
+                                      indicator_name, indicator_date, value, 
+                                      fred_series_id, data_source, collected_at
+                                  ) VALUES (
+                                      %s, %s, %s, %s, %s, NOW()
+                                  ) ON DUPLICATE KEY UPDATE
+                                      value = VALUES(value),
+                                      collected_at = NOW()
+                              """, (
+                                  data["indicator_name"],
+                                  data["date"],
+                                  data["value"],
+                                  data["series_id"],
+                                  "FRED_API"
+                              ))
+                              
+                              conn.commit()
+                              return True
+                              
+                      except Exception as e:
+                          logger.error(f"Error storing indicator data: {e}")
+                          return False
+                          
+                  def run_collection_cycle(self):
+                      logger.info("Starting macro indicators collection cycle...")
+                      
+                      collected = 0
+                      stored = 0
+                      
+                      for indicator_name, series_id in self.indicators.items():
+                          try:
+                              data = self.fetch_fred_data(indicator_name, series_id)
+                              
+                              if data:
+                                  collected += 1
+                                  if self.store_indicator_data(data):
+                                      stored += 1
+                                      logger.info(f"✅ {indicator_name}: {data['value']} on {data['date']}")
+                                  else:
+                                      logger.error(f"❌ Failed to store {indicator_name}")
+                              else:
+                                  logger.warning(f"⚠️  No data for {indicator_name}")
+                                  
+                              # Rate limiting
+                              time.sleep(1)
+                              
+                          except Exception as e:
+                              logger.error(f"Error processing {indicator_name}: {e}")
+                              continue
+                              
+                      logger.info(f"Collection completed: {collected} collected, {stored} stored")
+                      return {"collected": collected, "stored": stored}
+              
+              if __name__ == "__main__":
+                  collector = EnhancedMacroCollector()
+                  
+                  while True:
+                      try:
+                          collector.run_collection_cycle()
+                          time.sleep(3600)  # 1 hour intervals
+                      except KeyboardInterrupt:
+                          break
+                      except Exception as e:
+                          logger.error(f"Collection error: {e}")
+                          time.sleep(600)  # 10 minute retry delay
+              EOF
+              
+              python /app/enhanced_macro_collector.py
+          env:
+            - name: MYSQL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_HOST
+            - name: MYSQL_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_PORT
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-user
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-password
+            - name: MYSQL_DATABASE
+              value: "crypto_prices"
+            - name: FRED_API_KEY
+              value: "35478996c5e061d0fc99fc73f5ce348d"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "250m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-macro-collector-service
+  namespace: crypto-data-collection
+spec:
+  selector:
+    app: enhanced-macro-collector
+  ports:
+    - protocol: TCP
+      port: 8002
+      targetPort: 8002
+  type: ClusterIP

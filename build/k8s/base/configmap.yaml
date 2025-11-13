@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crypto-config
+  namespace: crypto-base
+data:
+  # Database Configuration
+  DB_HOST: "postgres-service"
+  DB_PORT: "5432"
+  DB_NAME: "crypto_data"
+  
+  # Redis Configuration
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  
+  # Collector Configuration
+  LOG_LEVEL: "INFO"
+  METRICS_PORT: "8080"
+  HEALTH_CHECK_INTERVAL: "30"
+  
+  # Collection Intervals (seconds)
+  NEWS_COLLECTION_INTERVAL: "300"    # 5 minutes
+  SENTIMENT_PROCESSING_INTERVAL: "300" # 5 minutes
+  TECHNICAL_CALCULATION_INTERVAL: "900" # 15 minutes
+  MATERIALIZED_REFRESH_INTERVAL: "300" # 5 minutes
+  
+  # Performance Settings
+  NEWS_BATCH_SIZE: "20"
+  SENTIMENT_BATCH_SIZE: "5"
+  TECHNICAL_BATCH_SIZE: "50"
+  MATERIALIZED_BATCH_SIZE: "100"
+  
+  # Circuit Breaker Settings
+  CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
+  CIRCUIT_BREAKER_RECOVERY_TIMEOUT: "60"
+  
+  # Rate Limiting
+  RATE_LIMIT_REQUESTS: "100"
+  RATE_LIMIT_WINDOW: "60"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: crypto-secrets
+  namespace: crypto-base
+type: Opaque
+stringData:
+  # Database Credentials
+  DB_USER: "crypto_user"
+  DB_PASSWORD: "secure_password_change_me"
+  
+  # External API Keys
+  RSS_API_KEY: ""
+  SENTIMENT_API_KEY: ""
+  
+  # Monitoring
+  GRAFANA_ADMIN_PASSWORD: "secure_grafana_password"
+  
+  # Alerting
+  SLACK_WEBHOOK_URL: ""
+  EMAIL_SMTP_PASSWORD: ""

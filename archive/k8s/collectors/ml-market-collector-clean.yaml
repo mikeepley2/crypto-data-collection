@@ -1,0 +1,125 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-market-collector
+  namespace: crypto-data-collection
+  labels:
+    app: ml-market-collector
+    component: data-collector
+    tier: ml-features
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ml-market-collector
+  template:
+    metadata:
+      labels:
+        app: ml-market-collector
+        component: data-collector
+    spec:
+      tolerations:
+      - key: data-platform
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+      containers:
+      - name: ml-market-collector
+        image: python:3.11-slim
+        command: ["/bin/bash"]
+        args:
+        - -c
+        - |
+          # Install dependencies
+          echo "🔧 Installing dependencies..."
+          pip install --no-cache-dir yfinance fastapi uvicorn mysql-connector-python schedule python-dotenv numpy pandas
+
+          # Run the ML market collector directly
+          python /app/ml_market_collector.py
+        
+        env:
+        - name: MYSQL_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_HOST
+        - name: MYSQL_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_PORT
+        - name: MYSQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: centralized-db-secrets
+              key: mysql-user
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: centralized-db-secrets
+              key: mysql-password
+        - name: MYSQL_DATABASE
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_DATABASE
+        - name: COLLECTION_INTERVAL_MINUTES
+          valueFrom:
+            configMapKeyRef:
+              name: ml-market-collector-config
+              key: COLLECTION_INTERVAL_MINUTES
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: ml-market-collector-config
+              key: LOG_LEVEL
+        - name: USE_CENTRALIZED_CONFIG
+          valueFrom:
+            configMapKeyRef:
+              name: ml-market-collector-config
+              key: USE_CENTRALIZED_CONFIG
+        - name: DB_POOL_SIZE
+          value: "10"
+        - name: DB_CONNECTION_TIMEOUT
+          value: "30"
+        
+        ports:
+        - containerPort: 8000
+          name: api
+        
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 10
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          timeoutSeconds: 5
+        
+        volumeMounts:
+        - name: collector-code
+          mountPath: /app/ml_market_collector.py
+          subPath: ml_market_collector.py
+      
+      volumes:
+      - name: collector-code
+        configMap:
+          name: ml-market-collector-code
+          defaultMode: 0755
+          
+      restartPolicy: Always

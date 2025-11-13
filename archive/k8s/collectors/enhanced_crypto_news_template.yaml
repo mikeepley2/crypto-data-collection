@@ -1,0 +1,477 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: enhanced-crypto-news-config
+  namespace: crypto-data
+data:
+  # Database configuration
+  DB_HOST: "mysql-service.crypto-data.svc.cluster.local"
+  DB_NAME: "crypto_data"
+  DB_USER: "crypto_user"
+  SERVICE_NAME: "enhanced-crypto-news"
+  
+  # Collection configuration
+  COLLECTION_INTERVAL: "300"  # 5 minutes
+  COLLECTION_ENABLED: "true"
+  MAX_RETRIES: "3"
+  RETRY_DELAY: "5"
+  API_TIMEOUT: "30"
+  
+  # Rate limiting configuration
+  ENABLE_RATE_LIMITING: "true"
+  RATE_LIMIT_REQUESTS: "60"
+  RATE_LIMIT_WINDOW: "60"
+  RATE_LIMIT_BURST: "10"
+  
+  # Circuit breaker configuration
+  ENABLE_CIRCUIT_BREAKER: "true"
+  CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
+  CIRCUIT_BREAKER_RECOVERY_TIMEOUT: "60"
+  CIRCUIT_BREAKER_EXPECTED_EXCEPTION: "aiohttp.ClientError,asyncio.TimeoutError"
+  
+  # Data validation configuration
+  ENABLE_DATA_VALIDATION: "true"
+  VALIDATION_SCHEMA_PATH: "/app/schemas/news_schema.json"
+  DUPLICATE_CHECK_FIELDS: "url_hash"
+  
+  # Alerting configuration
+  ENABLE_ALERTING: "true"
+  ALERT_WEBHOOK_URL: "http://alertmanager-webhook.monitoring.svc.cluster.local/webhook"
+  ALERT_ERROR_THRESHOLD: "5"
+  ALERT_MEMORY_THRESHOLD: "80"
+  ALERT_CPU_THRESHOLD: "85"
+  
+  # Performance monitoring
+  ENABLE_PERFORMANCE_MONITORING: "true"
+  PERFORMANCE_LOG_INTERVAL: "60"
+  
+  # Prometheus metrics
+  PROMETHEUS_PORT: "9090"
+  ENABLE_PROMETHEUS_METRICS: "true"
+  
+  # News-specific configuration
+  MAX_ARTICLES_PER_FEED: "20"
+  ARTICLE_PROCESSING_BATCH: "10"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: enhanced-crypto-news-secrets
+  namespace: crypto-data
+type: Opaque
+data:
+  DB_PASSWORD: "Y3J5cHRvX3Bhc3N3b3Jk"  # Base64: crypto_password
+  ALERT_WEBHOOK_SECRET: "YWxlcnRfc2VjcmV0XzEyMw=="  # Base64: alert_secret_123
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: enhanced-crypto-news-schema
+  namespace: crypto-data
+data:
+  news_schema.json: |
+    {
+      "type": "object",
+      "required": ["title", "source", "collected_at"],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 1000
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "category": {
+          "type": "string",
+          "enum": ["crypto_news", "defi", "nft", "blockchain", "regulation"]
+        },
+        "published_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "crypto_mentions": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "url_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$"
+        },
+        "collected_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-crypto-news
+  namespace: crypto-data
+  labels:
+    app: enhanced-crypto-news
+    version: template-compliant
+    component: collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-crypto-news
+  template:
+    metadata:
+      labels:
+        app: enhanced-crypto-news
+        version: template-compliant
+        component: collector
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: enhanced-crypto-news
+        image: crypto-news-collector:template-compliant
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        env:
+        # Database configuration from ConfigMap
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: DB_HOST
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: DB_NAME
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: enhanced-crypto-news-secrets
+              key: DB_PASSWORD
+        - name: SERVICE_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: SERVICE_NAME
+        
+        # Collection configuration from ConfigMap
+        - name: COLLECTION_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: COLLECTION_INTERVAL
+        - name: COLLECTION_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: COLLECTION_ENABLED
+        - name: MAX_RETRIES
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: MAX_RETRIES
+        - name: RETRY_DELAY
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: RETRY_DELAY
+        - name: API_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: API_TIMEOUT
+        
+        # Rate limiting configuration from ConfigMap
+        - name: ENABLE_RATE_LIMITING
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: ENABLE_RATE_LIMITING
+        - name: RATE_LIMIT_REQUESTS
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: RATE_LIMIT_REQUESTS
+        - name: RATE_LIMIT_WINDOW
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: RATE_LIMIT_WINDOW
+        - name: RATE_LIMIT_BURST
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: RATE_LIMIT_BURST
+        
+        # Circuit breaker configuration from ConfigMap
+        - name: ENABLE_CIRCUIT_BREAKER
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: ENABLE_CIRCUIT_BREAKER
+        - name: CIRCUIT_BREAKER_FAILURE_THRESHOLD
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: CIRCUIT_BREAKER_FAILURE_THRESHOLD
+        - name: CIRCUIT_BREAKER_RECOVERY_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: CIRCUIT_BREAKER_RECOVERY_TIMEOUT
+        - name: CIRCUIT_BREAKER_EXPECTED_EXCEPTION
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: CIRCUIT_BREAKER_EXPECTED_EXCEPTION
+        
+        # Data validation configuration from ConfigMap
+        - name: ENABLE_DATA_VALIDATION
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: ENABLE_DATA_VALIDATION
+        - name: VALIDATION_SCHEMA_PATH
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: VALIDATION_SCHEMA_PATH
+        - name: DUPLICATE_CHECK_FIELDS
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: DUPLICATE_CHECK_FIELDS
+        
+        # Alerting configuration from ConfigMap and Secrets
+        - name: ENABLE_ALERTING
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: ENABLE_ALERTING
+        - name: ALERT_WEBHOOK_URL
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: ALERT_WEBHOOK_URL
+        - name: ALERT_WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: enhanced-crypto-news-secrets
+              key: ALERT_WEBHOOK_SECRET
+        - name: ALERT_ERROR_THRESHOLD
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: ALERT_ERROR_THRESHOLD
+        - name: ALERT_MEMORY_THRESHOLD
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: ALERT_MEMORY_THRESHOLD
+        - name: ALERT_CPU_THRESHOLD
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: ALERT_CPU_THRESHOLD
+        
+        # Performance monitoring configuration from ConfigMap
+        - name: ENABLE_PERFORMANCE_MONITORING
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: ENABLE_PERFORMANCE_MONITORING
+        - name: PERFORMANCE_LOG_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: PERFORMANCE_LOG_INTERVAL
+        
+        # Prometheus metrics configuration from ConfigMap
+        - name: PROMETHEUS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: PROMETHEUS_PORT
+        - name: ENABLE_PROMETHEUS_METRICS
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: ENABLE_PROMETHEUS_METRICS
+        
+        # News-specific configuration from ConfigMap
+        - name: MAX_ARTICLES_PER_FEED
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: MAX_ARTICLES_PER_FEED
+        - name: ARTICLE_PROCESSING_BATCH
+          valueFrom:
+            configMapKeyRef:
+              name: enhanced-crypto-news-config
+              key: ARTICLE_PROCESSING_BATCH
+        
+        volumeMounts:
+        - name: schema-volume
+          mountPath: /app/schemas
+          readOnly: true
+        
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+      
+      volumes:
+      - name: schema-volume
+        configMap:
+          name: enhanced-crypto-news-schema
+      
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-crypto-news-service
+  namespace: crypto-data
+  labels:
+    app: enhanced-crypto-news
+spec:
+  selector:
+    app: enhanced-crypto-news
+  ports:
+  - name: http
+    protocol: TCP
+    port: 8000
+    targetPort: 8000
+  - name: metrics
+    protocol: TCP
+    port: 9090
+    targetPort: 9090
+  type: ClusterIP
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: enhanced-crypto-news-monitor
+  namespace: crypto-data
+  labels:
+    app: enhanced-crypto-news
+spec:
+  selector:
+    matchLabels:
+      app: enhanced-crypto-news
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: enhanced-crypto-news-network-policy
+  namespace: crypto-data
+spec:
+  podSelector:
+    matchLabels:
+      app: enhanced-crypto-news
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: crypto-data
+    ports:
+    - protocol: TCP
+      port: 8000
+  egress:
+  - to: []  # Allow all outbound traffic for RSS feeds
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: crypto-data
+    ports:
+    - protocol: TCP
+      port: 3306  # MySQL
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: enhanced-crypto-news-pdb
+  namespace: crypto-data
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: enhanced-crypto-news

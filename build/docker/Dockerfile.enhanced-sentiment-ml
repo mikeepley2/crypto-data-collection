@@ -1,0 +1,71 @@
+# Multi-stage build for Enhanced Sentiment ML Collector
+FROM python:3.11-slim as base
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
+WORKDIR /app
+
+# Copy requirements first for better layer caching
+COPY requirements.txt .
+
+# Install Python dependencies including ML libraries
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir transformers
+
+# Development stage
+FROM base as development
+ENV ENVIRONMENT=development
+COPY . .
+CMD ["python", "-m", "services.enhanced_sentiment_ml_template"]
+
+# Production stage
+FROM base as production
+
+# Create non-root user
+RUN groupadd -r collector && useradd -r -g collector collector
+
+# Copy application code
+COPY templates/collector-template/ ./templates/collector-template/
+COPY services/enhanced_sentiment_ml_template.py ./services/
+
+# Create model cache directory
+RUN mkdir -p /app/.cache/huggingface && \
+    chown -R collector:collector /app
+
+# Switch to non-root user
+USER collector
+
+# Pre-download models to reduce startup time
+ENV HF_HOME=/app/.cache/huggingface
+RUN python -c "
+from transformers import pipeline
+print('Downloading CryptoBERT...')
+pipeline('sentiment-analysis', model='kk08/CryptoBERT', tokenizer='kk08/CryptoBERT')
+print('Downloading FinBERT...')
+pipeline('sentiment-analysis', model='ProsusAI/finbert', tokenizer='ProsusAI/finbert')
+print('Models downloaded successfully')
+" || true
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Expose port
+EXPOSE 8080
+
+# Run application
+CMD ["python", "-m", "services.enhanced_sentiment_ml_template"]

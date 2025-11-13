@@ -1,0 +1,270 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-crypto-prices-updated
+  namespace: crypto-data-collection
+  labels:
+    app: enhanced-crypto-prices
+    component: data-collection
+    version: enhanced
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-crypto-prices
+  template:
+    metadata:
+      labels:
+        app: enhanced-crypto-prices
+        component: data-collection
+        version: enhanced
+    spec:
+      nodeSelector:
+        node-type: data-collection
+      tolerations:
+        - key: "data-platform"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      containers:
+        - name: enhanced-crypto-prices
+          image: python:3.11-slim
+          ports:
+            - containerPort: 8000
+              name: http
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              pip install mysql-connector-python requests fastapi uvicorn
+              
+              # Create enhanced crypto prices collector
+              cat > /app/enhanced_crypto_prices_collector.py << 'EOF'
+              #!/usr/bin/env python3
+              """
+              Enhanced Crypto Prices Collector for K8s Deployment
+              """
+              
+              import os
+              import logging
+              import time
+              import requests
+              import mysql.connector
+              from datetime import datetime, timedelta
+              from typing import List, Dict, Optional
+              
+              logging.basicConfig(level=logging.INFO)
+              logger = logging.getLogger(__name__)
+              
+              class EnhancedCryptoPricesCollector:
+                  def __init__(self):
+                      self.db_config = {
+                          "host": os.getenv("MYSQL_HOST", "172.22.32.1"),
+                          "port": int(os.getenv("MYSQL_PORT", "3306")),
+                          "user": os.getenv("MYSQL_USER", "news_collector"),
+                          "password": os.getenv("MYSQL_PASSWORD", "99Rules!"),
+                          "database": os.getenv("MYSQL_DATABASE", "crypto_prices")
+                      }
+                      
+                      self.coingecko_api_key = os.getenv("COINGECKO_API_KEY", "CG-8vQKZK9M9Jn7JWX1YGNsJyJy")
+                      self.base_url = "https://api.coingecko.com/api/v3"
+                      
+                  def get_db_connection(self):
+                      return mysql.connector.connect(**self.db_config)
+                      
+                  def get_active_symbols(self) -> List[str]:
+                      """Get actively tracked symbols from crypto_assets table"""
+                      try:
+                          with self.get_db_connection() as conn:
+                              cursor = conn.cursor()
+                              cursor.execute("""
+                                  SELECT DISTINCT symbol FROM crypto_assets 
+                                  WHERE is_active = 1 
+                                  ORDER BY market_cap_rank ASC, symbol ASC
+                                  LIMIT 100
+                              """)
+                              return [row[0] for row in cursor.fetchall()]
+                      except Exception as e:
+                          logger.error(f"Error fetching symbols: {e}")
+                          return ["bitcoin", "ethereum", "cardano", "polkadot", "chainlink"]
+                          
+                  def fetch_prices_batch(self, symbols: List[str]) -> List[Dict]:
+                      """Fetch current prices for multiple symbols"""
+                      try:
+                          ids_string = ",".join(symbols)
+                          url = f"{self.base_url}/simple/price"
+                          
+                          params = {
+                              "ids": ids_string,
+                              "vs_currencies": "usd",
+                              "include_market_cap": "true", 
+                              "include_24hr_vol": "true",
+                              "include_24hr_change": "true",
+                              "include_last_updated_at": "true"
+                          }
+                          
+                          if self.coingecko_api_key:
+                              headers = {"x-cg-pro-api-key": self.coingecko_api_key}
+                          else:
+                              headers = {}
+                              
+                          response = requests.get(url, params=params, headers=headers, timeout=30)
+                          response.raise_for_status()
+                          
+                          data = response.json()
+                          
+                          results = []
+                          for symbol, price_data in data.items():
+                              if "usd" in price_data:
+                                  results.append({
+                                      "symbol": symbol,
+                                      "price_usd": price_data["usd"],
+                                      "market_cap_usd": price_data.get("usd_market_cap"),
+                                      "volume_24h_usd": price_data.get("usd_24h_vol"),
+                                      "price_change_24h": price_data.get("usd_24h_change"),
+                                      "last_updated": datetime.fromtimestamp(
+                                          price_data.get("last_updated_at", time.time())
+                                      )
+                                  })
+                                  
+                          return results
+                          
+                      except Exception as e:
+                          logger.error(f"Error fetching prices: {e}")
+                          return []
+                          
+                  def store_price_data(self, price_data: List[Dict]) -> int:
+                      """Store price data in database"""
+                      stored = 0
+                      
+                      try:
+                          with self.get_db_connection() as conn:
+                              cursor = conn.cursor()
+                              
+                              for data in price_data:
+                                  try:
+                                      cursor.execute("""
+                                          INSERT INTO crypto_prices (
+                                              symbol, timestamp, price, market_cap, 
+                                              volume_24h, price_change_24h, data_source, collected_at
+                                          ) VALUES (
+                                              %s, %s, %s, %s, %s, %s, %s, NOW()
+                                          )
+                                      """, (
+                                          data["symbol"],
+                                          data["last_updated"],
+                                          data["price_usd"],
+                                          data.get("market_cap_usd"),
+                                          data.get("volume_24h_usd"),
+                                          data.get("price_change_24h"),
+                                          "COINGECKO_API"
+                                      ))
+                                      stored += 1
+                                      
+                                  except Exception as e:
+                                      logger.error(f"Error storing {data['symbol']}: {e}")
+                                      continue
+                                      
+                              conn.commit()
+                              
+                      except Exception as e:
+                          logger.error(f"Database error: {e}")
+                          
+                      return stored
+                      
+                  def run_collection_cycle(self):
+                      """Execute one collection cycle"""
+                      logger.info("Starting crypto prices collection cycle...")
+                      
+                      symbols = self.get_active_symbols()
+                      logger.info(f"Collecting prices for {len(symbols)} symbols")
+                      
+                      # Process in batches to avoid API limits
+                      batch_size = 50
+                      total_collected = 0
+                      total_stored = 0
+                      
+                      for i in range(0, len(symbols), batch_size):
+                          batch = symbols[i:i + batch_size]
+                          
+                          try:
+                              price_data = self.fetch_prices_batch(batch)
+                              total_collected += len(price_data)
+                              
+                              if price_data:
+                                  stored = self.store_price_data(price_data)
+                                  total_stored += stored
+                                  
+                                  logger.info(f"Batch {i//batch_size + 1}: {len(price_data)} fetched, {stored} stored")
+                              
+                              # Rate limiting
+                              time.sleep(1)
+                              
+                          except Exception as e:
+                              logger.error(f"Batch processing error: {e}")
+                              continue
+                              
+                      logger.info(f"Collection completed: {total_collected} collected, {total_stored} stored")
+                      return {"collected": total_collected, "stored": total_stored}
+              
+              if __name__ == "__main__":
+                  collector = EnhancedCryptoPricesCollector()
+                  
+                  while True:
+                      try:
+                          collector.run_collection_cycle()
+                          time.sleep(300)  # 5 minutes
+                      except KeyboardInterrupt:
+                          break
+                      except Exception as e:
+                          logger.error(f"Collection error: {e}")
+                          time.sleep(60)  # 1 minute retry delay
+              EOF
+              
+              python /app/enhanced_crypto_prices_collector.py
+          env:
+            - name: MYSQL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_HOST
+            - name: MYSQL_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_PORT
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-user
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-password
+            - name: MYSQL_DATABASE
+              value: "crypto_prices"
+            - name: COINGECKO_API_KEY
+              value: "CG-8vQKZK9M9Jn7JWX1YGNsJyJy"
+          resources:
+            requests:
+              memory: "256Mi" 
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-crypto-prices-service
+  namespace: crypto-data-collection
+spec:
+  selector:
+    app: enhanced-crypto-prices
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP

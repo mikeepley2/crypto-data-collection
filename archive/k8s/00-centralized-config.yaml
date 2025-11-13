@@ -1,0 +1,52 @@
+# Centralized Configuration for All Data Collection Services
+# This ensures all services use the same MySQL connection details
+# When you move MySQL to another server, only update this file
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: centralized-db-config
+  namespace: crypto-data-collection
+data:
+  # MySQL Configuration - Windows Host from Kubernetes
+  MYSQL_HOST: "host.docker.internal" # Access Windows host from Kubernetes containers
+  MYSQL_PORT: "3306"
+  MYSQL_DATABASE: "crypto_prices"
+  MYSQL_USER: "news_collector"
+
+  # Redis Configuration - Internal Kubernetes
+  REDIS_HOST: "redis-data-collection.crypto-data-collection.svc.cluster.local"
+  REDIS_PORT: "6379"
+
+  # Collection Intervals
+  PRICE_COLLECTION_INTERVAL: "300" # 5 minutes
+  NEWS_COLLECTION_INTERVAL: "900" # 15 minutes
+  SENTIMENT_COLLECTION_INTERVAL: "900" # 15 minutes
+
+  # News Collection Configuration - Expanded Coverage
+  NEWS_RSS_SOURCES: "26" # Number of RSS sources (expanded from 8 to 26)
+  NEWS_API_SOURCES: "1" # Number of API sources (CryptoPanic)
+  NEWS_DUPLICATE_TTL_HOURS: "24" # TTL for duplicate detection
+  NEWS_MAX_ITEMS_PER_SOURCE: "15" # Max items to collect per source (reduced due to more sources)
+  NEWS_COLLECTION_TIMEOUT: "30" # Timeout for HTTP requests
+  NEWS_BATCH_SIZE: "5" # Process RSS sources in batches to avoid overwhelming
+
+  # Data Quality Settings
+  DATA_VALIDATION_ENABLED: "true"
+  MAX_RETRY_ATTEMPTS: "3"
+  ERROR_THRESHOLD_PERCENT: "5"
+
+  # API Configuration
+  API_RATE_LIMIT: "1000"
+  API_TIMEOUT: "30"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: centralized-db-secrets
+  namespace: crypto-data-collection
+type: Opaque
+data:
+  # Base64 encoded passwords
+  mysql-password: OTlSdWxlcyE= # "99Rules!" in base64
+  mysql-user: bmV3c19jb2xsZWN0b3I= # "news_collector" in base64

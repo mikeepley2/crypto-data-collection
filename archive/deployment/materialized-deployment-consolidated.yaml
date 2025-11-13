@@ -1,0 +1,286 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: materialized-updater
+  namespace: crypto-data-collection
+  labels:
+    app: materialized-updater
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: materialized-updater
+  template:
+    metadata:
+      labels:
+        app: materialized-updater
+    spec:
+      containers:
+      - name: materialized-updater
+        image: python:3.11-slim
+        command: ["/bin/bash"]
+        args:
+          - "-c"
+          - |
+            pip install fastapi uvicorn mysql-connector-python requests
+            
+            # Create shared directory
+            mkdir -p /app/shared
+            
+            # Create centralized table config
+            cat > /app/shared/table_config.py << 'TABLE_CONFIG_EOF'
+            #!/usr/bin/env python3
+            """
+            Centralized Table Configuration - Embedded for K8s
+            """
+            
+            # Core crypto data tables
+            CRYPTO_TABLES = {
+                "ASSETS": "crypto_assets",
+                "ONCHAIN_DATA": "crypto_onchain_data", 
+                "PRICES": "crypto_prices",
+                "NEWS": "crypto_news"
+            }
+            
+            # Technical analysis tables
+            TECHNICAL_TABLES = {
+                "INDICATORS": "technical_indicators",
+                "BOLLINGER": "bollinger_bands",
+                "OHLC": "ohlc_data"
+            }
+            
+            # Machine learning tables
+            ML_TABLES = {
+                "FEATURES": "ml_features_materialized",
+                "SIGNALS": "trading_signals", 
+                "RECOMMENDATIONS": "trade_recommendations"
+            }
+            
+            # Market data tables
+            MARKET_TABLES = {
+                "MACRO": "macro_indicators",
+                "SENTIMENT": "sentiment_aggregation",
+                "VOLUME": "volume_data"
+            }
+            TABLE_CONFIG_EOF
+            
+            # Create consolidated materialized updater
+            cat > /app/materialized_updater_consolidated.py << 'UPDATER_EOF'
+            #!/usr/bin/env python3
+            import os
+            import sys
+            import time
+            import mysql.connector
+            from mysql.connector import pooling
+            from datetime import datetime, timedelta
+            import logging
+            
+            # Add shared directory to path
+            sys.path.append('/app')
+            
+            try:
+                from shared.table_config import CRYPTO_TABLES, TECHNICAL_TABLES, ML_TABLES, MARKET_TABLES
+                USE_CENTRALIZED_CONFIG = True
+            except ImportError:
+                # Fallback configuration
+                CRYPTO_TABLES = {"ASSETS": "crypto_assets", "ONCHAIN_DATA": "crypto_onchain_data", "NEWS": "crypto_news"}
+                TECHNICAL_TABLES = {"INDICATORS": "technical_indicators"}
+                ML_TABLES = {"FEATURES": "ml_features_materialized"}
+                MARKET_TABLES = {"MACRO": "macro_indicators", "SENTIMENT": "sentiment_aggregation"}
+                USE_CENTRALIZED_CONFIG = False
+            
+            logging.basicConfig(level=logging.INFO)
+            logger = logging.getLogger('materialized-updater-consolidated')
+            
+            pool = None
+            
+            def init_pool():
+                global pool
+                try:
+                    pool = mysql.connector.pooling.MySQLConnectionPool(
+                        pool_name="materialized_pool",
+                        pool_size=3,
+                        pool_reset_session=True,
+                        host=os.getenv("MYSQL_HOST", "host.docker.internal"),
+                        port=int(os.getenv("MYSQL_PORT", 3306)),
+                        user=os.getenv("MYSQL_USER", "news_collector"),
+                        password=os.getenv("MYSQL_PASSWORD", "99Rules!"),
+                        database=os.getenv("MYSQL_DATABASE", "crypto_prices"),
+                        charset="utf8mb4",
+                        autocommit=True
+                    )
+                    logger.info("✅ Database connection pool initialized with centralized config")
+                except Exception as e:
+                    logger.error(f"❌ Failed to initialize database pool: {e}")
+                    pool = None
+            
+            def get_connection():
+                try:
+                    if pool:
+                        return pool.get_connection()
+                    else:
+                        return None
+                except Exception as e:
+                    logger.error(f"❌ Failed to get database connection: {e}")
+                    return None
+            
+            def validate_table_access():
+                try:
+                    conn = get_connection()
+                    if not conn:
+                        return False
+                    cursor = conn.cursor()
+                    
+                    tables_to_check = {
+                        'Technical Indicators': TECHNICAL_TABLES['INDICATORS'],
+                        'Crypto News': CRYPTO_TABLES['NEWS'],
+                        'Onchain Data': CRYPTO_TABLES['ONCHAIN_DATA'],
+                        'Macro Indicators': MARKET_TABLES['MACRO'],
+                        'ML Features': ML_TABLES['FEATURES']
+                    }
+                    
+                    for table_name, table in tables_to_check.items():
+                        try:
+                            cursor.execute(f"SELECT COUNT(*) FROM {table} LIMIT 1")
+                            count = cursor.fetchone()[0]
+                            logger.info(f"✅ {table_name} ({table}): {count:,} records accessible")
+                        except Exception as e:
+                            logger.error(f"❌ {table_name} ({table}): {e}")
+                    
+                    cursor.close()
+                    conn.close()
+                    return True
+                except Exception as e:
+                    logger.error(f"❌ Table validation failed: {e}")
+                    return False
+            
+            def process_materialized_features():
+                try:
+                    conn = get_connection()
+                    if not conn:
+                        logger.error("❌ Could not get database connection")
+                        return
+                    cursor = conn.cursor()
+                    
+                    # Get symbols with recent technical data  
+                    symbols_query = f"SELECT DISTINCT symbol FROM {TECHNICAL_TABLES['INDICATORS']} WHERE DATE(timestamp_iso) = CURDATE() ORDER BY symbol"
+                    cursor.execute(symbols_query)
+                    symbols = [row[0] for row in cursor.fetchall()]
+                    logger.info(f"📊 Processing {len(symbols)} symbols for materialized features")
+                    
+                    symbols_processed = 0
+                    for symbol in symbols:
+                        try:
+                            # Get latest technical data
+                            tech_query = f"SELECT current_price, price_change_24h, volume_usd_24h, market_cap, sma_20, rsi_14 FROM {TECHNICAL_TABLES['INDICATORS']} WHERE symbol = %s AND DATE(timestamp_iso) = CURDATE() ORDER BY timestamp_iso DESC LIMIT 1"
+                            cursor.execute(tech_query, (symbol,))
+                            tech_result = cursor.fetchone()
+                            
+                            if not tech_result:
+                                continue
+                                
+                            current_time = datetime.now()
+                            # Simple feature record
+                            feature_data = (
+                                symbol, current_time.date(), current_time.hour, current_time,
+                                tech_result[0], tech_result[1], tech_result[2], tech_result[3],
+                                tech_result[4], tech_result[5], current_time, current_time
+                            )
+                            
+                            # Simplified INSERT
+                            insert_query = f"""INSERT INTO {ML_TABLES['FEATURES']} (
+                                symbol, price_date, price_hour, timestamp_iso,
+                                current_price, price_change_24h, volume_24h, market_cap,
+                                sma_20, rsi_14, created_at, updated_at
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON DUPLICATE KEY UPDATE
+                                current_price = VALUES(current_price),
+                                price_change_24h = VALUES(price_change_24h),
+                                volume_24h = VALUES(volume_24h),
+                                market_cap = VALUES(market_cap),
+                                sma_20 = VALUES(sma_20),
+                                rsi_14 = VALUES(rsi_14),
+                                updated_at = VALUES(updated_at)"""
+                                
+                            cursor.execute(insert_query, feature_data)
+                            symbols_processed += 1
+                            
+                            if symbols_processed % 50 == 0:
+                                logger.info(f"📊 Processed {symbols_processed}/{len(symbols)} symbols...")
+                                
+                        except Exception as e:
+                            logger.error(f"❌ Error processing symbol {symbol}: {e}")
+                            continue
+                    
+                    cursor.close()
+                    conn.close()
+                    logger.info(f"✅ Completed materialized feature update: {symbols_processed}/{len(symbols)} symbols processed")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error processing materialized features: {e}")
+            
+            def main():
+                logger.info("🚀 Starting Materialized Updater - CONSOLIDATED VERSION")
+                logger.info(f"📋 Using centralized config: {USE_CENTRALIZED_CONFIG}")
+                logger.info(f"📊 Target tables: {TECHNICAL_TABLES['INDICATORS']}, {ML_TABLES['FEATURES']}")
+                
+                init_pool()
+                if not pool:
+                    logger.error("❌ Failed to initialize database pool. Exiting.")
+                    return
+                    
+                logger.info("🔍 Validating access to consolidated tables...")
+                if not validate_table_access():
+                    logger.error("❌ Table validation failed. Check database structure.")
+                    return
+                    
+                logger.info("📊 Processing materialized features with consolidated data...")
+                process_materialized_features()
+                logger.info("✅ Materialized updater completed successfully with consolidated structure")
+                
+                # Keep container running and repeat process
+                logger.info("⏰ Scheduling next update in 30 minutes...")
+                time.sleep(1800)  # 30 minutes
+                main()  # Recursive call to repeat
+            
+            if __name__ == "__main__":
+                main()
+            UPDATER_EOF
+            
+            # Change to app directory and start the service
+            cd /app
+            python materialized_updater_consolidated.py
+        env:
+        - name: MYSQL_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_HOST
+        - name: MYSQL_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_PORT
+        - name: MYSQL_USER
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_USER
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_PASSWORD
+        - name: MYSQL_DATABASE
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_DATABASE
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+      restartPolicy: Always

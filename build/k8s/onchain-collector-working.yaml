@@ -1,0 +1,314 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: onchain-collector
+  namespace: crypto-data-collection
+spec:
+  schedule: "*/15 * * * *"  # Every 15 minutes - optimal for signal detection
+  concurrencyPolicy: Forbid
+  failedJobsHistoryLimit: 1
+  successfulJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      template:
+        metadata:
+          labels:
+            app: onchain-collector
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: onchain-collector
+            image: python:3.11-slim
+            command: ["/bin/bash"]
+            args:
+              - -c
+              - |
+                set -e
+                echo "Installing dependencies..."
+                apt-get update -qq
+                apt-get install -y -qq git curl unzip
+                pip install -qq aiohttp mysql-connector-python python-dotenv
+                
+                echo "Setting up application..."
+                mkdir -p /app
+                cd /app
+                
+                # Create the enhanced onchain collector directly
+                cat > enhanced_onchain_collector.py << 'EOF'
+                #!/usr/bin/env python3
+                import asyncio
+                import aiohttp
+                import mysql.connector
+                import os
+                import logging
+                from datetime import datetime, date, timedelta
+                from typing import Dict, List, Optional
+                import time
+                
+                logging.basicConfig(level=logging.INFO)
+                logger = logging.getLogger('onchain-collector')
+                
+                class OnchainCollector:
+                    def __init__(self):
+                        self.coingecko_api_key = os.getenv('COINGECKO_API_KEY', '')
+                        self.use_premium_api = bool(self.coingecko_api_key)
+                        self.min_delay = 0.1 if self.use_premium_api else 1.0
+                        self.last_api_call = {}
+                        
+                    def get_db_connection(self):
+                        return mysql.connector.connect(
+                            host=os.getenv('DB_HOST', 'localhost'),
+                            user=os.getenv('DB_USER', 'crypto_user'),
+                            password=os.getenv('DB_PASS', ''),
+                            database=os.getenv('DB_NAME', 'crypto_data'),
+                            charset='utf8mb4'
+                        )
+                    
+                    def get_symbols(self) -> List[str]:
+                        try:
+                            db = self.get_db_connection()
+                            cursor = db.cursor()
+                            cursor.execute("SELECT DISTINCT symbol FROM crypto_assets WHERE is_active = 1 ORDER BY symbol")
+                            symbols = [row[0] for row in cursor.fetchall()]
+                            cursor.close()
+                            db.close()
+                            return symbols if symbols else ['BTC', 'ETH', 'SOL']
+                        except Exception as e:
+                            logger.warning(f"Database error, using fallback symbols: {e}")
+                            return ['BTC', 'ETH', 'SOL', 'ADA', 'DOT', 'AVAX', 'MATIC']
+                    
+                    def get_coingecko_id(self, symbol: str) -> str:
+                        mapping = {
+                            'BTC': 'bitcoin', 'ETH': 'ethereum', 'ADA': 'cardano',
+                            'DOT': 'polkadot', 'SOL': 'solana', 'AVAX': 'avalanche-2',
+                            'MATIC': 'matic-network', 'UNI': 'uniswap', 'AAVE': 'aave'
+                        }
+                        return mapping.get(symbol, symbol.lower())
+                    
+                    async def rate_limit(self):
+                        now = time.time()
+                        if 'last_call' in self.last_api_call:
+                            elapsed = now - self.last_api_call['last_call']
+                            if elapsed < self.min_delay:
+                                await asyncio.sleep(self.min_delay - elapsed)
+                        self.last_api_call['last_call'] = time.time()
+                    
+                    async def get_coingecko_data(self, session: aiohttp.ClientSession, symbol: str) -> Optional[Dict]:
+                        try:
+                            await self.rate_limit()
+                            
+                            coin_id = self.get_coingecko_id(symbol)
+                            if self.use_premium_api:
+                                url = f"https://pro-api.coingecko.com/api/v3/coins/{coin_id}"
+                                headers = {'x-cg-pro-api-key': self.coingecko_api_key}
+                            else:
+                                url = f"https://api.coingecko.com/api/v3/coins/{coin_id}"
+                                headers = {}
+                            
+                            params = {
+                                'localization': 'false',
+                                'tickers': 'false',
+                                'market_data': 'true',
+                                'community_data': 'true',
+                                'developer_data': 'true'
+                            }
+                            
+                            async with session.get(url, headers=headers, params=params, timeout=30) as response:
+                                if response.status == 200:
+                                    data = await response.json()
+                                    return self.parse_coingecko_data(data, symbol)
+                                else:
+                                    logger.warning(f"API error for {symbol}: {response.status}")
+                                    return None
+                        except Exception as e:
+                            logger.error(f"Error fetching data for {symbol}: {e}")
+                            return None
+                    
+                    def parse_coingecko_data(self, data: Dict, symbol: str) -> Dict:
+                        try:
+                            market_data = data.get('market_data', {})
+                            developer_data = data.get('developer_data', {})
+                            community_data = data.get('community_data', {})
+                            
+                            return {
+                                'symbol': symbol,
+                                'coin_id': data.get('id'),
+                                'timestamp_iso': datetime.now(),
+                                'collected_at': datetime.now(),
+                                'circulating_supply': market_data.get('circulating_supply'),
+                                'total_supply': market_data.get('total_supply'),
+                                'max_supply': market_data.get('max_supply'),
+                                'price_change_24h': market_data.get('price_change_24h'),
+                                'price_change_percentage_24h': market_data.get('price_change_percentage_24h'),
+                                'market_cap_rank': data.get('market_cap_rank'),
+                                'github_commits_30d': developer_data.get('commit_count_4_weeks'),
+                                'developer_activity_score': developer_data.get('commit_count_4_weeks', 0) / 100.0 if developer_data.get('commit_count_4_weeks') else None,
+                                'social_volume_24h': (community_data.get('twitter_followers', 0) or 0) + (community_data.get('reddit_subscribers', 0) or 0),
+                                'social_sentiment_score': market_data.get('sentiment_votes_up_percentage', 50) / 100.0 if market_data.get('sentiment_votes_up_percentage') else None,
+                                'data_source': 'coingecko',
+                                'data_quality_score': 0.85
+                            }
+                        except Exception as e:
+                            logger.error(f"Error parsing data for {symbol}: {e}")
+                            return {}
+                    
+                    def store_onchain_data(self, data_list: List[Dict]) -> int:
+                        if not data_list:
+                            return 0
+                        
+                        try:
+                            db = self.get_db_connection()
+                            cursor = db.cursor()
+                            
+                            # Ensure table exists
+                            cursor.execute("SHOW TABLES LIKE 'onchain_data'")
+                            if not cursor.fetchone():
+                                create_sql = '''
+                                CREATE TABLE onchain_data (
+                                    id INT AUTO_INCREMENT PRIMARY KEY,
+                                    symbol VARCHAR(10) NOT NULL,
+                                    coin_id VARCHAR(50),
+                                    timestamp_iso DATETIME NOT NULL,
+                                    collected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                    circulating_supply DECIMAL(25,8),
+                                    total_supply DECIMAL(25,8),
+                                    max_supply DECIMAL(25,8),
+                                    price_change_24h DECIMAL(20,8),
+                                    price_change_percentage_24h DECIMAL(10,4),
+                                    market_cap_rank INT,
+                                    github_commits_30d INT,
+                                    developer_activity_score DECIMAL(10,4),
+                                    social_volume_24h BIGINT,
+                                    social_sentiment_score DECIMAL(10,4),
+                                    data_source VARCHAR(100),
+                                    data_quality_score DECIMAL(3,2),
+                                    UNIQUE KEY unique_symbol_timestamp (symbol, timestamp_iso),
+                                    INDEX idx_symbol (symbol),
+                                    INDEX idx_timestamp (timestamp_iso)
+                                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                                '''
+                                cursor.execute(create_sql)
+                                logger.info("Created onchain_data table")
+                            
+                            # Insert data
+                            insert_sql = '''
+                            INSERT INTO onchain_data (
+                                symbol, coin_id, timestamp_iso, circulating_supply, total_supply, max_supply,
+                                price_change_24h, price_change_percentage_24h, market_cap_rank,
+                                github_commits_30d, developer_activity_score, social_volume_24h,
+                                social_sentiment_score, data_source, data_quality_score
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON DUPLICATE KEY UPDATE
+                                circulating_supply = VALUES(circulating_supply),
+                                total_supply = VALUES(total_supply),
+                                max_supply = VALUES(max_supply),
+                                price_change_24h = VALUES(price_change_24h),
+                                price_change_percentage_24h = VALUES(price_change_percentage_24h),
+                                market_cap_rank = VALUES(market_cap_rank),
+                                github_commits_30d = VALUES(github_commits_30d),
+                                developer_activity_score = VALUES(developer_activity_score),
+                                social_volume_24h = VALUES(social_volume_24h),
+                                social_sentiment_score = VALUES(social_sentiment_score),
+                                data_source = VALUES(data_source),
+                                data_quality_score = VALUES(data_quality_score)
+                            '''
+                            
+                            stored = 0
+                            for data in data_list:
+                                values = (
+                                    data.get('symbol'), data.get('coin_id'), data.get('timestamp_iso'),
+                                    data.get('circulating_supply'), data.get('total_supply'), data.get('max_supply'),
+                                    data.get('price_change_24h'), data.get('price_change_percentage_24h'), data.get('market_cap_rank'),
+                                    data.get('github_commits_30d'), data.get('developer_activity_score'), data.get('social_volume_24h'),
+                                    data.get('social_sentiment_score'), data.get('data_source'), data.get('data_quality_score')
+                                )
+                                cursor.execute(insert_sql, values)
+                                stored += 1
+                            
+                            db.commit()
+                            cursor.close()
+                            db.close()
+                            return stored
+                        except Exception as e:
+                            logger.error(f"Error storing data: {e}")
+                            return 0
+                    
+                    async def collect_all_data(self) -> List[Dict]:
+                        symbols = self.get_symbols()
+                        logger.info(f"Collecting onchain data for {len(symbols)} symbols: {symbols}")
+                        
+                        collected = []
+                        async with aiohttp.ClientSession() as session:
+                            for symbol in symbols:
+                                logger.info(f"Collecting data for {symbol}...")
+                                data = await self.get_coingecko_data(session, symbol)
+                                if data:
+                                    collected.append(data)
+                                    logger.info(f"✅ Collected data for {symbol}")
+                                else:
+                                    logger.warning(f"❌ Failed to collect data for {symbol}")
+                        
+                        return collected
+                
+                async def main():
+                    logger.info("🚀 Starting onchain data collection...")
+                    collector = OnchainCollector()
+                    
+                    # Collect data
+                    data = await collector.collect_all_data()
+                    
+                    # Store data
+                    if data:
+                        stored = collector.store_onchain_data(data)
+                        logger.info(f"✅ Stored {stored} onchain data records")
+                    else:
+                        logger.warning("❌ No data collected")
+                    
+                    logger.info("🎯 Onchain collection completed")
+                
+                if __name__ == "__main__":
+                    asyncio.run(main())
+                EOF
+                
+                echo "Running onchain collector..."
+                python3 enhanced_onchain_collector.py
+            env:
+            - name: DB_HOST
+              value: "mysql-service"
+            - name: DB_USER
+              value: "crypto_user"
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: data-collection-secrets
+                  key: MYSQL_PASSWORD
+            - name: DB_NAME
+              value: "crypto_data"
+            - name: COINGECKO_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: data-collection-secrets
+                  key: COINGECKO_API_KEY
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "200m"
+              limits:
+                memory: "512Mi"
+                cpu: "500m"
+          tolerations:
+          - key: "data-platform"
+            operator: "Equal"
+            value: "true"
+            effect: "NoSchedule"
+          - key: "analytics-infrastructure"
+            operator: "Equal"
+            value: "true"
+            effect: "NoSchedule"
+          - key: "trading-engine"
+            operator: "Equal"
+            value: "true"
+            effect: "NoSchedule"
+          nodeSelector:
+            kubernetes.io/os: linux

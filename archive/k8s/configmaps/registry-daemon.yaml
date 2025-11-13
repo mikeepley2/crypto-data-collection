@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: registry-config
+  namespace: kube-system
+  labels:
+    app: registry-config
+spec:
+  selector:
+    matchLabels:
+      app: registry-config
+  template:
+    metadata:
+      labels:
+        app: registry-config
+    spec:
+      hostNetwork: true
+      hostPID: true
+      containers:
+        - name: registry-config
+          image: alpine:latest
+          command: ["/bin/sh"]
+          args:
+            - -c
+            - |
+              # Configure containerd to trust local registry
+              mkdir -p /etc/containerd/certs.d/localhost:5000
+              cat > /etc/containerd/certs.d/localhost:5000/hosts.toml << EOF
+              server = "http://localhost:5000"
+
+              [host."http://localhost:5000"]
+                capabilities = ["pull", "resolve"]
+                skip_verify = true
+              EOF
+
+              # Restart containerd
+              pkill -f containerd
+              sleep 5
+              /usr/local/bin/containerd &
+              sleep 10
+
+              # Keep container running
+              while true; do sleep 3600; done
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: containerd-config
+              mountPath: /etc/containerd
+            - name: containerd-bin
+              mountPath: /usr/local/bin
+      volumes:
+        - name: containerd-config
+          hostPath:
+            path: /etc/containerd
+        - name: containerd-bin
+          hostPath:
+            path: /usr/local/bin
+      tolerations:
+        - operator: Exists
+
+
+

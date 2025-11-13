@@ -1,0 +1,66 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: onchain-collector-simple
+  namespace: crypto-data-collection
+spec:
+  schedule: "0 * * * *"  # Run every hour
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: onchain-collector
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: onchain-collector
+            image: python:3.11-slim
+            command: ["/bin/bash"]
+            args:
+              - -c
+              - |
+                apt-get update && apt-get install -y git curl
+                pip install aiohttp mysql-connector-python python-dotenv
+                git clone https://github.com/mikeepley2/crypto-data-collection.git /app || curl -L https://github.com/mikeepley2/crypto-data-collection/archive/refs/heads/dev.zip -o /tmp/repo.zip && cd /tmp && unzip repo.zip && mv crypto-data-collection-dev /app
+                cd /app
+                python3 services/onchain-collection/enhanced_onchain_collector.py
+            env:
+            - name: DB_HOST
+              value: "mysql-service"
+            - name: DB_USER
+              value: "crypto_user"
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: data-collection-secrets
+                  key: MYSQL_PASSWORD
+            - name: DB_NAME
+              value: "crypto_data"
+            - name: COINGECKO_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: data-collection-secrets
+                  key: COINGECKO_API_KEY
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "200m"
+              limits:
+                memory: "512Mi"
+                cpu: "500m"
+          tolerations:
+          - key: "data-platform"
+            operator: "Equal"
+            value: "true"
+            effect: "NoSchedule"
+          - key: "analytics-infrastructure"
+            operator: "Equal"
+            value: "true"
+            effect: "NoSchedule"
+          - key: "trading-engine"
+            operator: "Equal"
+            value: "true"
+            effect: "NoSchedule"
+          nodeSelector:
+            kubernetes.io/os: linux

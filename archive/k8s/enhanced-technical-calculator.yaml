@@ -1,0 +1,450 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: enhanced-technical-calculator-code
+  namespace: crypto-data-collection
+data:
+  technical_calculator.py: |
+    #!/usr/bin/env python3
+    """
+    Enhanced Technical Indicators Calculator
+    Calculates comprehensive technical indicators using OHLC data
+    Includes advanced indicators: RSI, MACD, Bollinger Bands, ATR, SMAs, EMAs
+    """
+
+    import os
+    import logging
+    import time
+    import mysql.connector
+    from mysql.connector import pooling
+    from datetime import datetime, timedelta
+    import schedule
+    import numpy as np
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    logger = logging.getLogger("enhanced-technical-calculator")
+
+    # Global connection pool
+    db_pool = None
+
+    def init_connection_pool():
+        """Initialize database connection pool"""
+        global db_pool
+        try:
+            db_pool = pooling.MySQLConnectionPool(
+                pool_name="technical_pool",
+                pool_size=3,  # Increased pool for enhanced calculations
+                pool_reset_session=True,
+                host=os.getenv("DB_HOST", "127.0.0.1"),
+                user=os.getenv("DB_USER", "news_collector"),
+                password=os.getenv("DB_PASSWORD", "99Rules!"),
+                database=os.getenv("DB_NAME", "crypto_prices"),
+                autocommit=False,
+                charset="utf8mb4"
+            )
+            logger.info("✅ Enhanced database connection pool initialized")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Database pool initialization failed: {e}")
+            return False
+
+    def get_db_connection():
+        """Get database connection from pool"""
+        try:
+            if db_pool is None:
+                logger.error("Database pool not initialized")
+                return None
+            return db_pool.get_connection()
+        except Exception as e:
+            logger.error(f"Failed to get database connection: {e}")
+            return None
+
+    def calculate_sma(data, period):
+        """Calculate Simple Moving Average"""
+        if len(data) < period:
+            return [None] * len(data)
+        
+        result = [None] * (period - 1)
+        for i in range(period - 1, len(data)):
+            result.append(sum(data[i - period + 1:i + 1]) / period)
+        return result
+
+    def calculate_ema(data, period):
+        """Calculate Exponential Moving Average"""
+        if len(data) < period:
+            return [None] * len(data)
+        
+        result = [None] * len(data)
+        multiplier = 2.0 / (period + 1)
+        
+        # Start with SMA for first value
+        result[period - 1] = sum(data[:period]) / period
+        
+        for i in range(period, len(data)):
+            result[i] = data[i] * multiplier + result[i - 1] * (1 - multiplier)
+        
+        return result
+
+    def calculate_rsi(data, period=14):
+        """Calculate Relative Strength Index"""
+        if len(data) < period + 1:
+            return [None] * len(data)
+        
+        result = [None] * len(data)
+        
+        # Calculate price changes
+        changes = [data[i] - data[i - 1] for i in range(1, len(data))]
+        gains = [change if change > 0 else 0 for change in changes]
+        losses = [-change if change < 0 else 0 for change in changes]
+        
+        # Calculate initial average gain and loss
+        avg_gain = sum(gains[:period]) / period
+        avg_loss = sum(losses[:period]) / period
+        
+        if avg_loss == 0:
+            result[period] = 100
+        else:
+            rs = avg_gain / avg_loss
+            result[period] = 100 - (100 / (1 + rs))
+        
+        # Calculate RSI for remaining values
+        for i in range(period + 1, len(data)):
+            gain = gains[i - 1]
+            loss = losses[i - 1]
+            
+            avg_gain = (avg_gain * (period - 1) + gain) / period
+            avg_loss = (avg_loss * (period - 1) + loss) / period
+            
+            if avg_loss == 0:
+                result[i] = 100
+            else:
+                rs = avg_gain / avg_loss
+                result[i] = 100 - (100 / (1 + rs))
+        
+        return result
+
+    def calculate_macd(data, fast=12, slow=26, signal=9):
+        """Calculate MACD"""
+        ema_fast = calculate_ema(data, fast)
+        ema_slow = calculate_ema(data, slow)
+        
+        # Calculate MACD line
+        macd_line = []
+        for i in range(len(data)):
+            if ema_fast[i] is not None and ema_slow[i] is not None:
+                macd_line.append(ema_fast[i] - ema_slow[i])
+            else:
+                macd_line.append(None)
+        
+        # Calculate signal line (EMA of MACD)
+        macd_values = [x for x in macd_line if x is not None]
+        signal_line_values = calculate_ema(macd_values, signal)
+        
+        # Align signal line with MACD line
+        signal_line = [None] * len(macd_line)
+        signal_idx = 0
+        for i in range(len(macd_line)):
+            if macd_line[i] is not None:
+                if signal_idx < len(signal_line_values):
+                    signal_line[i] = signal_line_values[signal_idx]
+                signal_idx += 1
+        
+        # Calculate histogram
+        histogram = []
+        for i in range(len(macd_line)):
+            if macd_line[i] is not None and signal_line[i] is not None:
+                histogram.append(macd_line[i] - signal_line[i])
+            else:
+                histogram.append(None)
+        
+        return macd_line, signal_line, histogram
+
+    def calculate_bollinger_bands(data, period=20, std_dev=2):
+        """Calculate Bollinger Bands"""
+        sma = calculate_sma(data, period)
+        
+        bb_upper = []
+        bb_lower = []
+        bb_middle = []
+        
+        for i in range(len(data)):
+            if sma[i] is not None and i >= period - 1:
+                # Calculate standard deviation
+                window_data = data[i - period + 1:i + 1]
+                variance = sum([(x - sma[i]) ** 2 for x in window_data]) / period
+                std = variance ** 0.5
+                
+                bb_upper.append(sma[i] + (std_dev * std))
+                bb_lower.append(sma[i] - (std_dev * std))
+                bb_middle.append(sma[i])
+            else:
+                bb_upper.append(None)
+                bb_lower.append(None)
+                bb_middle.append(None)
+        
+        return bb_upper, bb_middle, bb_lower
+
+    def calculate_atr(high, low, close, period=14):
+        """Calculate Average True Range"""
+        if len(high) < period + 1:
+            return [None] * len(high)
+        
+        true_ranges = []
+        for i in range(1, len(high)):
+            tr1 = high[i] - low[i]
+            tr2 = abs(high[i] - close[i - 1])
+            tr3 = abs(low[i] - close[i - 1])
+            true_ranges.append(max(tr1, tr2, tr3))
+        
+        # Calculate ATR using SMA of True Ranges
+        atr_values = calculate_sma(true_ranges, period)
+        return [None] + atr_values  # Prepend None for first value
+
+    def calculate_enhanced_indicators():
+        """Calculate enhanced technical indicators using OHLC data"""
+        logger.info("🚀 Starting enhanced technical indicators calculation...")
+        conn = get_db_connection()
+        if not conn:
+            return
+
+        try:
+            cursor = conn.cursor(dictionary=True)
+            
+            # Get symbols with OHLC data
+            cursor.execute("""
+                SELECT DISTINCT symbol 
+                FROM ohlc_data 
+                WHERE timestamp_iso >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+                ORDER BY symbol
+            """)
+            symbols = [row['symbol'] for row in cursor.fetchall()]
+            logger.info(f"📊 Found {len(symbols)} symbols to process")
+            
+            processed_count = 0
+            error_count = 0
+            
+            for symbol in symbols:
+                try:
+                    # Get OHLC data for this symbol (last 200 periods for calculations)
+                    cursor.execute("""
+                        SELECT timestamp_iso, open_price, high_price, low_price, close_price, volume
+                        FROM ohlc_data 
+                        WHERE symbol = %s 
+                        AND timestamp_iso >= DATE_SUB(NOW(), INTERVAL 200 DAY)
+                        ORDER BY timestamp_iso ASC
+                    """, (symbol,))
+                    
+                    ohlc_data = cursor.fetchall()
+                    if len(ohlc_data) < 50:  # Need sufficient data for calculations
+                        logger.warning(f"⚠️ Insufficient OHLC data for {symbol}: {len(ohlc_data)} records")
+                        continue
+                    
+                    # Extract price arrays
+                    timestamps = [row['timestamp_iso'] for row in ohlc_data]
+                    opens = [float(row['open_price']) for row in ohlc_data]
+                    highs = [float(row['high_price']) for row in ohlc_data]
+                    lows = [float(row['low_price']) for row in ohlc_data]
+                    closes = [float(row['close_price']) for row in ohlc_data]
+                    volumes = [float(row['volume']) for row in ohlc_data]
+                    
+                    # Calculate indicators
+                    sma_10 = calculate_sma(closes, 10)
+                    sma_20 = calculate_sma(closes, 20)
+                    sma_50 = calculate_sma(closes, 50)
+                    sma_200 = calculate_sma(closes, 200)
+                    
+                    ema_12 = calculate_ema(closes, 12)
+                    ema_26 = calculate_ema(closes, 26)
+                    ema_50 = calculate_ema(closes, 50)
+                    
+                    rsi = calculate_rsi(closes, 14)
+                    
+                    macd_line, macd_signal, macd_histogram = calculate_macd(closes)
+                    
+                    bb_upper, bb_middle, bb_lower = calculate_bollinger_bands(closes, 20, 2)
+                    
+                    atr = calculate_atr(highs, lows, closes, 14)
+                    
+                    volume_sma = calculate_sma(volumes, 20)
+                    
+                    # Calculate Bollinger Band Width
+                    bb_width = []
+                    for i in range(len(bb_upper)):
+                        if bb_upper[i] is not None and bb_lower[i] is not None and bb_middle[i] is not None and bb_middle[i] > 0:
+                            bb_width.append((bb_upper[i] - bb_lower[i]) / bb_middle[i] * 100)
+                        else:
+                            bb_width.append(None)
+                    
+                    # Insert/update indicators for each timestamp
+                    for i, timestamp in enumerate(timestamps):
+                        # Only process recent data (last 7 days) to avoid excessive processing
+                        if i < len(timestamps) - 7 * 24:  # Assuming hourly data, keep last 7 days
+                            continue
+                        
+                        try:
+                            cursor.execute("""
+                                INSERT INTO technical_indicators 
+                                (symbol, timestamp_iso, 
+                                 sma_10, sma_20, sma_50, sma_200,
+                                 ema_12, ema_26, ema_50,
+                                 rsi, rsi_14,
+                                 macd, macd_line, macd_signal, macd_histogram,
+                                 bb_upper, bb_middle, bb_lower, bollinger_upper, bollinger_middle, bollinger_lower,
+                                 bb_width, bb_bandwidth,
+                                 atr, atr_14,
+                                 volume_sma, volume_sma_20,
+                                 created_at, updated_at)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                                ON DUPLICATE KEY UPDATE
+                                sma_10 = VALUES(sma_10), sma_20 = VALUES(sma_20), sma_50 = VALUES(sma_50), sma_200 = VALUES(sma_200),
+                                ema_12 = VALUES(ema_12), ema_26 = VALUES(ema_26), ema_50 = VALUES(ema_50),
+                                rsi = VALUES(rsi), rsi_14 = VALUES(rsi_14),
+                                macd = VALUES(macd), macd_line = VALUES(macd_line), macd_signal = VALUES(macd_signal), macd_histogram = VALUES(macd_histogram),
+                                bb_upper = VALUES(bb_upper), bb_middle = VALUES(bb_middle), bb_lower = VALUES(bb_lower),
+                                bollinger_upper = VALUES(bollinger_upper), bollinger_middle = VALUES(bollinger_middle), bollinger_lower = VALUES(bollinger_lower),
+                                bb_width = VALUES(bb_width), bb_bandwidth = VALUES(bb_bandwidth),
+                                atr = VALUES(atr), atr_14 = VALUES(atr_14),
+                                volume_sma = VALUES(volume_sma), volume_sma_20 = VALUES(volume_sma_20),
+                                updated_at = NOW()
+                            """, (
+                                symbol, timestamp,
+                                sma_10[i], sma_20[i], sma_50[i], sma_200[i],
+                                ema_12[i], ema_26[i], ema_50[i],
+                                rsi[i], rsi[i],  # rsi_14 alias
+                                macd_line[i], macd_line[i], macd_signal[i], macd_histogram[i],
+                                bb_upper[i], bb_middle[i], bb_lower[i], bb_upper[i], bb_middle[i], bb_lower[i],  # bollinger aliases
+                                bb_width[i], bb_width[i],  # bb_bandwidth alias
+                                atr[i], atr[i],  # atr_14 alias
+                                volume_sma[i], volume_sma[i]  # volume_sma_20 alias
+                            ))
+                        except Exception as e:
+                            logger.error(f"Error inserting indicators for {symbol} at {timestamp}: {e}")
+                    
+                    processed_count += 1
+                    if processed_count % 10 == 0:
+                        logger.info(f"📈 Processed {processed_count}/{len(symbols)} symbols")
+                        conn.commit()
+                
+                except Exception as e:
+                    logger.error(f"❌ Error processing {symbol}: {e}")
+                    error_count += 1
+                    continue
+            
+            conn.commit()
+            logger.info(f"✅ Enhanced technical indicators calculation complete: {processed_count} symbols processed, {error_count} errors")
+            
+            # Write health check file
+            with open("/tmp/enhanced_technical_calculator_health.txt", "w") as f:
+                f.write(f"{datetime.utcnow()}: {processed_count} symbols processed")
+                
+        except Exception as e:
+            logger.error(f"❌ Calculation error: {e}")
+            conn.rollback()
+        finally:
+            if conn:
+                conn.close()
+
+    def scheduled_calculation():
+        """Scheduled calculation function"""
+        logger.info("🔄 Starting scheduled enhanced technical indicators calculation...")
+        calculate_enhanced_indicators()
+        logger.info("✅ Scheduled calculation completed")
+
+    def main():
+        """Main function"""
+        logger.info("🚀 Starting Enhanced Technical Calculator")
+        
+        # Initialize connection pool
+        if not init_connection_pool():
+            logger.error("Failed to initialize connection pool. Exiting.")
+            return
+        
+        # Schedule calculations every 2 hours (more frequent than before)
+        schedule.every(2).hours.do(scheduled_calculation)
+        
+        # Run initial calculation
+        logger.info("Running initial enhanced calculation...")
+        calculate_enhanced_indicators()
+        
+        # Keep running and process scheduled tasks
+        logger.info("Enhanced technical calculator running with scheduled updates...")
+        while True:
+            schedule.run_pending()
+            time.sleep(300)  # Check every 5 minutes
+
+    if __name__ == "__main__":
+        main()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-technical-calculator
+  namespace: crypto-data-collection
+  labels:
+    app: enhanced-technical-calculator
+    component: data-enrichment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-technical-calculator
+  template:
+    metadata:
+      labels:
+        app: enhanced-technical-calculator
+    spec:
+      containers:
+      - name: enhanced-technical-calculator
+        image: python:3.9-slim
+        workingDir: /app
+        command: ["/bin/bash"]
+        args:
+          - -c
+          - |
+            pip install mysql-connector-python schedule numpy
+            python /app/technical_calculator.py
+        env:
+        - name: DB_HOST
+          value: "172.22.32.1"
+        - name: DB_PORT
+          value: "3306"
+        - name: DB_USER
+          value: "news_collector"
+        - name: DB_PASSWORD
+          value: "99Rules!"
+        - name: DB_NAME
+          value: "crypto_prices"
+        volumeMounts:
+        - name: enhanced-technical-calculator-code
+          mountPath: /app/technical_calculator.py
+          subPath: technical_calculator.py
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - test -f /tmp/enhanced_technical_calculator_health.txt && test $(find /tmp/enhanced_technical_calculator_health.txt -mmin -180 | wc -l) -eq 1
+          initialDelaySeconds: 300
+          periodSeconds: 300
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - test -f /tmp/enhanced_technical_calculator_health.txt
+          initialDelaySeconds: 60
+          periodSeconds: 60
+      volumes:
+      - name: enhanced-technical-calculator-code
+        configMap:
+          name: enhanced-technical-calculator-code
+      restartPolicy: Always

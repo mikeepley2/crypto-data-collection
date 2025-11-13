@@ -1,0 +1,45 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: ml-market-collector
+  
+resources:
+- ml-market-collector.yaml
+
+configMapGenerator:
+- name: ml-market-collector-code-cm
+  files:
+  - ml_market_collector.py=../../services/market-collection/ml_market_collector.py
+
+commonLabels:
+  team: crypto-data
+  purpose: ml-feature-collection
+  data-type: traditional-markets
+
+patches:
+- target:
+    group: apps
+    version: v1
+    kind: Deployment
+    name: ml-market-collector
+  patch: |-
+    - op: add
+      path: /spec/template/spec/containers/0/volumeMounts/-
+      value:
+        name: collector-code-cm
+        mountPath: /app/ml_market_collector.py
+        subPath: ml_market_collector.py
+    - op: add
+      path: /spec/template/spec/volumes/-
+      value:
+        name: collector-code-cm
+        configMap:
+          name: ml-market-collector-code-cm
+          defaultMode: 493  # 0755 in decimal
+
+namespace: crypto-data-collection
+
+images:
+- name: python
+  newTag: 3.11-slim

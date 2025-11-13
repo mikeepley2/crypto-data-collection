@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: placeholder-manager
+  namespace: crypto-data
+  labels:
+    app: placeholder-manager
+    tier: management
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: placeholder-manager
+  template:
+    metadata:
+      labels:
+        app: placeholder-manager
+        tier: management
+    spec:
+      containers:
+      - name: placeholder-manager
+        image: crypto-data/placeholder-manager:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DB_HOST
+          value: "mysql-service"
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: password
+        - name: DB_NAME
+          value: "crypto_prices"
+        - name: MODE
+          value: "scheduler"  # scheduler, api, or once
+        - name: API_PORT
+          value: "8080"
+        - name: ENABLE_PLACEHOLDERS
+          value: "true"
+        - name: SCHEDULE_INTERVAL_HOURS
+          value: "1"
+        - name: MACRO_LOOKBACK_DAYS
+          value: "7"
+        - name: TECHNICAL_LOOKBACK_HOURS
+          value: "24"
+        - name: ONCHAIN_LOOKBACK_DAYS
+          value: "30"
+        - name: SENTIMENT_LOOKBACK_DAYS
+          value: "7"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 60
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: placeholder-manager-service
+  namespace: crypto-data
+  labels:
+    app: placeholder-manager
+spec:
+  selector:
+    app: placeholder-manager
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+  type: ClusterIP
+---
+# Optional: ServiceMonitor for Prometheus scraping
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: placeholder-manager-metrics
+  namespace: crypto-data
+spec:
+  selector:
+    matchLabels:
+      app: placeholder-manager
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s

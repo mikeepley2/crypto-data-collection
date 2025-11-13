@@ -1,0 +1,472 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sentiment-collector
+  namespace: crypto-data-collection
+  labels:
+    app: sentiment-collector
+    component: data-collection
+    node-type: data-collection
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sentiment-collector
+  template:
+    metadata:
+      labels:
+        app: sentiment-collector
+        component: data-collection
+        node-type: data-collection
+    spec:
+      nodeSelector:
+        node-type: data-collection
+      tolerations:
+        - key: "data-platform"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      containers:
+        - name: sentiment-collector
+          image: python:3.11-slim
+          ports:
+            - containerPort: 8000
+              name: http
+          command:
+            - /bin/bash
+            - -c
+          args:
+            - |
+              # Install dependencies
+              pip install fastapi uvicorn textblob nltk mysql-connector-python prometheus-client tenacity circuitbreaker
+
+              # Download NLTK data
+              python -c "import nltk; nltk.download('vader_lexicon'); nltk.download('punkt')"
+
+              # Create application directory
+              mkdir -p /app
+
+              # Create the sentiment collector service with automatic collection
+              cat > /app/main.py << 'EOF'
+              import asyncio
+              import logging
+              import os
+              import time
+              from datetime import datetime, timedelta
+              from contextlib import contextmanager
+              import mysql.connector
+              from fastapi import FastAPI, BackgroundTasks
+              from prometheus_client import Counter, Histogram, Gauge, generate_latest
+              from tenacity import retry, stop_after_attempt, wait_exponential
+              from circuitbreaker import CircuitBreaker
+              from textblob import TextBlob
+              import uvicorn
+
+              # Configure logging
+              logging.basicConfig(level=logging.INFO)
+              logger = logging.getLogger(__name__)
+
+              # Prometheus metrics
+              SENTIMENT_ANALYSIS_TOTAL = Counter('sentiment_analysis_total', 'Total sentiment analysis requests', ['model', 'status'])
+              SENTIMENT_ANALYSIS_DURATION = Histogram('sentiment_analysis_duration_seconds', 'Sentiment analysis duration', ['model'])
+              SENTIMENT_ITEMS_PROCESSED = Counter('sentiment_items_processed_total', 'Total sentiment items processed', ['model'])
+              SENTIMENT_ANALYSIS_ERRORS = Counter('sentiment_analysis_errors_total', 'Sentiment analysis errors', ['model', 'error_type'])
+              ACTIVE_COLLECTION_LOOPS = Gauge('active_collection_loops', 'Number of active collection loops')
+
+              @contextmanager
+              def get_connection_context():
+                  """Database connection context manager"""
+                  conn = None
+                  try:
+                      conn = mysql.connector.connect(
+                          host=os.getenv('MYSQL_HOST', 'host.docker.internal'),
+                          port=int(os.getenv('MYSQL_PORT', 3306)),
+                          user=os.getenv('MYSQL_USER', 'news_collector'),
+                          password=os.getenv('MYSQL_PASSWORD', '99Rules!'),
+                          database=os.getenv('MYSQL_DATABASE', 'crypto_prices')
+                      )
+                      yield conn
+                  except Exception as e:
+                      logger.error(f"Database connection error: {e}")
+                      if conn:
+                          conn.rollback()
+                      raise
+                  finally:
+                      if conn:
+                          conn.close()
+
+              class SentimentCollector:
+                  def __init__(self):
+                      self.app = FastAPI(title="Sentiment Collector Service", version="2.0.0")
+                      self.setup_routes()
+                      
+                      # Collection configuration
+                      self.collection_interval = int(os.getenv('SENTIMENT_COLLECTION_INTERVAL', 900))  # 15 minutes
+                      self.is_collecting = False
+                      self.collection_task = None
+                      
+                      # Sentiment models
+                      self.models = {
+                          'textblob': self.analyze_textblob,
+                          'vader': self.analyze_vader
+                      }
+                      
+                      logger.info(f"🚀 Sentiment Collector initialized with {self.collection_interval}s interval")
+
+                  def setup_routes(self):
+                      @self.app.get("/health")
+                      async def health():
+                          return {
+                              "status": "healthy",
+                              "service": "sentiment-collector",
+                              "version": "2.0.0",
+                              "collection_active": self.is_collecting,
+                              "collection_interval": self.collection_interval,
+                              "models": list(self.models.keys()),
+                              "last_collection": getattr(self, 'last_collection_time', 'Never')
+                          }
+
+                      @self.app.get("/metrics")
+                      async def metrics():
+                          return generate_latest()
+
+                      @self.app.get("/status")
+                      async def status():
+                          return {
+                              "service": "sentiment-collector",
+                              "version": "2.0.0",
+                              "collection_active": self.is_collecting,
+                              "models": list(self.models.keys()),
+                              "last_processed_count": getattr(self, 'last_processed_count', 0)
+                          }
+
+                      @self.app.post("/start-collection")
+                      async def start_collection(background_tasks: BackgroundTasks):
+                          if not self.is_collecting:
+                              background_tasks.add_task(self.start_background_collection)
+                              return {"status": "started", "message": "Sentiment collection started"}
+                          return {"status": "already_running", "message": "Collection already active"}
+
+                      @self.app.post("/stop-collection")
+                      async def stop_collection():
+                          if self.is_collecting:
+                              self.is_collecting = False
+                              if self.collection_task:
+                                  self.collection_task.cancel()
+                              return {"status": "stopped", "message": "Sentiment collection stopped"}
+                          return {"status": "not_running", "message": "Collection not active"}
+
+                      @self.app.post("/collect")
+                      async def manual_collect(background_tasks: BackgroundTasks):
+                          background_tasks.add_task(self.collect_sentiment_once)
+                          return {"status": "started", "message": "Manual sentiment collection initiated"}
+
+                  def analyze_textblob(self, text):
+                      """Analyze sentiment using TextBlob"""
+                      try:
+                          blob = TextBlob(text)
+                          polarity = blob.sentiment.polarity  # -1 to 1
+                          subjectivity = blob.sentiment.subjectivity  # 0 to 1
+                          
+                          # Convert to 0-1 scale for consistency
+                          normalized_polarity = (polarity + 1) / 2  # 0 to 1
+                          confidence = 1 - subjectivity  # Higher confidence for less subjective text
+                          
+                          return {
+                              'score': normalized_polarity,
+                              'confidence': confidence,
+                              'raw_polarity': polarity,
+                              'subjectivity': subjectivity
+                          }
+                      except Exception as e:
+                          logger.error(f"TextBlob analysis error: {e}")
+                          return None
+
+                  def analyze_vader(self, text):
+                      """Analyze sentiment using VADER"""
+                      try:
+                          from nltk.sentiment.vader import SentimentIntensityAnalyzer
+                          analyzer = SentimentIntensityAnalyzer()
+                          scores = analyzer.polarity_scores(text)
+                          
+                          # Use compound score as main sentiment
+                          compound = scores['compound']
+                          normalized_score = (compound + 1) / 2  # Convert to 0-1 scale
+                          
+                          # Calculate confidence based on score magnitude
+                          confidence = abs(compound)
+                          
+                          return {
+                              'score': normalized_score,
+                              'confidence': confidence,
+                              'raw_compound': compound,
+                              'positive': scores['pos'],
+                              'negative': scores['neg'],
+                              'neutral': scores['neu']
+                          }
+                      except Exception as e:
+                          logger.error(f"VADER analysis error: {e}")
+                          return None
+
+                  async def get_unprocessed_news(self):
+                      """Get news articles that need sentiment analysis"""
+                      try:
+                          with get_connection_context() as conn:
+                              cursor = conn.cursor()
+                              
+                              # Get news articles without sentiment analysis
+                              cursor.execute("""
+                                  SELECT id, title, content, source, url
+                                  FROM crypto_news 
+                                  WHERE sentiment_score IS NULL 
+                                  AND created_at >= %s
+                                  ORDER BY created_at DESC
+                                  LIMIT 50
+                              """, (datetime.now() - timedelta(days=1),))
+                              
+                              articles = cursor.fetchall()
+                              cursor.close()
+                              
+                              logger.info(f"Retrieved {len(articles)} unprocessed news articles")
+                              return articles
+                      except Exception as e:
+                          logger.error(f"Error getting unprocessed news: {e}")
+                          return []
+
+                  async def analyze_article_sentiment(self, article):
+                      """Analyze sentiment for a single article using multiple models"""
+                      article_id, title, content, source, url = article
+                      
+                      # Combine title and content for analysis
+                      full_text = f"{title} {content}".strip()
+                      if not full_text:
+                          return None
+                      
+                      results = {}
+                      
+                      for model_name, model_func in self.models.items():
+                          try:
+                              with SENTIMENT_ANALYSIS_DURATION.labels(model=model_name).time():
+                                  result = model_func(full_text)
+                                  if result:
+                                      results[model_name] = result
+                                      SENTIMENT_ANALYSIS_TOTAL.labels(model=model_name, status='success').inc()
+                                  else:
+                                      SENTIMENT_ANALYSIS_TOTAL.labels(model=model_name, status='error').inc()
+                                      SENTIMENT_ANALYSIS_ERRORS.labels(model=model_name, error_type='analysis_failed').inc()
+                          except Exception as e:
+                              SENTIMENT_ANALYSIS_TOTAL.labels(model=model_name, status='error').inc()
+                              SENTIMENT_ANALYSIS_ERRORS.labels(model=model_name, error_type='exception').inc()
+                              logger.error(f"Error in {model_name} analysis: {e}")
+                      
+                      if not results:
+                          return None
+                      
+                      # Calculate ensemble sentiment (average of available models)
+                      scores = [r['score'] for r in results.values() if r]
+                      confidences = [r['confidence'] for r in results.values() if r]
+                      
+                      if scores:
+                          ensemble_score = sum(scores) / len(scores)
+                          ensemble_confidence = sum(confidences) / len(confidences)
+                          
+                          return {
+                              'article_id': article_id,
+                              'ensemble_score': ensemble_score,
+                              'ensemble_confidence': ensemble_confidence,
+                              'model_results': results
+                          }
+                      
+                      return None
+
+                  async def store_sentiment_results(self, results):
+                      """Store sentiment analysis results in database"""
+                      if not results:
+                          return 0
+                          
+                      try:
+                          with get_connection_context() as conn:
+                              cursor = conn.cursor()
+                              
+                              stored_count = 0
+                              for result in results:
+                                  try:
+                                      cursor.execute("""
+                                          UPDATE crypto_news 
+                                          SET sentiment_score = %s, 
+                                              sentiment_confidence = %s,
+                                              sentiment_updated_at = %s
+                                          WHERE id = %s
+                                      """, (
+                                          result['ensemble_score'],
+                                          result['ensemble_confidence'],
+                                          datetime.now(),
+                                          result['article_id']
+                                      ))
+                                      stored_count += 1
+                                  except Exception as e:
+                                      logger.error(f"Error storing sentiment for article {result['article_id']}: {e}")
+                                      continue
+                              
+                              conn.commit()
+                              cursor.close()
+                              
+                              SENTIMENT_ITEMS_PROCESSED.labels(model='ensemble').inc(stored_count)
+                              logger.info(f"Stored sentiment analysis for {stored_count} articles")
+                              return stored_count
+                      except Exception as e:
+                          logger.error(f"Error storing sentiment results: {e}")
+                          return 0
+
+                  async def collect_sentiment_once(self):
+                      """Collect and analyze sentiment for news articles"""
+                      logger.info("Starting sentiment analysis cycle...")
+                      start_time = time.time()
+                      
+                      try:
+                          # Get unprocessed news articles
+                          articles = await self.get_unprocessed_news()
+                          if not articles:
+                              logger.info("No unprocessed articles found")
+                              return
+                          
+                          # Analyze sentiment for each article
+                          results = []
+                          for article in articles:
+                              result = await self.analyze_article_sentiment(article)
+                              if result:
+                                  results.append(result)
+                          
+                          # Store results
+                          stored_count = await self.store_sentiment_results(results)
+                          
+                          # Update last collection time
+                          self.last_collection_time = datetime.now().isoformat()
+                          self.last_processed_count = stored_count
+                          
+                          duration = time.time() - start_time
+                          logger.info(f"Sentiment analysis completed: {stored_count} articles processed in {duration:.2f}s")
+                          
+                      except Exception as e:
+                          logger.error(f"Error in sentiment analysis cycle: {e}")
+
+                  async def start_background_collection(self):
+                      """Start background sentiment analysis loop"""
+                      if self.is_collecting:
+                          logger.warning("Collection already running")
+                          return
+                      
+                      self.is_collecting = True
+                      ACTIVE_COLLECTION_LOOPS.set(1)
+                      logger.info(f"Starting background sentiment analysis every {self.collection_interval} seconds")
+                      
+                      try:
+                          while self.is_collecting:
+                              await self.collect_sentiment_once()
+                              
+                              # Wait for next collection
+                              for _ in range(self.collection_interval):
+                                  if not self.is_collecting:
+                                      break
+                                  await asyncio.sleep(1)
+                      except asyncio.CancelledError:
+                          logger.info("Sentiment analysis loop cancelled")
+                      except Exception as e:
+                          logger.error(f"Error in background analysis loop: {e}")
+                      finally:
+                          self.is_collecting = False
+                          ACTIVE_COLLECTION_LOOPS.set(0)
+                          logger.info("Background sentiment analysis stopped")
+
+              # Create collector instance
+              collector = SentimentCollector()
+              app = collector.app
+
+              if __name__ == "__main__":
+                  logger.info("🚀 Starting Sentiment Collector Service with Automatic Analysis")
+                  
+                  # Start background collection automatically
+                  import threading
+                  def start_collection_loop():
+                      loop = asyncio.new_event_loop()
+                      asyncio.set_event_loop(loop)
+                      loop.run_until_complete(collector.start_background_collection())
+                  
+                  # Start collection in background thread
+                  collection_thread = threading.Thread(target=start_collection_loop, daemon=True)
+                  collection_thread.start()
+                  
+                  # Start the service
+                  uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+              EOF
+
+              # Start the service
+              cd /app && python main.py
+          env:
+            - name: MYSQL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_HOST
+            - name: MYSQL_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_PORT
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-user
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-password
+            - name: MYSQL_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_DATABASE
+            - name: SENTIMENT_COLLECTION_INTERVAL
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: SENTIMENT_COLLECTION_INTERVAL
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sentiment-collector
+  namespace: crypto-data-collection
+  labels:
+    app: sentiment-collector
+    component: data-collection
+spec:
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+      name: http
+  selector:
+    app: sentiment-collector
+  type: ClusterIP

@@ -1,0 +1,44 @@
+# Stock Sentiment Service with FinBERT
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy pre-downloaded models
+COPY models/finbert /app/models/finbert
+
+# Install Python dependencies
+RUN pip install --no-cache-dir \
+    fastapi==0.119.0 \
+    uvicorn==0.37.0 \
+    transformers==4.44.0 \
+    torch==2.4.0 \
+    requests==2.32.5 \
+    mysql-connector-python==9.4.0 \
+    numpy==1.26.4
+
+# Copy service code
+COPY backend/services/sentiment/stock_market_sentiment.py /app/sentiment.py
+
+# Set environment variables
+ENV MODEL_TYPE=stock
+ENV MODEL_NAME=finbert
+ENV PORT=8000
+ENV LOG_LEVEL=INFO
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:8000/health')"
+
+# Run the service
+CMD ["python", "sentiment.py"]
+

@@ -1,0 +1,700 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+    name: enhanced-sentiment-ml-code
+    namespace: crypto-data-collection
+data:
+    enhanced_ml_sentiment.py: |
+        #!/usr/bin/env python3
+        """
+        Enhanced ML-based Sentiment Analysis Service
+        
+        This service provides advanced sentiment analysis using specialized ML models
+        (FinBERT for stock market, CryptoBERT for crypto) for both crypto and stock
+        market news, with separate sentiment tracking for each market type.
+        """
+        
+        import os
+        import sys
+        import logging
+        import json
+        import asyncio
+        import aiohttp
+        from datetime import datetime, timedelta
+        from typing import Dict, List, Optional, Tuple
+        from fastapi import FastAPI, HTTPException, BackgroundTasks
+        from pydantic import BaseModel
+        import uvicorn
+        import mysql.connector
+        from mysql.connector import pooling
+        import torch
+        from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
+        import numpy as np
+        
+        # Configure logging
+        logging.basicConfig(
+            level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
+        logger = logging.getLogger("enhanced_ml_sentiment")
+        
+        
+        # FastAPI models
+        class SentimentRequest(BaseModel):
+            article_id: Optional[int] = None
+            text: Optional[str] = None
+            market_type: Optional[str] = None  # 'crypto' or 'stock'
+        
+        
+        class HealthResponse(BaseModel):
+            status: str
+            timestamp: str
+            crypto_model_loaded: bool
+            stock_model_loaded: bool
+            database_connected: bool
+        
+        
+        # Initialize FastAPI app
+        app = FastAPI(
+            title="Enhanced ML Sentiment Analysis",
+            description="Advanced sentiment analysis using specialized ML models for crypto and stock market news",
+            version="3.0.0",
+        )
+        
+        # Database connection pool
+        db_pool = None
+        
+        # ML Models
+        crypto_sentiment_pipeline = None
+        stock_sentiment_pipeline = None
+        
+        
+        def init_database_pool():
+            """Initialize database connection pool"""
+            global db_pool
+            try:
+                db_pool = pooling.MySQLConnectionPool(
+                    pool_name="sentiment_pool",
+                    pool_size=5,
+                    pool_reset_session=True,
+                    host=os.getenv("MYSQL_HOST", "host.docker.internal"),
+                    port=int(os.getenv("MYSQL_PORT", "3306")),
+                    user=os.getenv("MYSQL_USER", "news_collector"),
+                    password=os.getenv("MYSQL_PASSWORD", "99Rules!"),
+                    database=os.getenv("MYSQL_DATABASE", "crypto_prices"),
+                    autocommit=True,
+                )
+                logger.info("✅ Database connection pool initialized")
+                return True
+            except Exception as e:
+                logger.error(f"❌ Database pool initialization failed: {e}")
+                return False
+        
+        
+        def get_db_connection():
+            """Get database connection from pool"""
+            try:
+                return db_pool.get_connection()
+            except Exception as e:
+                logger.error(f"❌ Failed to get database connection: {e}")
+                return None
+        
+        
+        def load_ml_models():
+            """Load specialized ML models for sentiment analysis"""
+            global crypto_sentiment_pipeline, stock_sentiment_pipeline
+        
+            try:
+                logger.info("🔄 Loading CryptoBERT model for crypto sentiment analysis...")
+                crypto_sentiment_pipeline = pipeline(
+                    "sentiment-analysis",
+                    model="kk08/CryptoBERT",
+                    tokenizer="kk08/CryptoBERT",
+                    device=-1,  # Force CPU usage
+                    return_all_scores=True,
+                )
+                logger.info("✅ CryptoBERT model loaded successfully")
+            except Exception as e:
+                logger.error(f"❌ Failed to load CryptoBERT model: {e}")
+                crypto_sentiment_pipeline = None
+        
+            try:
+                logger.info("🔄 Loading FinBERT model for stock sentiment analysis...")
+                stock_sentiment_pipeline = pipeline(
+                    "sentiment-analysis",
+                    model="ProsusAI/finbert",
+                    tokenizer="ProsusAI/finbert",
+                    device=-1,  # Force CPU usage
+                    return_all_scores=True,
+                )
+                logger.info("✅ FinBERT model loaded successfully")
+            except Exception as e:
+                logger.error(f"❌ Failed to load FinBERT model: {e}")
+                stock_sentiment_pipeline = None
+        
+        
+        def detect_market_type(text: str) -> str:
+            """
+            Detect if the text is about crypto or stock market
+        
+            Args:
+                text: The text to analyze
+        
+            Returns:
+                'crypto' or 'stock'
+            """
+            text_lower = text.lower()
+        
+            # Crypto keywords
+            crypto_keywords = [
+                "bitcoin",
+                "btc",
+                "ethereum",
+                "eth",
+                "cryptocurrency",
+                "crypto",
+                "blockchain",
+                "altcoin",
+                "defi",
+                "nft",
+                "mining",
+                "wallet",
+                "exchange",
+                "binance",
+                "coinbase",
+                "dogecoin",
+                "doge",
+                "solana",
+                "sol",
+                "cardano",
+                "ada",
+                "polkadot",
+                "dot",
+                "chainlink",
+                "link",
+                "uniswap",
+                "pancakeswap",
+                "yield farming",
+                "staking",
+                "metamask",
+                "ledger",
+                "trezor",
+                "hodl",
+                "diamond hands",
+                "moon",
+                "pump",
+                "dump",
+                "fud",
+                "fomo",
+                "rekt",
+                "rug pull",
+                "whale",
+                "bullish",
+                "bearish",
+            ]
+        
+            # Stock market keywords
+            stock_keywords = [
+                "stock",
+                "stocks",
+                "equity",
+                "equities",
+                "nasdaq",
+                "nyse",
+                "s&p",
+                "dow jones",
+                "trading",
+                "investor",
+                "portfolio",
+                "dividend",
+                "earnings",
+                "revenue",
+                "profit",
+                "market cap",
+                "pe ratio",
+                "analyst",
+                "upgrade",
+                "downgrade",
+                "buy",
+                "sell",
+                "hold",
+                "bull market",
+                "bear market",
+                "recession",
+                "inflation",
+                "fed",
+                "federal reserve",
+                "interest rate",
+                "bond",
+                "bonds",
+                "treasury",
+                "etf",
+                "mutual fund",
+                "hedge fund",
+            ]
+        
+            # Count keyword matches
+            crypto_count = sum(1 for keyword in crypto_keywords if keyword in text_lower)
+            stock_count = sum(1 for keyword in stock_keywords if keyword in text_lower)
+        
+            # Determine market type based on keyword density
+            if crypto_count > stock_count:
+                return "crypto"
+            elif stock_count > crypto_count:
+                return "stock"
+            else:
+                # If equal or no matches, default to crypto for this system
+                return "crypto"
+        
+        
+        def analyze_sentiment_with_ml(text: str, market_type: str) -> Tuple[float, float, str]:
+            """
+            Analyze sentiment using specialized ML models
+        
+            Args:
+                text: The text to analyze
+                market_type: 'crypto' or 'stock'
+        
+            Returns:
+                Tuple of (sentiment_score, confidence, analysis_text)
+            """
+            try:
+                # Select appropriate model based on market type
+                if market_type == "crypto" and crypto_sentiment_pipeline:
+                    pipeline = crypto_sentiment_pipeline
+                    model_name = "CryptoBERT"
+                elif market_type == "stock" and stock_sentiment_pipeline:
+                    pipeline = stock_sentiment_pipeline
+                    model_name = "FinBERT"
+                else:
+                    # Fallback to available model
+                    if crypto_sentiment_pipeline:
+                        pipeline = crypto_sentiment_pipeline
+                        model_name = "CryptoBERT (fallback)"
+                    elif stock_sentiment_pipeline:
+                        pipeline = stock_sentiment_pipeline
+                        model_name = "FinBERT (fallback)"
+                    else:
+                        raise Exception("No ML models available")
+        
+                # Truncate text to model's max length (typically 512 tokens)
+                max_length = 512
+                if len(text) > max_length * 4:  # Rough estimate: 4 chars per token
+                    text = text[: max_length * 4]
+        
+                # Analyze sentiment (ensure tokenizer truncates to model max length)
+                results = pipeline(text, truncation=True, max_length=512)
+        
+                # Extract sentiment scores - handle different result formats
+                logger.info(f"Pipeline results type: {type(results)}, content: {results}")
+        
+                if isinstance(results, list) and len(results) > 0:
+                    # HuggingFace with return_all_scores=True often returns [[{label,score}...]]
+                    candidates = None
+                    if isinstance(results[0], list):
+                        candidates = results[0]
+                    else:
+                        candidates = results
+        
+                    scores = {}
+                    for item in candidates:
+                        if isinstance(item, dict) and "label" in item and "score" in item:
+                            label = str(item["label"]).lower()
+                            score = float(item["score"])
+                            scores[label] = score
+        
+                    # Normalize common label variants
+                    label_keys = {k: k for k in scores.keys()}
+                    # Map potential variants like "neutral", "positive", "negative", or LABEL_* if present
+                    pos = scores.get("positive", scores.get("pos", scores.get("label_2", 0.0)))
+                    neg = scores.get("negative", scores.get("neg", scores.get("label_0", 0.0)))
+                    neu = scores.get("neutral", scores.get("neu", scores.get("label_1", 0.0)))
+        
+                    # Compute sentiment score
+                    if pos or neg:
+                        sentiment_score = float(pos) - float(neg)
+                        confidence = max(float(pos), float(neg))
+                        top_label = "positive" if pos >= neg else "negative"
+                    elif neu:
+                        sentiment_score = 0.0
+                        confidence = float(neu)
+                        top_label = "neutral"
+                    else:
+                        # Fallback if labels are unexpected
+                        sentiment_score = 0.0
+                        confidence = max(scores.values()) if scores else 0.5
+                        top_label = max(scores, key=scores.get) if scores else "unknown"
+        
+                    analysis = f"Analyzed using {model_name}: {top_label} sentiment"
+        
+                elif isinstance(results, dict) and "label" in results:
+                    # Handle single result format
+                    label = results["label"].lower()
+                    score = results["score"]
+        
+                    # Convert to sentiment score
+                    if "positive" in label:
+                        sentiment_score = score
+                    elif "negative" in label:
+                        sentiment_score = -score
+                    else:
+                        sentiment_score = 0.0
+        
+                    confidence = score
+                    analysis = f"Analyzed using {model_name}: {label} sentiment"
+                else:
+                    # Handle unknown format
+                    logger.warning(f"Unknown result format: {results}")
+                    sentiment_score = 0.0
+                    confidence = 0.5
+                    analysis = f"Analyzed using {model_name}: unknown format"
+        
+                # Ensure score is in [-1, 1] range
+                sentiment_score = max(-1.0, min(1.0, sentiment_score))
+                # Ensure confidence is in [0, 1] range
+                confidence = max(0.0, min(1.0, confidence))
+        
+                logger.info(
+                    f"🤖 {model_name} sentiment analysis: {sentiment_score:.3f} (confidence: {confidence:.3f})"
+                )
+                return sentiment_score, confidence, analysis
+        
+            except Exception as e:
+                logger.error(f"❌ ML sentiment analysis failed: {e}")
+                raise Exception(f"ML sentiment analysis failed: {e}")
+        
+        
+        async def process_news_article(article_id: int, conn) -> bool:
+            """
+            Process a single news article for ML sentiment analysis
+        
+            Args:
+                article_id: The article ID to process
+                conn: Database connection
+        
+            Returns:
+                True if successful, False otherwise
+            """
+            try:
+                cursor = conn.cursor(dictionary=True)
+        
+                # Get article data
+                cursor.execute(
+                    """
+                    SELECT id, title, content, market_type, ml_sentiment_score, ml_sentiment_confidence
+                    FROM crypto_news 
+                    WHERE id = %s
+                """,
+                    (article_id,),
+                )
+        
+                article = cursor.fetchone()
+                if not article:
+                    logger.warning(f"Article {article_id} not found")
+                    return False
+        
+                # Skip if already processed
+                if (
+                    article["ml_sentiment_score"] is not None
+                    and article["ml_sentiment_score"] != 0
+                ):
+                    logger.info(f"Article {article_id} already has ML sentiment")
+                    return True
+        
+                # Combine title and content for analysis
+                text = f"{article['title']}"
+                if article["content"]:
+                    text += f" {article['content']}"
+        
+                # Detect market type if not set
+                market_type = article["market_type"] or detect_market_type(text)
+        
+                # Analyze sentiment with ML
+                ml_score, ml_confidence, ml_analysis = analyze_sentiment_with_ml(
+                    text, market_type
+                )
+        
+                # For stock market articles, also analyze as stock sentiment
+                stock_score, stock_confidence, stock_analysis = 0.0, 0.0, None
+                if market_type == "stock":
+                    stock_score, stock_confidence, stock_analysis = (
+                        ml_score,
+                        ml_confidence,
+                        ml_analysis,
+                    )
+        
+                # Update database
+                cursor.execute(
+                    """
+                    UPDATE crypto_news 
+                    SET ml_sentiment_score = %s,
+                        ml_sentiment_confidence = %s,
+                        ml_sentiment_analysis = %s,
+                        market_type = %s,
+                        stock_sentiment_score = %s,
+                        stock_sentiment_confidence = %s,
+                        stock_sentiment_analysis = %s,
+                        sentiment_updated_at = NOW()
+                    WHERE id = %s
+                """,
+                    (
+                        ml_score,
+                        ml_confidence,
+                        ml_analysis,
+                        market_type,
+                        stock_score,
+                        stock_confidence,
+                        stock_analysis,
+                        article_id,
+                    ),
+                )
+        
+                logger.info(
+                    f"✅ Processed article {article_id}: {market_type} sentiment {ml_score:.3f}"
+                )
+                return True
+        
+            except Exception as e:
+                logger.error(f"❌ Error processing article {article_id}: {e}")
+                return False
+            finally:
+                cursor.close()
+        
+        
+        async def process_pending_articles(limit: int = 10) -> Dict[str, int]:
+            """
+            Process pending articles for ML sentiment analysis
+        
+            Args:
+                limit: Maximum number of articles to process
+        
+            Returns:
+                Dictionary with processing statistics
+            """
+            conn = get_db_connection()
+            if not conn:
+                return {"error": "Database connection failed"}
+        
+            try:
+                cursor = conn.cursor()
+        
+                # Get articles that need ML sentiment analysis
+                cursor.execute(
+                    """
+                    SELECT id FROM crypto_news 
+                    WHERE (ml_sentiment_score IS NULL OR ml_sentiment_score = 0)
+                    AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                """,
+                    (limit,),
+                )
+        
+                article_ids = [row[0] for row in cursor.fetchall()]
+                cursor.close()
+        
+                if not article_ids:
+                    return {"processed": 0, "skipped": 0, "errors": 0}
+        
+                logger.info(f"Processing {len(article_ids)} articles for ML sentiment analysis")
+        
+                processed = 0
+                errors = 0
+        
+                # Process articles sequentially to avoid memory issues
+                for article_id in article_ids:
+                    try:
+                        success = await process_news_article(article_id, conn)
+                        if success:
+                            processed += 1
+                        else:
+                            errors += 1
+                    except Exception as e:
+                        logger.error(f"Error processing article {article_id}: {e}")
+                        errors += 1
+        
+                return {
+                    "processed": processed,
+                    "skipped": len(article_ids) - processed - errors,
+                    "errors": errors,
+                    "total": len(article_ids),
+                }
+        
+            except Exception as e:
+                logger.error(f"❌ Error in batch processing: {e}")
+                return {"error": str(e)}
+            finally:
+                conn.close()
+        
+        
+        # FastAPI endpoints
+        @app.get("/health", response_model=HealthResponse)
+        async def health_check():
+            """Health check endpoint"""
+            database_connected = db_pool is not None
+        
+            return HealthResponse(
+                status=(
+                    "healthy"
+                    if database_connected
+                    and crypto_sentiment_pipeline
+                    and stock_sentiment_pipeline
+                    else "degraded"
+                ),
+                timestamp=datetime.utcnow().isoformat(),
+                crypto_model_loaded=crypto_sentiment_pipeline is not None,
+                stock_model_loaded=stock_sentiment_pipeline is not None,
+                database_connected=database_connected,
+            )
+        
+        
+        @app.get("/status")
+        async def get_status():
+            """Get detailed service status"""
+            conn = get_db_connection()
+            db_connected = conn is not None
+            if conn:
+                conn.close()
+        
+            return {
+                "service": "enhanced_ml_sentiment",
+                "version": "3.0.0",
+                "status": (
+                    "operational"
+                    if db_connected and crypto_sentiment_pipeline and stock_sentiment_pipeline
+                    else "degraded"
+                ),
+                "crypto_model_loaded": crypto_sentiment_pipeline is not None,
+                "stock_model_loaded": stock_sentiment_pipeline is not None,
+                "database_connected": db_connected,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+        
+        
+        @app.post("/sentiment")
+        async def analyze_sentiment(request: SentimentRequest):
+            """Analyze sentiment for given text or article"""
+            try:
+                if request.article_id:
+                    # Process specific article
+                    conn = get_db_connection()
+                    if not conn:
+                        raise HTTPException(
+                            status_code=500, detail="Database connection failed"
+                        )
+        
+                    success = await process_news_article(request.article_id, conn)
+                    conn.close()
+        
+                    if success:
+                        return {"status": "success", "article_id": request.article_id}
+                    else:
+                        raise HTTPException(
+                            status_code=404, detail="Article not found or processing failed"
+                        )
+        
+                elif request.text:
+                    # Analyze provided text
+                    market_type = request.market_type or detect_market_type(request.text)
+                    score, confidence, analysis = analyze_sentiment_with_ml(
+                        request.text, market_type
+                    )
+        
+                    return {
+                        "status": "success",
+                        "market_type": market_type,
+                        "sentiment_score": score,
+                        "confidence": confidence,
+                        "analysis": analysis,
+                    }
+        
+                else:
+                    raise HTTPException(
+                        status_code=400, detail="Either article_id or text must be provided"
+                    )
+        
+            except Exception as e:
+                logger.error(f"Error in sentiment analysis: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+        
+        
+        @app.post("/process-batch")
+        async def process_batch(background_tasks: BackgroundTasks, limit: int = 10):
+            """Process pending articles in background"""
+            background_tasks.add_task(process_pending_articles, limit)
+            return {"status": "processing_started", "limit": limit}
+        
+        
+        @app.get("/process-batch")
+        async def process_batch_sync(limit: int = 10):
+            """Process pending articles synchronously"""
+            result = await process_pending_articles(limit)
+            return result
+        
+        
+        @app.get("/metrics")
+        async def get_metrics():
+            """Prometheus metrics endpoint"""
+            from fastapi.responses import PlainTextResponse
+        
+            return PlainTextResponse(
+                "# HELP enhanced_sentiment_collector_health Health status\n# TYPE enhanced_sentiment_collector_health gauge\nenhanced_sentiment_collector_health 1\n"
+            )
+        
+        
+        @app.get("/")
+        async def root():
+            """Root endpoint with service information"""
+            return {
+                "service": "enhanced-ml-sentiment",
+                "version": "3.0.0",
+                "status": "running",
+                "models": {
+                    "crypto": "CryptoBERT" if crypto_sentiment_pipeline else "Not loaded",
+                    "stock": "FinBERT" if stock_sentiment_pipeline else "Not loaded",
+                },
+                "endpoints": {
+                    "health": "/health",
+                    "sentiment": "/sentiment",
+                    "process-batch": "/process-batch",
+                    "metrics": "/metrics",
+                    "docs": "/docs",
+                },
+            }
+        
+        
+        # Background task to process articles periodically
+        async def background_processor():
+            """Background task to process articles periodically"""
+            while True:
+                try:
+                    logger.info("🔄 Starting background ML sentiment processing")
+                    result = await process_pending_articles(5)  # Process 5 articles at a time
+                    logger.info(f"✅ Background processing completed: {result}")
+                except Exception as e:
+                    logger.error(f"❌ Background processing error: {e}")
+        
+                # Wait 5 minutes before next batch
+                await asyncio.sleep(300)
+        
+        
+        @app.on_event("startup")
+        async def startup_event():
+            """Initialize service on startup"""
+            logger.info("🚀 Starting Enhanced ML Sentiment Analysis Service")
+        
+            # Initialize database pool
+            if not init_database_pool():
+                logger.error("❌ Failed to initialize database pool")
+        
+            # Load ML models
+            load_ml_models()
+        
+            # Start background processor
+            asyncio.create_task(background_processor())
+            logger.info("✅ Background processor started")
+        
+        
+        if __name__ == "__main__":
+            port = int(os.getenv("PORT", 8000))
+            uvicorn.run(app, host="0.0.0.0", port=port)
+        

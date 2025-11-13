@@ -1,0 +1,365 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cache-manager
+  namespace: crypto-data-collection
+  labels:
+    app: cache-manager
+    component: monitoring
+    node-type: data-collection
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cache-manager
+  template:
+    metadata:
+      labels:
+        app: cache-manager
+        component: monitoring
+        node-type: data-collection
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      nodeSelector:
+        node-type: data-collection
+      tolerations:
+        - key: "data-platform"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      containers:
+        - name: cache-manager
+          image: python:3.11-slim
+          ports:
+            - containerPort: 8000
+              name: http
+          command:
+            - /bin/bash
+            - -c
+          args:
+            - |
+              # Install dependencies
+              pip install fastapi uvicorn redis prometheus-client
+
+              # Create application directory
+              mkdir -p /app
+
+              # Create the cache management service
+              cat > /app/main.py << 'EOF'
+              import asyncio
+              import logging
+              import os
+              import time
+              from datetime import datetime, timedelta
+              from fastapi import FastAPI
+              from prometheus_client import Counter, Histogram, Gauge, generate_latest
+              import redis
+              import uvicorn
+
+              # Configure logging
+              logging.basicConfig(level=logging.INFO)
+              logger = logging.getLogger(__name__)
+
+              # Cache metrics
+              CACHE_HITS = Counter('cache_hits_total', 'Cache hits', ['cache_type', 'key_pattern'])
+              CACHE_MISSES = Counter('cache_misses_total', 'Cache misses', ['cache_type', 'key_pattern'])
+              CACHE_EVICTIONS = Counter('cache_evictions_total', 'Cache evictions', ['cache_type', 'eviction_reason'])
+              CACHE_SIZE = Gauge('cache_size_bytes', 'Cache size in bytes', ['cache_type'])
+              CACHE_KEYS = Gauge('cache_keys_total', 'Total cache keys', ['cache_type'])
+              CACHE_TTL = Histogram('cache_ttl_seconds', 'Cache TTL distribution', ['cache_type'])
+              CACHE_OPERATION_DURATION = Histogram('cache_operation_duration_seconds', 'Cache operation duration', ['operation', 'cache_type'])
+
+              class CacheManager:
+                  def __init__(self):
+                      self.app = FastAPI(title="Cache Manager Service", version="1.0.0")
+                      self.setup_routes()
+                      
+                      # Redis clients for different cache types
+                      self.redis_clients = {
+                          'price_data': redis.Redis(
+                              host=os.getenv('REDIS_HOST', 'redis-data-collection.crypto-data-collection.svc.cluster.local'),
+                              port=int(os.getenv('REDIS_PORT', 6379)),
+                              db=0,
+                              decode_responses=True
+                          ),
+                          'news_data': redis.Redis(
+                              host=os.getenv('REDIS_HOST', 'redis-data-collection.crypto-data-collection.svc.cluster.local'),
+                              port=int(os.getenv('REDIS_PORT', 6379)),
+                              db=1,
+                              decode_responses=True
+                          ),
+                          'sentiment_data': redis.Redis(
+                              host=os.getenv('REDIS_HOST', 'redis-data-collection.crypto-data-collection.svc.cluster.local'),
+                              port=int(os.getenv('REDIS_PORT', 6379)),
+                              db=2,
+                              decode_responses=True
+                          )
+                      }
+                      
+                      # Cache policies
+                      self.cache_policies = {
+                          'price_data': {
+                              'ttl': 300,  # 5 minutes
+                              'max_size': 1000,
+                              'eviction_policy': 'lru'
+                          },
+                          'news_data': {
+                              'ttl': 900,  # 15 minutes
+                              'max_size': 500,
+                              'eviction_policy': 'lru'
+                          },
+                          'sentiment_data': {
+                              'ttl': 1800,  # 30 minutes
+                              'max_size': 200,
+                              'eviction_policy': 'lru'
+                          }
+                      }
+                      
+                      logger.info("🚀 Cache Manager initialized")
+
+                  def setup_routes(self):
+                      @self.app.get("/health")
+                      async def health():
+                          return {
+                              "status": "healthy",
+                              "service": "cache-manager",
+                              "version": "1.0.0",
+                              "cache_types": list(self.redis_clients.keys())
+                          }
+
+                      @self.app.get("/metrics")
+                      async def metrics():
+                          return generate_latest()
+
+                      @self.app.get("/cache/status")
+                      async def cache_status():
+                          return await self.get_cache_status()
+
+                      @self.app.post("/cache/clear/{cache_type}")
+                      async def clear_cache(cache_type: str):
+                          return await self.clear_cache(cache_type)
+
+                      @self.app.post("/cache/optimize")
+                      async def optimize_cache():
+                          return await self.optimize_cache()
+
+                  async def get_cache_status(self):
+                      """Get comprehensive cache status"""
+                      status = {}
+                      
+                      for cache_type, client in self.redis_clients.items():
+                          try:
+                              info = client.info()
+                              keys = client.dbsize()
+                              
+                              status[cache_type] = {
+                                  'keys': keys,
+                                  'memory_usage': info.get('used_memory', 0),
+                                  'hit_rate': self.calculate_hit_rate(cache_type),
+                                  'eviction_count': info.get('evicted_keys', 0),
+                                  'connected_clients': info.get('connected_clients', 0),
+                                  'uptime_seconds': info.get('uptime_in_seconds', 0)
+                              }
+                          except Exception as e:
+                              logger.error(f"Error getting cache status for {cache_type}: {e}")
+                              status[cache_type] = {'error': str(e)}
+                      
+                      return status
+
+                  def calculate_hit_rate(self, cache_type):
+                      """Calculate cache hit rate"""
+                      try:
+                          client = self.redis_clients[cache_type]
+                          info = client.info()
+                          
+                          hits = info.get('keyspace_hits', 0)
+                          misses = info.get('keyspace_misses', 0)
+                          
+                          if hits + misses == 0:
+                              return 0.0
+                          
+                          return hits / (hits + misses) * 100
+                      except Exception as e:
+                          logger.error(f"Error calculating hit rate for {cache_type}: {e}")
+                          return 0.0
+
+                  async def clear_cache(self, cache_type):
+                      """Clear specific cache type"""
+                      if cache_type not in self.redis_clients:
+                          return {"error": f"Unknown cache type: {cache_type}"}
+                      
+                      try:
+                          client = self.redis_clients[cache_type]
+                          result = client.flushdb()
+                          
+                          logger.info(f"Cleared cache: {cache_type}")
+                          return {
+                              "status": "success",
+                              "cache_type": cache_type,
+                              "result": result
+                          }
+                      except Exception as e:
+                          logger.error(f"Error clearing cache {cache_type}: {e}")
+                          return {"error": str(e)}
+
+                  async def optimize_cache(self):
+                      """Optimize all caches"""
+                      results = {}
+                      
+                      for cache_type, client in self.redis_clients.items():
+                          try:
+                              # Get current status
+                              info = client.info()
+                              keys_before = client.dbsize()
+                              
+                              # Remove expired keys
+                              client.eval("""
+                                  local keys = redis.call('keys', '*')
+                                  local expired = 0
+                                  for i=1,#keys do
+                                      local ttl = redis.call('ttl', keys[i])
+                                      if ttl == -1 then
+                                          redis.call('expire', keys[i], 3600)
+                                      elseif ttl == -2 then
+                                          expired = expired + 1
+                                      end
+                                  end
+                                  return expired
+                              """, 0)
+                              
+                              # Memory optimization
+                              client.memory_purge()
+                              
+                              keys_after = client.dbsize()
+                              
+                              results[cache_type] = {
+                                  "keys_before": keys_before,
+                                  "keys_after": keys_after,
+                                  "keys_removed": keys_before - keys_after,
+                                  "memory_usage": info.get('used_memory', 0)
+                              }
+                              
+                              logger.info(f"Optimized cache: {cache_type}")
+                          except Exception as e:
+                              logger.error(f"Error optimizing cache {cache_type}: {e}")
+                              results[cache_type] = {"error": str(e)}
+                      
+                      return results
+
+                  async def update_cache_metrics(self):
+                      """Update Prometheus cache metrics"""
+                      try:
+                          for cache_type, client in self.redis_clients.items():
+                              try:
+                                  info = client.info()
+                                  keys = client.dbsize()
+                                  
+                                  # Update metrics
+                                  CACHE_SIZE.labels(cache_type=cache_type).set(info.get('used_memory', 0))
+                                  CACHE_KEYS.labels(cache_type=cache_type).set(keys)
+                                  
+                                  # Update hit/miss counters
+                                  hits = info.get('keyspace_hits', 0)
+                                  misses = info.get('keyspace_misses', 0)
+                                  
+                                  CACHE_HITS.labels(cache_type=cache_type, key_pattern='*').inc(hits)
+                                  CACHE_MISSES.labels(cache_type=cache_type, key_pattern='*').inc(misses)
+                                  
+                                  # Update eviction counter
+                                  evictions = info.get('evicted_keys', 0)
+                                  CACHE_EVICTIONS.labels(cache_type=cache_type, eviction_reason='lru').inc(evictions)
+                                  
+                              except Exception as e:
+                                  logger.error(f"Error updating metrics for {cache_type}: {e}")
+                          
+                          logger.info("Updated cache metrics")
+                          
+                      except Exception as e:
+                          logger.error(f"Error updating cache metrics: {e}")
+
+                  async def start_cache_monitoring_loop(self):
+                      """Start continuous cache monitoring loop"""
+                      logger.info("Starting cache monitoring loop")
+                      
+                      while True:
+                          try:
+                              await self.update_cache_metrics()
+                              await asyncio.sleep(30)  # Update every 30 seconds
+                          except Exception as e:
+                              logger.error(f"Error in cache monitoring loop: {e}")
+                              await asyncio.sleep(60)  # Wait longer on error
+
+              # Create manager instance
+              manager = CacheManager()
+              app = manager.app
+
+              if __name__ == "__main__":
+                  logger.info("🚀 Starting Cache Manager Service")
+                  
+                  # Start background monitoring
+                  import threading
+                  def start_monitoring():
+                      loop = asyncio.new_event_loop()
+                      asyncio.set_event_loop(loop)
+                      loop.run_until_complete(manager.start_cache_monitoring_loop())
+                  
+                  monitoring_thread = threading.Thread(target=start_monitoring, daemon=True)
+                  monitoring_thread.start()
+                  
+                  # Start the service
+                  uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+              EOF
+
+              # Start the service
+              cd /app && python main.py
+          env:
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: REDIS_HOST
+            - name: REDIS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: REDIS_PORT
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cache-manager
+  namespace: crypto-data-collection
+  labels:
+    app: cache-manager
+    component: monitoring
+spec:
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+      name: http
+  selector:
+    app: cache-manager
+  type: ClusterIP

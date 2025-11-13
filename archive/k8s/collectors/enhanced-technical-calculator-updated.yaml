@@ -1,0 +1,233 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: enhanced-collectors-config
+  namespace: crypto-data-collection
+data:
+  # Enhanced collectors configuration
+  FRED_API_KEY: "35478996c5e061d0fc99fc73f5ce348d"
+  COLLECTION_INTERVAL: "3600"
+  BACKFILL_ENABLED: "true"
+  HEALTH_CHECK_INTERVAL: "300"
+  LOG_LEVEL: "INFO"
+  
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-technical-calculator
+  namespace: crypto-data-collection
+  labels:
+    app: enhanced-technical-calculator
+    component: data-collection
+    version: enhanced
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-technical-calculator
+  template:
+    metadata:
+      labels:
+        app: enhanced-technical-calculator
+        component: data-collection
+        version: enhanced
+    spec:
+      nodeSelector:
+        node-type: data-collection
+      tolerations:
+        - key: "data-platform"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      containers:
+        - name: enhanced-technical-calculator
+          image: python:3.11-slim
+          ports:
+            - containerPort: 8000
+              name: http
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              pip install mysql-connector-python requests numpy pandas ta-lib fastapi uvicorn
+              
+              # Create the enhanced technical calculator
+              cat > /app/enhanced_technical_calculator.py << 'EOF'
+              #!/usr/bin/env python3
+              """
+              Enhanced Technical Calculator for K8s Deployment
+              """
+              
+              import os
+              import sys
+              import logging
+              import time
+              import mysql.connector
+              from datetime import datetime, date, timedelta
+              from typing import List, Dict, Optional
+              import numpy as np
+              
+              logging.basicConfig(level=logging.INFO)
+              logger = logging.getLogger(__name__)
+              
+              class EnhancedTechnicalCalculator:
+                  def __init__(self):
+                      self.db_config = {
+                          "host": os.getenv("MYSQL_HOST", "172.22.32.1"),
+                          "port": int(os.getenv("MYSQL_PORT", "3306")),
+                          "user": os.getenv("MYSQL_USER", "news_collector"),
+                          "password": os.getenv("MYSQL_PASSWORD", "99Rules!"),
+                          "database": os.getenv("MYSQL_DATABASE", "crypto_prices")
+                      }
+                      
+                  def get_db_connection(self):
+                      return mysql.connector.connect(**self.db_config)
+                      
+                  def get_symbols(self) -> List[str]:
+                      try:
+                          with self.get_db_connection() as db:
+                              cursor = db.cursor()
+                              cursor.execute("SELECT DISTINCT symbol FROM crypto_assets WHERE status = 'active' ORDER BY symbol")
+                              symbols = [row[0] for row in cursor.fetchall()]
+                              logger.info(f"Retrieved {len(symbols)} symbols from crypto_assets table")
+                              return symbols
+                      except Exception as e:
+                          logger.error(f"Error loading symbols: {e}")
+                          return ['BTC', 'ETH', 'ADA', 'SOL', 'DOT']  # Fallback
+                      
+                  def calculate_rsi(self, prices: List[float], period: int = 14) -> Optional[float]:
+                      if len(prices) < period + 1:
+                          return None
+                          
+                      gains = []
+                      losses = []
+                      
+                      for i in range(1, len(prices)):
+                          change = prices[i] - prices[i-1]
+                          gains.append(max(0, change))
+                          losses.append(max(0, -change))
+                      
+                      if len(gains) < period:
+                          return None
+                          
+                      avg_gain = sum(gains[-period:]) / period
+                      avg_loss = sum(losses[-period:]) / period
+                      
+                      if avg_loss == 0:
+                          return 100
+                          
+                      rs = avg_gain / avg_loss
+                      rsi = 100 - (100 / (1 + rs))
+                      
+                      return round(rsi, 4)
+                      
+                  def calculate_sma(self, prices: List[float], period: int) -> Optional[float]:
+                      if len(prices) < period:
+                          return None
+                      return round(sum(prices[-period:]) / period, 4)
+                      
+                  def run_calculation_cycle(self):
+                      logger.info("Starting technical indicators calculation cycle...")
+                      
+                      symbols = self.get_symbols()
+                      processed = 0
+                      
+                      for symbol in symbols[:10]:  # Process first 10 symbols
+                          try:
+                              # Get recent price data
+                              with self.get_db_connection() as db:
+                                  cursor = db.cursor()
+                                  cursor.execute("""
+                                      SELECT close FROM price_data_real 
+                                      WHERE symbol = %s 
+                                      ORDER BY timestamp_iso DESC 
+                                      LIMIT 50
+                                  """, (symbol,))
+                                  
+                                  prices = [float(row[0]) for row in cursor.fetchall() if row[0]]
+                                  
+                                  if len(prices) >= 20:
+                                      rsi = self.calculate_rsi(prices, 14)
+                                      sma_20 = self.calculate_sma(prices, 20)
+                                      
+                                      # Store indicators
+                                      cursor.execute("""
+                                          INSERT INTO technical_indicators 
+                                          (symbol, timestamp_iso, rsi_14, sma_20, created_at)
+                                          VALUES (%s, NOW(), %s, %s, NOW())
+                                          ON DUPLICATE KEY UPDATE
+                                              rsi_14 = VALUES(rsi_14),
+                                              sma_20 = VALUES(sma_20),
+                                              updated_at = NOW()
+                                      """, (symbol, rsi, sma_20))
+                                      
+                                      db.commit()
+                                      processed += 1
+                                      
+                          except Exception as e:
+                              logger.error(f"Error processing {symbol}: {e}")
+                              continue
+                      
+                      logger.info(f"Processed {processed} symbols")
+                      return processed
+              
+              if __name__ == "__main__":
+                  calculator = EnhancedTechnicalCalculator()
+                  
+                  while True:
+                      try:
+                          calculator.run_calculation_cycle()
+                          time.sleep(300)  # 5 minute intervals
+                      except KeyboardInterrupt:
+                          break
+                      except Exception as e:
+                          logger.error(f"Calculation error: {e}")
+                          time.sleep(60)
+              EOF
+              
+              python /app/enhanced_technical_calculator.py
+          env:
+            - name: MYSQL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_HOST
+            - name: MYSQL_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_PORT
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-user
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-password
+            - name: MYSQL_DATABASE
+              value: "crypto_prices"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-technical-calculator-service
+  namespace: crypto-data-collection
+spec:
+  selector:
+    app: enhanced-technical-calculator
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP

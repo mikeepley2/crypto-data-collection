@@ -1,0 +1,60 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: onchain-collector-cron
+  namespace: crypto-data-collection
+spec:
+  schedule: "0 * * * *"  # Run every hour
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: onchain-collector
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: onchain-collector
+            image: megabob70/onchain-collector:latest
+            imagePullPolicy: Always
+            command: ["python3"]
+            args: ["services/onchain-collection/enhanced_onchain_collector.py"]
+            env:
+            - name: DB_HOST
+              value: "mysql-service"  # Update to your MySQL service
+            - name: DB_USER
+              value: "crypto_user"
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: crypto-secrets
+                  key: db_password
+            - name: DB_NAME
+              value: "crypto_data"
+            - name: COINGECKO_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: crypto-secrets
+                  key: coingecko_api_key
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "200m"
+              limits:
+                memory: "512Mi"
+                cpu: "500m"
+          nodeSelector:
+            kubernetes.io/os: linux
+          tolerations:
+          - key: "data-platform"
+            operator: "Equal"
+            value: "true"
+            effect: "NoSchedule"
+          - key: "analytics-infrastructure"
+            operator: "Equal"
+            value: "true"
+            effect: "NoSchedule"
+          - key: "trading-engine"
+            operator: "Equal"
+            value: "true"
+            effect: "NoSchedule"

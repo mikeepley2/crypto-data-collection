@@ -1,0 +1,167 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama-server
+  namespace: crypto-collectors
+  labels:
+    app: ollama-server
+    component: llm-inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama-server
+  template:
+    metadata:
+      labels:
+        app: ollama-server
+        component: llm-inference
+    spec:
+      containers:
+      - name: ollama
+        image: ollama/ollama:latest
+        ports:
+        - containerPort: 11434
+          name: http
+        env:
+        - name: OLLAMA_HOST
+          value: "0.0.0.0"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "500m"
+          limits:
+            memory: "8Gi"
+            cpu: "2"
+        volumeMounts:
+        - name: ollama-data
+          mountPath: /root/.ollama
+        livenessProbe:
+          httpGet:
+            path: /api/tags
+            port: 11434
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /api/tags
+            port: 11434
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: ollama-data
+        persistentVolumeClaim:
+          claimName: ollama-data-pvc
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-server
+  namespace: crypto-collectors
+  labels:
+    app: ollama-server
+spec:
+  type: ClusterIP
+  ports:
+  - port: 11434
+    targetPort: 11434
+    protocol: TCP
+    name: http
+  selector:
+    app: ollama-server
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-data-pvc
+  namespace: crypto-collectors
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama-llm-service
+  namespace: crypto-collectors
+  labels:
+    app: ollama-llm-service
+    component: data-enhancement
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama-llm-service
+  template:
+    metadata:
+      labels:
+        app: ollama-llm-service
+        component: data-enhancement
+    spec:
+      containers:
+      - name: ollama-llm-service
+        image: ollama-llm-service:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8037
+          name: http
+        env:
+        - name: OLLAMA_ENDPOINT
+          value: "http://ollama-server.crypto-collectors.svc.cluster.local:11434"
+        - name: MYSQL_HOST
+          value: "host.docker.internal"
+        - name: MYSQL_USER
+          value: "news_collector"
+        - name: MYSQL_PASSWORD
+          value: "99Rules!"
+        - name: MYSQL_DATABASE
+          value: "crypto_prices"
+        - name: OLLAMA_SENTIMENT_MODEL
+          value: "llama3.2:3b"
+        - name: OLLAMA_NARRATIVE_MODEL
+          value: "mistral:7b"
+        - name: OLLAMA_TECHNICAL_MODEL
+          value: "deepseek-coder:6.7b"
+        - name: OLLAMA_REGIME_MODEL
+          value: "qwen2.5:7b"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "2Gi"
+            cpu: "1"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8037
+          initialDelaySeconds: 45
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8037
+          initialDelaySeconds: 15
+          periodSeconds: 10
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-llm-service
+  namespace: crypto-collectors
+  labels:
+    app: ollama-llm-service
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8037
+    targetPort: 8037
+    protocol: TCP
+    name: http
+  selector:
+    app: ollama-llm-service

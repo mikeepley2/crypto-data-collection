@@ -1,0 +1,43 @@
+version: "3.8"
+
+services:
+  # Ollama LLM Service
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama-server
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    restart: unless-stopped
+    # GPU support (uncomment if you have NVIDIA GPU)
+    # runtime: nvidia
+    # environment:
+    #   - NVIDIA_VISIBLE_DEVICES=all
+
+  # Ollama LLM Enhancement Service
+  ollama-llm-service:
+    build: .
+    container_name: ollama-llm-crypto
+    ports:
+      - "8037:8037"
+    environment:
+      - OLLAMA_ENDPOINT=http://ollama:11434
+      - MYSQL_HOST=host.docker.internal
+      - MYSQL_USER=news_collector
+      - MYSQL_PASSWORD=99Rules!
+      - MYSQL_DATABASE=crypto_prices
+      - OLLAMA_SENTIMENT_MODEL=llama3.2:3b
+      - OLLAMA_NARRATIVE_MODEL=mistral:7b
+      - OLLAMA_TECHNICAL_MODEL=deepseek-coder:6.7b
+      - OLLAMA_REGIME_MODEL=qwen2.5:7b
+    depends_on:
+      - ollama
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  ollama-data:

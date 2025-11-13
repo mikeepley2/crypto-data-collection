@@ -1,0 +1,75 @@
+# Production scaling and resource allocation
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-news-collector
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+      - name: collector
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-sentiment-ml
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+      - name: collector
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-technical-calculator
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+      - name: collector
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "1000m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-materialized-updater
+spec:
+  replicas: 1  # Keep single instance to avoid conflicts
+  template:
+    spec:
+      containers:
+      - name: collector
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"

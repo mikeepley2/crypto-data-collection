@@ -1,0 +1,75 @@
+# Reduce resources for staging environment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-news-collector
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+      - name: collector
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "250m"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-sentiment-ml
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+      - name: collector
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-technical-calculator
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+      - name: collector
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "400m"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-materialized-updater
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+      - name: collector
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"

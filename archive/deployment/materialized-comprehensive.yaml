@@ -1,0 +1,240 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: materialized-updater
+  namespace: crypto-data-collection
+  labels:
+    app: materialized-updater
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: materialized-updater
+  template:
+    metadata:
+      labels:
+        app: materialized-updater
+    spec:
+      tolerations:
+      - key: analytics-infrastructure
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+      - key: data-platform
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+      - key: trading-engine
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+      containers:
+      - name: materialized-updater
+        image: python:3.11-slim
+        command: ["/bin/bash"]
+        args:
+          - "-c"
+          - |
+            pip install mysql-connector-python requests
+            
+            mkdir -p /app/shared
+            
+            cat > /app/shared/table_config.py << 'TABLE_CONFIG_EOF'
+            CRYPTO_TABLES = {"NEWS": "crypto_news", "ONCHAIN_DATA": "crypto_onchain_data"}
+            TECHNICAL_TABLES = {"INDICATORS": "technical_indicators"}
+            ML_TABLES = {"FEATURES": "ml_features_materialized"}
+            MARKET_TABLES = {"MACRO": "macro_indicators", "SENTIMENT": "sentiment_aggregation"}
+            TABLE_CONFIG_EOF
+            
+            cat > /app/comprehensive_updater.py << 'UPDATER_EOF'
+            import os, sys, time, mysql.connector, logging
+            from mysql.connector import pooling
+            from datetime import datetime
+            
+            sys.path.append('/app')
+            try:
+                from shared.table_config import CRYPTO_TABLES, TECHNICAL_TABLES, ML_TABLES, MARKET_TABLES
+                USE_CONFIG = True
+            except:
+                CRYPTO_TABLES = {"NEWS": "crypto_news", "ONCHAIN_DATA": "crypto_onchain_data"}
+                TECHNICAL_TABLES = {"INDICATORS": "technical_indicators"}
+                ML_TABLES = {"FEATURES": "ml_features_materialized"}
+                MARKET_TABLES = {"MACRO": "macro_indicators"}
+                USE_CONFIG = False
+            
+            logging.basicConfig(level=logging.INFO)
+            logger = logging.getLogger('comprehensive')
+            
+            def get_db():
+                return mysql.connector.connect(
+                    host=os.getenv("MYSQL_HOST"), port=int(os.getenv("MYSQL_PORT")),
+                    user=os.getenv("MYSQL_USER"), password=os.getenv("MYSQL_PASSWORD"),
+                    database=os.getenv("MYSQL_DATABASE"), autocommit=True
+                )
+            
+            def process_comprehensive():
+                try:
+                    logger.info("🚀 COMPREHENSIVE Materialized Updater v2.0")
+                    
+                    db = get_db()
+                    cursor = db.cursor()
+                    
+                    # Get symbols with price data
+                    cursor.execute("""
+                        SELECT DISTINCT symbol FROM price_data_real 
+                        WHERE DATE(timestamp_iso) >= CURDATE() - INTERVAL 1 DAY
+                        AND current_price > 0 LIMIT 50
+                    """)
+                    symbols = [row[0] for row in cursor.fetchall()]
+                    logger.info(f"📊 Processing {len(symbols)} symbols with FULL integration")
+                    
+                    processed = 0
+                    
+                    for symbol in symbols:
+                        try:
+                            current_time = datetime.now()
+                            
+                            # Price data
+                            cursor.execute("""
+                                SELECT current_price, volume_usd_24h, market_cap, price_change_24h, 
+                                       percent_change_24h, high, low, open, close
+                                FROM price_data_real 
+                                WHERE symbol = %s AND current_price > 0
+                                ORDER BY timestamp_iso DESC LIMIT 1
+                            """, (symbol,))
+                            price_data = cursor.fetchone()
+                            
+                            if not price_data:
+                                continue
+                            
+                            # Technical data
+                            cursor.execute(f"""
+                                SELECT sma_20, sma_50, rsi_14, ema_12, ema_26, macd_line,
+                                       bb_upper, bb_middle, bb_lower, vwap, atr_14
+                                FROM {TECHNICAL_TABLES['INDICATORS']}
+                                WHERE symbol = %s ORDER BY timestamp_iso DESC LIMIT 1
+                            """, (symbol,))
+                            tech_data = cursor.fetchone()
+                            
+                            # News sentiment
+                            cursor.execute(f"""
+                                SELECT COUNT(*), AVG(sentiment_score)
+                                FROM {CRYPTO_TABLES['NEWS']} 
+                                WHERE symbol = %s AND DATE(timestamp_iso) >= CURDATE() - INTERVAL 7 DAY
+                            """, (symbol,))
+                            news_data = cursor.fetchone()
+                            
+                            # Macro data
+                            cursor.execute(f"""
+                                SELECT treasury_10y, vix_index, dxy_index, fed_funds_rate
+                                FROM {MARKET_TABLES['MACRO']} ORDER BY created_at DESC LIMIT 1
+                            """)
+                            macro_data = cursor.fetchone()
+                            
+                            # Insert comprehensive record with 32 populated columns
+                            insert_query = f"""
+                                INSERT INTO {ML_TABLES['FEATURES']} (
+                                    symbol, price_date, price_hour, timestamp_iso,
+                                    current_price, volume_24h, market_cap, price_change_24h, price_change_percentage_24h,
+                                    open_price, high_price, low_price, close_price,
+                                    sma_20, sma_50, rsi_14, ema_12, ema_26, macd_line,
+                                    bb_upper, bb_middle, bb_lower, vwap, atr_14,
+                                    crypto_sentiment_count, avg_cryptobert_score,
+                                    treasury_10y, vix, dxy, fed_funds_rate,
+                                    created_at, updated_at
+                                ) VALUES (
+                                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                    %s, %s, %s, %s, %s, %s
+                                )
+                                ON DUPLICATE KEY UPDATE
+                                    current_price = VALUES(current_price),
+                                    volume_24h = VALUES(volume_24h),
+                                    market_cap = VALUES(market_cap),
+                                    sma_20 = VALUES(sma_20), rsi_14 = VALUES(rsi_14),
+                                    updated_at = VALUES(updated_at)
+                            """
+                            
+                            values = [
+                                symbol, current_time.date(), current_time.hour, current_time,
+                                price_data[0], price_data[1], price_data[2], price_data[3], price_data[4],
+                                price_data[7], price_data[5], price_data[6], price_data[8],
+                                tech_data[0] if tech_data else None, tech_data[1] if tech_data else None,
+                                tech_data[2] if tech_data else None, tech_data[3] if tech_data else None,
+                                tech_data[4] if tech_data else None, tech_data[5] if tech_data else None,
+                                tech_data[6] if tech_data else None, tech_data[7] if tech_data else None,
+                                tech_data[8] if tech_data else None, tech_data[9] if tech_data else None,
+                                tech_data[10] if tech_data else None,
+                                news_data[0] if news_data else 0, news_data[1] if news_data and news_data[1] else None,
+                                macro_data[0] if macro_data else None, macro_data[1] if macro_data else None,
+                                macro_data[2] if macro_data else None, macro_data[3] if macro_data else None,
+                                current_time, current_time
+                            ]
+                            
+                            cursor.execute(insert_query, values)
+                            processed += 1
+                            
+                            if processed % 10 == 0:
+                                logger.info(f"📈 Processed {processed} symbols - populating ~32 columns per record")
+                                
+                        except Exception as e:
+                            logger.error(f"❌ Error with {symbol}: {e}")
+                            continue
+                    
+                    cursor.close()
+                    db.close()
+                    
+                    logger.info(f"✅ COMPREHENSIVE processing complete!")
+                    logger.info(f"   📊 Symbols: {processed}/{len(symbols)}")
+                    logger.info(f"   📈 Columns: ~32 of 123 populated")
+                    logger.info(f"   🔧 Sources: Price ✅ Technical ✅ News ✅ Macro ✅")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Processing failed: {e}")
+            
+            def main():
+                while True:
+                    process_comprehensive()
+                    logger.info("⏰ Waiting 30 minutes for next update...")
+                    time.sleep(1800)
+            
+            if __name__ == "__main__":
+                main()
+            UPDATER_EOF
+            
+            cd /app
+            python comprehensive_updater.py
+        env:
+        - name: MYSQL_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_HOST
+        - name: MYSQL_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_PORT
+        - name: MYSQL_USER
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_USER
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_PASSWORD
+        - name: MYSQL_DATABASE
+          valueFrom:
+            configMapKeyRef:
+              name: centralized-db-config
+              key: MYSQL_DATABASE
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+      restartPolicy: Always

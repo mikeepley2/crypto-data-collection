@@ -1,0 +1,299 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-crypto-news-collector
+  namespace: crypto-data-collection
+  labels:
+    app: enhanced-crypto-news-collector
+    component: data-collection
+    version: enhanced
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-crypto-news-collector
+  template:
+    metadata:
+      labels:
+        app: enhanced-crypto-news-collector
+        component: data-collection
+        version: enhanced
+    spec:
+      nodeSelector:
+        node-type: data-collection
+      tolerations:
+        - key: "data-platform"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      containers:
+        - name: enhanced-crypto-news-collector
+          image: python:3.11-slim
+          ports:
+            - containerPort: 8001
+              name: http
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              pip install mysql-connector-python requests fastapi uvicorn aiohttp feedparser
+              
+              # Create enhanced news collector
+              cat > /app/enhanced_news_collector.py << 'EOF'
+              #!/usr/bin/env python3
+              """
+              Enhanced News Collector for K8s Deployment
+              """
+              
+              import os
+              import logging
+              import time
+              import hashlib
+              import requests
+              import feedparser
+              import mysql.connector
+              from datetime import datetime
+              from typing import List, Dict, Set
+              import re
+              
+              logging.basicConfig(level=logging.INFO)
+              logger = logging.getLogger(__name__)
+              
+              class EnhancedNewsCollector:
+                  def __init__(self):
+                      self.db_config = {
+                          "host": os.getenv("MYSQL_HOST", "172.22.32.1"),
+                          "port": int(os.getenv("MYSQL_PORT", "3306")),
+                          "user": os.getenv("MYSQL_USER", "news_collector"),
+                          "password": os.getenv("MYSQL_PASSWORD", "99Rules!"),
+                          "database": os.getenv("MYSQL_DATABASE", "crypto_prices")
+                      }
+                      
+                      # News sources
+                      self.sources = [
+                          {"name": "CoinTelegraph", "url": "https://cointelegraph.com/rss"},
+                          {"name": "CryptoSlate", "url": "https://cryptoslate.com/feed/"},
+                          {"name": "Decrypt", "url": "https://decrypt.co/feed"}
+                      ]
+                      
+                      # Load crypto symbols
+                      self.crypto_symbols = self.load_symbols()
+                      
+                  def get_db_connection(self):
+                      return mysql.connector.connect(**self.db_config)
+                      
+                  def load_symbols(self) -> Set[str]:
+                      try:
+                          with self.get_db_connection() as conn:
+                              cursor = conn.cursor()
+                              cursor.execute("SELECT DISTINCT symbol FROM crypto_assets ORDER BY symbol")
+                              symbols = {row[0] for row in cursor.fetchall()}
+                              logger.info(f"Loaded {len(symbols)} crypto symbols")
+                              return symbols
+                      except Exception as e:
+                          logger.error(f"Failed to load symbols: {e}")
+                          return {'BTC', 'ETH', 'ADA', 'SOL', 'DOT', 'AVAX', 'MATIC'}
+                          
+                  def detect_crypto_mentions(self, text: str) -> List[str]:
+                      mentions = []
+                      text_upper = text.upper()
+                      
+                      for symbol in self.crypto_symbols:
+                          if re.search(r'\b' + re.escape(symbol) + r'\b', text_upper):
+                              mentions.append(symbol)
+                              
+                      return mentions
+                      
+                  def fetch_rss_feed(self, source: Dict) -> List[Dict]:
+                      try:
+                          logger.info(f"Fetching RSS from {source['name']}")
+                          
+                          headers = {'User-Agent': 'CryptoNewsCollector/1.0'}
+                          response = requests.get(source["url"], headers=headers, timeout=30)
+                          response.raise_for_status()
+                          
+                          feed = feedparser.parse(response.content)
+                          
+                          if not feed.entries:
+                              logger.warning(f"No entries from {source['name']}")
+                              return []
+                              
+                          news_items = []
+                          for entry in feed.entries[:20]:  # Limit to 20 items
+                              try:
+                                  # Parse publication date
+                                  published_at = None
+                                  if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                                      published_at = datetime(*entry.published_parsed[:6])
+                                  else:
+                                      published_at = datetime.now()
+                                      
+                                  # Extract content
+                                  content = ""
+                                  if hasattr(entry, 'summary'):
+                                      content = re.sub(r'<[^>]+>', '', entry.summary)
+                                  
+                                  title = entry.title if hasattr(entry, 'title') else 'No title'
+                                  url = entry.link if hasattr(entry, 'link') else None
+                                  
+                                  # Detect crypto mentions
+                                  full_text = f"{title} {content}"
+                                  crypto_mentions = self.detect_crypto_mentions(full_text)
+                                  
+                                  news_items.append({
+                                      "title": title,
+                                      "content": content,
+                                      "url": url,
+                                      "published_at": published_at,
+                                      "source": source["name"],
+                                      "crypto_mentions": crypto_mentions
+                                  })
+                                  
+                              except Exception as e:
+                                  logger.error(f"Error parsing entry: {e}")
+                                  continue
+                                  
+                          logger.info(f"Collected {len(news_items)} items from {source['name']}")
+                          return news_items
+                          
+                      except Exception as e:
+                          logger.error(f"Error fetching {source['name']}: {e}")
+                          return []
+                          
+                  def store_news_items(self, news_items: List[Dict]) -> int:
+                      if not news_items:
+                          return 0
+                          
+                      try:
+                          with self.get_db_connection() as conn:
+                              cursor = conn.cursor()
+                              stored_count = 0
+                              
+                              for item in news_items:
+                                  try:
+                                      # Generate URL hash for duplicate detection
+                                      url_hash = hashlib.md5(
+                                          (item.get("url", "") or f"no_url_{item['title']}").encode()
+                                      ).hexdigest()
+                                      
+                                      # Check for duplicates
+                                      cursor.execute("SELECT id FROM crypto_news WHERE url_hash = %s", (url_hash,))
+                                      if cursor.fetchone():
+                                          continue
+                                          
+                                      # Insert new item
+                                      cursor.execute("""
+                                          INSERT INTO crypto_news (
+                                              title, content, url, published_at, source, 
+                                              category, crypto_mentions, url_hash, 
+                                              created_at, updated_at
+                                          ) VALUES (
+                                              %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()
+                                          )
+                                      """, (
+                                          item["title"],
+                                          item["content"],
+                                          item["url"],
+                                          item["published_at"],
+                                          item["source"],
+                                          "crypto_news",
+                                          ",".join(item["crypto_mentions"]),
+                                          url_hash
+                                      ))
+                                      
+                                      stored_count += 1
+                                      
+                                  except Exception as e:
+                                      logger.error(f"Error storing item: {e}")
+                                      continue
+                                      
+                              conn.commit()
+                              logger.info(f"Stored {stored_count} news items")
+                              return stored_count
+                              
+                      except Exception as e:
+                          logger.error(f"Error storing news: {e}")
+                          return 0
+                          
+                  def run_collection_cycle(self):
+                      logger.info("Starting news collection cycle...")
+                      
+                      total_collected = 0
+                      total_stored = 0
+                      
+                      for source in self.sources:
+                          try:
+                              news_items = self.fetch_rss_feed(source)
+                              if news_items:
+                                  stored = self.store_news_items(news_items)
+                                  total_collected += len(news_items)
+                                  total_stored += stored
+                                  
+                              time.sleep(1)  # Rate limiting
+                              
+                          except Exception as e:
+                              logger.error(f"Error processing {source['name']}: {e}")
+                              continue
+                              
+                      logger.info(f"Collection completed: {total_collected} collected, {total_stored} stored")
+                      return {"collected": total_collected, "stored": total_stored}
+              
+              if __name__ == "__main__":
+                  collector = EnhancedNewsCollector()
+                  
+                  while True:
+                      try:
+                          collector.run_collection_cycle()
+                          time.sleep(900)  # 15 minute intervals
+                      except KeyboardInterrupt:
+                          break
+                      except Exception as e:
+                          logger.error(f"Collection error: {e}")
+                          time.sleep(300)  # 5 minute retry delay
+              EOF
+              
+              python /app/enhanced_news_collector.py
+          env:
+            - name: MYSQL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_HOST
+            - name: MYSQL_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_PORT
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-user
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-password
+            - name: MYSQL_DATABASE
+              value: "crypto_prices"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "250m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-crypto-news-service
+  namespace: crypto-data-collection
+spec:
+  selector:
+    app: enhanced-crypto-news-collector
+  ports:
+    - protocol: TCP
+      port: 8001
+      targetPort: 8001
+  type: ClusterIP

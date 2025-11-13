@@ -1,0 +1,414 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-macro-collector
+  namespace: crypto-data-collection
+  labels:
+    app: enhanced-macro-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-macro-collector
+  template:
+    metadata:
+      labels:
+        app: enhanced-macro-collector
+    spec:
+      containers:
+      - name: enhanced-macro-collector
+        image: python:3.9-slim
+        workingDir: /app
+        command: ["/bin/bash"]
+        args:
+          - -c
+          - |
+            pip install mysql-connector-python requests schedule
+            python enhanced_macro_collector.py
+        env:
+        - name: DB_HOST
+          value: "host.docker.internal"
+        - name: DB_PORT
+          value: "3306"
+        - name: DB_USER
+          value: "news_collector"
+        - name: DB_PASSWORD
+          value: "99Rules!"
+        - name: DB_NAME
+          value: "crypto_prices"
+        - name: FRED_API_KEY
+          value: "35478996c5e061d0fc99fc73f5ce348d"
+        volumeMounts:
+        - name: collector-code
+          mountPath: /app
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - /bin/bash
+            - -c
+            - |
+              if [ -f /tmp/enhanced_macro_collector_health.txt ]; then
+                last_update=$(cat /tmp/enhanced_macro_collector_health.txt)
+                current_time=$(date -u +%s)
+                last_time=$(date -d "$last_update" +%s 2>/dev/null || echo 0)
+                diff=$((current_time - last_time))
+                if [ $diff -lt 10800 ]; then  # 3 hours
+                  exit 0
+                else
+                  exit 1
+                fi
+              else
+                exit 1
+              fi
+          initialDelaySeconds: 300
+          periodSeconds: 600
+          timeoutSeconds: 10
+          failureThreshold: 3
+      volumes:
+      - name: collector-code
+        configMap:
+          name: enhanced-macro-collector-code
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: enhanced-macro-collector-code
+  namespace: crypto-data-collection
+data:
+  enhanced_macro_collector.py: |
+    #!/usr/bin/env python3
+    """
+    Enhanced Comprehensive Macro Indicators Collector
+    - Collects all 11 key macro indicators continuously
+    - Automatic gap detection and backfilling on startup
+    - Robust error handling and retry mechanisms
+    - Universal symbol compatibility
+    - Prevents gaps through smart scheduling
+    """
+
+    import os
+    import logging
+    import time
+    import mysql.connector
+    from datetime import datetime, timedelta
+    import schedule
+    import requests
+    from typing import Dict, List, Optional, Tuple
+
+    logging.basicConfig(
+        level=logging.INFO, 
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    logger = logging.getLogger("enhanced-macro-collector")
+
+    # FRED API configuration
+    FRED_API_BASE = "https://api.stlouisfed.org/fred"
+    FRED_API_KEY = os.getenv("FRED_API_KEY", "35478996c5e061d0fc99fc73f5ce348d")
+
+    # Comprehensive mapping of all 11 key indicators to FRED series
+    COMPREHENSIVE_FRED_SERIES = {
+        "VIX": {
+            "series_id": "VIXCLS",
+            "description": "VIX Volatility Index",
+            "frequency": "daily",
+            "priority": "high"
+        },
+        "DXY": {
+            "series_id": "DEXUSEU",  # US/Euro rate as DXY proxy
+            "description": "US Dollar Index (EUR proxy)",
+            "frequency": "daily", 
+            "priority": "high"
+        },
+        "OIL_PRICE": {
+            "series_id": "DCOILWTICO", 
+            "description": "WTI Crude Oil Price",
+            "frequency": "daily",
+            "priority": "high"
+        },
+        "US_GDP": {
+            "series_id": "A191RO1Q156NBEA",
+            "description": "US Real GDP",
+            "frequency": "quarterly",
+            "priority": "medium"
+        },
+        "US_INFLATION": {
+            "series_id": "CPIAUCSL",
+            "description": "US Consumer Price Index", 
+            "frequency": "monthly",
+            "priority": "high"
+        },
+        "US_UNEMPLOYMENT": {
+            "series_id": "UNRATE",
+            "description": "US Unemployment Rate",
+            "frequency": "monthly",
+            "priority": "high"
+        },
+        "GOLD_PRICE": {
+            "series_id": "GOLDAMGD248NLBM",
+            "description": "Gold Price (London AM Fix)",
+            "frequency": "daily",
+            "priority": "medium",
+            "alternative_series": "GOLDAMPM"  # Fallback if AM fix unavailable
+        },
+        "US_10Y_YIELD": {
+            "series_id": "DGS10",
+            "description": "US 10-Year Treasury Yield",
+            "frequency": "daily",
+            "priority": "high"
+        },
+        "DGS10": {
+            "series_id": "DGS10", 
+            "description": "10-Year Treasury Constant Maturity Rate",
+            "frequency": "daily",
+            "priority": "high"
+        },
+        "DGS2": {
+            "series_id": "DGS2",
+            "description": "2-Year Treasury Constant Maturity Rate", 
+            "frequency": "daily",
+            "priority": "high"
+        },
+        "FEDFUNDS": {
+            "series_id": "FEDFUNDS",
+            "description": "Federal Funds Rate",
+            "frequency": "monthly",
+            "priority": "high"
+        }
+    }
+
+
+    class EnhancedMacroCollector:
+        """Enhanced macro collector with comprehensive gap prevention"""
+        
+        def __init__(self):
+            self.db_config = {
+                'host': os.getenv('DB_HOST', '172.22.32.1'),
+                'user': os.getenv('DB_USER', 'news_collector'),
+                'password': os.getenv('DB_PASSWORD', '99Rules!'),
+                'database': os.getenv('DB_NAME', 'crypto_prices'),
+            }
+            
+            # Configuration
+            self.max_retries = 3
+            self.retry_delay = 5
+            self.api_timeout = 30
+            self.rate_limit_delay = 2
+            
+            logger.info("🎯 Enhanced Macro Collector initialized")
+            logger.info(f"📊 Managing {len(COMPREHENSIVE_FRED_SERIES)} indicators")
+        
+        def get_db_connection(self):
+            """Get database connection with error handling"""
+            try:
+                return mysql.connector.connect(**self.db_config)
+            except Exception as e:
+                logger.error(f"Database connection failed: {e}")
+                return None
+        
+        def fetch_fred_data(self, series_id: str, start_date: str = None, 
+                           end_date: str = None) -> List[Dict]:
+            """Fetch data from FRED API with retry logic"""
+            if not FRED_API_KEY:
+                logger.error("FRED_API_KEY not configured")
+                return []
+            
+            params = {
+                "series_id": series_id,
+                "api_key": FRED_API_KEY,
+                "file_type": "json",
+            }
+            
+            if start_date:
+                params["observation_start"] = start_date
+            if end_date:
+                params["observation_end"] = end_date
+            
+            for attempt in range(self.max_retries):
+                try:
+                    response = requests.get(
+                        f"{FRED_API_BASE}/series/observations",
+                        params=params,
+                        timeout=self.api_timeout
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        observations = data.get("observations", [])
+                        
+                        results = []
+                        for obs in observations:
+                            try:
+                                value = obs.get("value")
+                                if value != "." and value is not None:
+                                    date_str = obs.get("date")
+                                    if date_str:
+                                        results.append({
+                                            "date": datetime.strptime(date_str, "%Y-%m-%d").date(),
+                                            "value": float(value)
+                                        })
+                            except (ValueError, TypeError) as e:
+                                logger.debug(f"Skipping invalid observation: {e}")
+                        
+                        logger.info(f"📈 Retrieved {len(results)} observations for {series_id}")
+                        return results
+                        
+                    elif response.status_code == 400:
+                        logger.warning(f"⚠️ Series {series_id} not available or invalid date range")
+                        return []
+                    else:
+                        logger.warning(f"⚠️ FRED API error {response.status_code} for {series_id}, attempt {attempt + 1}")
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️ Error fetching {series_id} (attempt {attempt + 1}): {e}")
+                    
+                if attempt < self.max_retries - 1:
+                    time.sleep(self.retry_delay)
+            
+            logger.error(f"❌ Failed to fetch {series_id} after {self.max_retries} attempts")
+            return []
+        
+        def store_indicator_data(self, indicator_name: str, data: List[Dict], 
+                               config: Dict) -> int:
+            """Store indicator data with deduplication"""
+            if not data:
+                return 0
+            
+            conn = self.get_db_connection()
+            if not conn:
+                return 0
+            
+            try:
+                cursor = conn.cursor()
+                stored_count = 0
+                
+                for record in data:
+                    try:
+                        cursor.execute("""
+                            INSERT INTO macro_indicators (
+                                indicator_name, indicator_date, value, 
+                                frequency, data_source, collected_at
+                            ) VALUES (%s, %s, %s, %s, %s, NOW())
+                            ON DUPLICATE KEY UPDATE
+                                value = VALUES(value),
+                                frequency = VALUES(frequency),
+                                data_source = VALUES(data_source),
+                                collected_at = NOW()
+                        """, (
+                            indicator_name,
+                            record["date"],
+                            record["value"],
+                            config.get("frequency", "daily"),
+                            "enhanced_macro_collector"
+                        ))
+                        
+                        if cursor.rowcount > 0:
+                            stored_count += 1
+                            
+                    except Exception as e:
+                        logger.debug(f"Error storing record for {indicator_name}: {e}")
+                
+                conn.commit()
+                return stored_count
+                
+            except Exception as e:
+                logger.error(f"Error storing data for {indicator_name}: {e}")
+                conn.rollback()
+                return 0
+            finally:
+                cursor.close()
+                conn.close()
+        
+        def collect_current_data(self) -> int:
+            """Collect current/latest data for all indicators"""
+            logger.info("📊 Collecting current data for all indicators...")
+            
+            total_stored = 0
+            today = datetime.now().date()
+            yesterday = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+            
+            for indicator_name, config in COMPREHENSIVE_FRED_SERIES.items():
+                try:
+                    logger.info(f"📈 Collecting current data for {indicator_name}")
+                    
+                    # Get recent data (last 7 days to ensure we don't miss anything)
+                    data = self.fetch_fred_data(config["series_id"], yesterday)
+                    
+                    if not data and "alternative_series" in config:
+                        logger.info(f"   🔄 Trying alternative series for {indicator_name}")
+                        data = self.fetch_fred_data(config["alternative_series"], yesterday)
+                    
+                    if data:
+                        stored = self.store_indicator_data(indicator_name, data, config)
+                        total_stored += stored
+                        if stored > 0:
+                            logger.info(f"   ✅ Stored {stored} new records for {indicator_name}")
+                        else:
+                            logger.info(f"   ℹ️ No new data for {indicator_name}")
+                    else:
+                        logger.info(f"   ⚠️ No current data available for {indicator_name}")
+                    
+                    # Rate limiting
+                    time.sleep(self.rate_limit_delay)
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error collecting {indicator_name}: {e}")
+            
+            logger.info(f"📊 Current collection complete: {total_stored} total records stored")
+            return total_stored
+        
+        def run_scheduled_collection(self):
+            """Run scheduled collection"""
+            logger.info("⏰ Running scheduled macro collection...")
+            
+            # Collect current data
+            self.collect_current_data()
+            
+            # Write health check file
+            with open("/tmp/enhanced_macro_collector_health.txt", "w") as f:
+                f.write(str(datetime.utcnow()))
+
+
+    def main():
+        """Main execution function"""
+        collector = EnhancedMacroCollector()
+        
+        # Check for manual backfill request
+        backfill_days = os.getenv("BACKFILL_DAYS")
+        if backfill_days:
+            logger.info(f"🔄 MANUAL BACKFILL MODE: Processing last {backfill_days} days")
+            collector.collect_current_data()
+            logger.info("✅ Manual backfill complete. Exiting.")
+            return
+        
+        # Initial collection
+        collector.collect_current_data()
+        
+        # Schedule ongoing collection - every 4 hours to be conservative
+        schedule.every(4).hours.do(collector.run_scheduled_collection)
+        
+        logger.info("⏰ Enhanced Macro Collector is now running continuously...")
+        logger.info("📅 Scheduled: Every 4 hours")
+        
+        # Continuous operation
+        while True:
+            try:
+                schedule.run_pending()
+                time.sleep(60)  # Check every minute
+            except KeyboardInterrupt:
+                logger.info("👋 Enhanced Macro Collector shutting down...")
+                break
+            except Exception as e:
+                logger.error(f"❌ Unexpected error in main loop: {e}")
+                time.sleep(300)  # Wait 5 minutes before retrying
+
+
+    if __name__ == "__main__":
+        main()

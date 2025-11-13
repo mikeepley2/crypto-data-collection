@@ -1,0 +1,349 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: materialized-updater-code
+  namespace: crypto-data-collection
+data:
+  materialized_updater.py: |
+    #!/usr/bin/env python3
+    """
+    Materialized Updater with corrected SQL parameters
+    """
+
+    import os
+    import time
+    import mysql.connector
+    from mysql.connector import pooling
+    from datetime import datetime, timedelta
+    import logging
+    from decimal import Decimal
+
+    # Configure logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger('materialized-updater')
+
+    # Database connection pool
+    pool = None
+
+    def init_pool():
+        """Initialize database connection pool"""
+        global pool
+        try:
+            pool = mysql.connector.pooling.MySQLConnectionPool(
+                pool_name="materialized_pool",
+                pool_size=3,
+                pool_reset_session=True,
+                host=os.getenv("DB_HOST", "127.0.0.1"),
+                user=os.getenv("DB_USER", "news_collector"),
+                password=os.getenv("DB_PASSWORD", "99Rules!"),
+                database=os.getenv("DB_NAME", "crypto_prices"),
+                autocommit=True
+            )
+            logger.info("Database connection pool initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize connection pool: {e}")
+            raise
+
+    def get_connection():
+        """Get connection from pool"""
+        try:
+            return pool.get_connection()
+        except Exception as e:
+            logger.error(f"Failed to get connection from pool: {e}")
+            return None
+
+    def get_latest_macro_data(cursor):
+        """Get latest macro data from macro_indicators table"""
+        macro_data = {}
+        try:
+            # Map actual indicator names to materialized table columns
+            macro_mapping = {
+                'VIX': 'vix',
+                'DGS10': 'treasury_10y',  # 10-year treasury yield
+                'DXY': 'dxy',
+                'Unemployment_Rate': 'unemployment_rate',
+                'Inflation_Rate': 'inflation_rate',
+                'GOLD': 'gold_price',
+                'OIL': 'oil_price'
+            }
+            
+            for indicator_name, column_name in macro_mapping.items():
+                cursor.execute("""
+                    SELECT value, indicator_date
+                    FROM macro_indicators 
+                    WHERE indicator_name = %s
+                    AND value IS NOT NULL
+                    ORDER BY indicator_date DESC
+                    LIMIT 1
+                """, (indicator_name,))
+                
+                result = cursor.fetchone()
+                if result:
+                    macro_data[column_name] = float(result[0])  # Convert Decimal to float
+                    logger.info(f"Found {indicator_name}: {result[0]} (date: {result[1]})")
+                else:
+                    logger.warning(f"No valid data found for {indicator_name}")
+            
+            return macro_data
+        except Exception as e:
+            logger.error(f"Error getting macro data: {e}")
+            return {}
+
+    def get_technical_data_for_today(cursor, symbol):
+        """Get technical data for today's records"""
+        try:
+            # Get the most recent technical data for this symbol
+            cursor.execute("""
+                SELECT sma_20, rsi_14, macd, macd_signal, macd_histogram, 
+                       bb_upper, bb_middle, bb_lower
+                FROM price_data_real 
+                WHERE symbol = %s 
+                AND sma_20 IS NOT NULL
+                ORDER BY timestamp_iso DESC
+                LIMIT 1
+            """, (symbol,))
+            
+            result = cursor.fetchone()
+            if result:
+                return {
+                    'sma_20': float(result[0]) if result[0] else None,
+                    'rsi_14': float(result[1]) if result[1] else None,
+                    'macd_line': float(result[2]) if result[2] else None,
+                    'macd_signal': float(result[3]) if result[3] else None,
+                    'macd_histogram': float(result[4]) if result[4] else None,
+                    'bb_upper': float(result[5]) if result[5] else None,
+                    'bb_middle': float(result[6]) if result[6] else None,
+                    'bb_lower': float(result[7]) if result[7] else None
+                }
+            return {}
+        except Exception as e:
+            logger.error(f"Error getting technical data for {symbol}: {e}")
+            return {}
+
+    def get_onchain_data_for_today(cursor, symbol):
+        """Get onchain data for today's records"""
+        try:
+            # Normalize symbol (remove -USD suffix)
+            normalized_symbol = symbol.replace('-USD', '')
+            
+            # Get the most recent onchain data for this symbol
+            cursor.execute("""
+                SELECT active_addresses_24h, transaction_count_24h, exchange_net_flow_24h, price_volatility_7d
+                FROM crypto_onchain_data 
+                WHERE coin_symbol = %s 
+                AND active_addresses_24h IS NOT NULL
+                ORDER BY collection_date DESC
+                LIMIT 1
+            """, (normalized_symbol,))
+            
+            result = cursor.fetchone()
+            if result:
+                return {
+                    'active_addresses_24h': int(result[0]) if result[0] else None,
+                    'transaction_count_24h': int(result[1]) if result[1] else None,
+                    'exchange_net_flow_24h': float(result[2]) if result[2] else None,
+                    'price_volatility_7d': float(result[3]) if result[3] else None
+                }
+            return {}
+        except Exception as e:
+            logger.error(f"Error getting onchain data for {symbol}: {e}")
+            return {}
+
+    def get_sentiment_data_for_today(cursor, symbol):
+        """Get sentiment data for today's records"""
+        try:
+            # Get sentiment data using crypto_mentions
+            cursor.execute("""
+                SELECT ml_sentiment_score, published_at
+                FROM crypto_news 
+                WHERE crypto_mentions LIKE %s 
+                AND ml_sentiment_score IS NOT NULL
+                ORDER BY published_at DESC
+                LIMIT 10
+            """, (f'%{symbol.replace("-USD", "")}%',))
+            
+            results = cursor.fetchall()
+            if not results:
+                return {'avg_sentiment': None, 'sentiment_count': 0}
+            
+            # Calculate weighted average with time decay
+            weighted_sum = 0.0
+            total_weight = 0.0
+            count = 0
+            
+            for sentiment_score, published_at in results:
+                # Convert Decimal to float for calculations
+                sentiment_float = float(sentiment_score)
+                
+                # Calculate time decay (more recent = higher weight)
+                time_diff = (datetime.now() - published_at).total_seconds() / 3600  # hours
+                weight = max(0.1, 1.0 - (time_diff / 168.0))  # Decay over 7 days
+                
+                weighted_sum += sentiment_float * weight
+                total_weight += weight
+                count += 1
+            
+            if total_weight > 0:
+                avg_sentiment = weighted_sum / total_weight
+                return {'avg_sentiment': avg_sentiment, 'sentiment_count': count}
+            
+            return {'avg_sentiment': None, 'sentiment_count': 0}
+        except Exception as e:
+            logger.error(f"Error getting sentiment data for {symbol}: {e}")
+            return {'avg_sentiment': None, 'sentiment_count': 0}
+
+    def update_today_records():
+        """Update today's records with all available data"""
+        conn = get_connection()
+        if not conn:
+            logger.error("Failed to get database connection")
+            return
+        
+        try:
+            cursor = conn.cursor()
+            
+            # Get latest macro data
+            macro_data = get_latest_macro_data(cursor)
+            logger.info(f"Loaded macro data: {list(macro_data.keys())}")
+            
+            # Get today's records that need updating
+            cursor.execute("""
+                SELECT symbol, timestamp_iso, current_price, price_change_24h, 
+                       volume_usd_24h, market_cap
+                FROM price_data_real 
+                WHERE DATE(timestamp_iso) = CURDATE()
+                ORDER BY symbol, timestamp_iso
+            """)
+            
+            price_records = cursor.fetchall()
+            logger.info(f"Processing {len(price_records)} today's price records")
+            
+            # Group by symbol to get data once per symbol
+            symbols_processed = set()
+            inserts = 0
+            updates = 0
+            
+            for symbol, timestamp_iso, current_price, price_change_24h, volume_usd_24h, market_cap in price_records:
+                try:
+                    # Get price date and hour
+                    price_date = timestamp_iso.date()
+                    price_hour = timestamp_iso.hour
+                    
+                    # Get data once per symbol
+                    if symbol not in symbols_processed:
+                        tech_data = get_technical_data_for_today(cursor, symbol)
+                        onchain_data = get_onchain_data_for_today(cursor, symbol)
+                        sentiment_data = get_sentiment_data_for_today(cursor, symbol)
+                        symbols_processed.add(symbol)
+                        logger.info(f"Processed data for {symbol}: tech={len(tech_data)}, onchain={len(onchain_data)}, sentiment={sentiment_data.get('sentiment_count', 0)}")
+                    
+                    # Get close price
+                    cursor.execute("""
+                        SELECT current_price
+                        FROM price_data_real
+                        WHERE symbol = %s
+                        AND DATE(timestamp_iso) = %s
+                        ORDER BY timestamp_iso DESC
+                        LIMIT 1
+                    """, (symbol, price_date))
+                    
+                    close_result = cursor.fetchone()
+                    close_price = float(close_result[0]) if close_result and close_result[0] else float(current_price)
+                    
+                    # Use INSERT ... ON DUPLICATE KEY UPDATE with EXACTLY 35 parameters
+                    cursor.execute("""
+                        INSERT INTO ml_features_materialized
+                        (symbol, price_date, price_hour, timestamp_iso, current_price, price_change_24h, volume_24h, market_cap,
+                         avg_ml_overall_sentiment, sentiment_volume,
+                         active_addresses_24h, transaction_count_24h, exchange_net_flow_24h, price_volatility_7d,
+                         sma_20, rsi_14, macd_line, macd_signal, macd_histogram, bb_upper, bb_middle, bb_lower,
+                         vix, dxy, treasury_10y, unemployment_rate, inflation_rate, gold_price, oil_price,
+                         close_price, close,
+                         created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON DUPLICATE KEY UPDATE
+                        current_price = VALUES(current_price),
+                        price_change_24h = VALUES(price_change_24h),
+                        volume_24h = VALUES(volume_24h),
+                        market_cap = VALUES(market_cap),
+                        avg_ml_overall_sentiment = VALUES(avg_ml_overall_sentiment),
+                        sentiment_volume = VALUES(sentiment_volume),
+                        active_addresses_24h = VALUES(active_addresses_24h),
+                        transaction_count_24h = VALUES(transaction_count_24h),
+                        exchange_net_flow_24h = VALUES(exchange_net_flow_24h),
+                        price_volatility_7d = VALUES(price_volatility_7d),
+                        sma_20 = VALUES(sma_20),
+                        rsi_14 = VALUES(rsi_14),
+                        macd_line = VALUES(macd_line),
+                        macd_signal = VALUES(macd_signal),
+                        macd_histogram = VALUES(macd_histogram),
+                        bb_upper = VALUES(bb_upper),
+                        bb_middle = VALUES(bb_middle),
+                        bb_lower = VALUES(bb_lower),
+                        vix = VALUES(vix),
+                        dxy = VALUES(dxy),
+                        treasury_10y = VALUES(treasury_10y),
+                        unemployment_rate = VALUES(unemployment_rate),
+                        inflation_rate = VALUES(inflation_rate),
+                        gold_price = VALUES(gold_price),
+                        oil_price = VALUES(oil_price),
+                        close_price = VALUES(close_price),
+                        close = VALUES(close),
+                        updated_at = VALUES(updated_at)
+                    """, (
+                        symbol, price_date, price_hour, timestamp_iso, 
+                        float(current_price), float(price_change_24h) if price_change_24h else None, 
+                        float(volume_usd_24h) if volume_usd_24h else None, float(market_cap) if market_cap else None,
+                        sentiment_data.get('avg_sentiment'), sentiment_data.get('sentiment_count', 0),
+                        onchain_data.get('active_addresses_24h'), onchain_data.get('transaction_count_24h'),
+                        onchain_data.get('exchange_net_flow_24h'), onchain_data.get('price_volatility_7d'),
+                        tech_data.get('sma_20'), tech_data.get('rsi_14'), tech_data.get('macd_line'),
+                        tech_data.get('macd_signal'), tech_data.get('macd_histogram'),
+                        tech_data.get('bb_upper'), tech_data.get('bb_middle'), tech_data.get('bb_lower'),
+                        macro_data.get('vix'), macro_data.get('dxy'), macro_data.get('treasury_10y'),
+                        macro_data.get('unemployment_rate'), macro_data.get('inflation_rate'),
+                        macro_data.get('gold_price'), macro_data.get('oil_price'),
+                        close_price, close_price,  # Only 2 close_price values
+                        datetime.now(), datetime.now()  # Only 2 datetime values
+                    ))
+                    
+                    if cursor.rowcount == 1:
+                        inserts += 1
+                    elif cursor.rowcount == 2:
+                        updates += 1
+                        
+                except Exception as e:
+                    logger.error(f"Error updating {symbol} at {timestamp_iso}: {e}")
+                    continue
+            
+            logger.info(f"Inserted {inserts} new records, updated {updates} existing records")
+            
+        except Exception as e:
+            logger.error(f"Error in update_today_records: {e}")
+        finally:
+            if conn:
+                conn.close()
+
+    def main():
+        """Main function"""
+        logger.info("Starting materialized updater with CORRECTED SQL parameters")
+        
+        # Initialize connection pool
+        init_pool()
+        
+        # Run continuous updates
+        while True:
+            try:
+                logger.info("Starting today's records update cycle")
+                update_today_records()
+                logger.info("Today's records update cycle complete")
+                
+                # Wait 2 minutes before next update
+                time.sleep(120)
+                
+            except Exception as e:
+                logger.error(f"Error in main loop: {e}")
+                time.sleep(60)  # Wait 1 minute on error
+
+    if __name__ == "__main__":
+        main()

@@ -1,0 +1,281 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: crypto-data-collection
+  labels:
+    app: alertmanager
+    component: monitoring
+data:
+  alertmanager.yml: |
+    global:
+      smtp_smarthost: 'localhost:587'
+      smtp_from: 'alerts@crypto-data-collection.local'
+      smtp_auth_username: 'alerts@crypto-data-collection.local'
+      smtp_auth_password: 'password'
+
+    # Templates for alert formatting
+    templates:
+      - '/etc/alertmanager/templates/*.tmpl'
+
+    # The root route on which each condition comes in
+    route:
+      group_by: ['alertname', 'cluster', 'service']
+      group_wait: 10s
+      group_interval: 10s
+      repeat_interval: 1h
+      receiver: 'web.hook'
+      routes:
+        # Critical alerts - immediate notification
+        - match:
+            severity: critical
+          receiver: 'critical-alerts'
+          group_wait: 5s
+          repeat_interval: 30m
+          
+        # Warning alerts - less frequent
+        - match:
+            severity: warning
+          receiver: 'warning-alerts'
+          group_wait: 30s
+          repeat_interval: 2h
+          
+        # Data collection specific alerts
+        - match:
+            service: crypto-data-collection
+          receiver: 'data-collection-team'
+          group_wait: 10s
+          repeat_interval: 1h
+
+    # Inhibition rules allow to mute a set of alerts given that another alert is
+    # firing.
+    inhibit_rules:
+      # Mute any warning-level notifications if the same alert is already critical.
+      - source_match:
+          severity: 'critical'
+        target_match:
+          severity: 'warning'
+        equal: ['alertname', 'cluster', 'service']
+
+      # Mute individual service alerts if the entire cluster is down
+      - source_match:
+          alertname: 'ClusterDown'
+        target_match_re:
+          alertname: 'ServiceDown|DatabaseDown'
+        equal: ['cluster']
+
+    receivers:
+      - name: 'web.hook'
+        webhook_configs:
+          - url: 'http://localhost:5001/'
+            send_resolved: true
+
+      - name: 'critical-alerts'
+        email_configs:
+          - to: 'oncall@crypto-data-collection.local'
+            subject: '🚨 CRITICAL: {{ .GroupLabels.alertname }}'
+            body: |
+              {{ range .Alerts }}
+              Alert: {{ .Annotations.summary }}
+              Description: {{ .Annotations.description }}
+              Severity: {{ .Labels.severity }}
+              Service: {{ .Labels.service }}
+              Time: {{ .StartsAt }}
+              {{ end }}
+        slack_configs:
+          - api_url: 'YOUR_SLACK_WEBHOOK_URL'
+            channel: '#alerts-critical'
+            title: '🚨 CRITICAL ALERT'
+            text: |
+              {{ range .Alerts }}
+              *Alert:* {{ .Annotations.summary }}
+              *Description:* {{ .Annotations.description }}
+              *Severity:* {{ .Labels.severity }}
+              *Service:* {{ .Labels.service }}
+              *Time:* {{ .StartsAt }}
+              {{ end }}
+            send_resolved: true
+
+      - name: 'warning-alerts'
+        email_configs:
+          - to: 'team@crypto-data-collection.local'
+            subject: '⚠️ WARNING: {{ .GroupLabels.alertname }}'
+            body: |
+              {{ range .Alerts }}
+              Alert: {{ .Annotations.summary }}
+              Description: {{ .Annotations.description }}
+              Severity: {{ .Labels.severity }}
+              Service: {{ .Labels.service }}
+              Time: {{ .StartsAt }}
+              {{ end }}
+        slack_configs:
+          - api_url: 'YOUR_SLACK_WEBHOOK_URL'
+            channel: '#alerts-warning'
+            title: '⚠️ WARNING ALERT'
+            text: |
+              {{ range .Alerts }}
+              *Alert:* {{ .Annotations.summary }}
+              *Description:* {{ .Annotations.description }}
+              *Severity:* {{ .Labels.severity }}
+              *Service:* {{ .Labels.service }}
+              *Time:* {{ .StartsAt }}
+              {{ end }}
+            send_resolved: true
+
+      - name: 'data-collection-team'
+        email_configs:
+          - to: 'data-team@crypto-data-collection.local'
+            subject: '📊 Data Collection Alert: {{ .GroupLabels.alertname }}'
+            body: |
+              {{ range .Alerts }}
+              Alert: {{ .Annotations.summary }}
+              Description: {{ .Annotations.description }}
+              Component: {{ .Labels.component }}
+              Service: {{ .Labels.service }}
+              Time: {{ .StartsAt }}
+              
+              Runbook: https://docs.crypto-data-collection.local/runbooks/{{ .Labels.alertname }}
+              {{ end }}
+        slack_configs:
+          - api_url: 'YOUR_SLACK_WEBHOOK_URL'
+            channel: '#data-collection'
+            title: '📊 Data Collection Alert'
+            text: |
+              {{ range .Alerts }}
+              *Alert:* {{ .Annotations.summary }}
+              *Description:* {{ .Annotations.description }}
+              *Component:* {{ .Labels.component }}
+              *Service:* {{ .Labels.service }}
+              *Time:* {{ .StartsAt }}
+              *Runbook:* https://docs.crypto-data-collection.local/runbooks/{{ .Labels.alertname }}
+              {{ end }}
+            send_resolved: true
+
+  # Alert templates
+  templates:
+    crypto_alerts.tmpl: |
+      {{ define "crypto.alert.title" }}
+      [{{ .Status | toUpper }}] {{ .GroupLabels.alertname }}
+      {{ end }}
+
+      {{ define "crypto.alert.text" }}
+      {{ range .Alerts }}
+      **Alert:** {{ .Annotations.summary }}
+      **Description:** {{ .Annotations.description }}
+      **Severity:** {{ .Labels.severity }}
+      **Service:** {{ .Labels.service }}
+      **Component:** {{ .Labels.component }}
+      **Time:** {{ .StartsAt }}
+      {{ if .Annotations.runbook_url }}
+      **Runbook:** {{ .Annotations.runbook_url }}
+      {{ end }}
+      {{ end }}
+      {{ end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: crypto-data-collection
+  labels:
+    app: alertmanager
+    component: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+        component: monitoring
+    spec:
+      nodeSelector:
+        node-type: analytics # Target the analytics node
+      tolerations:
+        - key: "analytics-infrastructure"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.25.0
+          args:
+            - "--config.file=/etc/alertmanager/alertmanager.yml"
+            - "--storage.path=/alertmanager"
+            - "--web.external-url=http://localhost:9093"
+            - "--web.route-prefix=/"
+          ports:
+            - containerPort: 9093
+              name: web
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          volumeMounts:
+            - name: alertmanager-config
+              mountPath: /etc/alertmanager
+            - name: alertmanager-storage
+              mountPath: /alertmanager
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9093
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9093
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: alertmanager-config
+          configMap:
+            name: alertmanager-config
+        - name: alertmanager-storage
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: crypto-data-collection
+  labels:
+    app: alertmanager
+    component: monitoring
+spec:
+  selector:
+    app: alertmanager
+  ports:
+    - protocol: TCP
+      port: 9093
+      targetPort: 9093
+      name: web
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager-nodeport
+  namespace: crypto-data-collection
+  labels:
+    app: alertmanager
+    component: monitoring
+spec:
+  selector:
+    app: alertmanager
+  ports:
+    - protocol: TCP
+      port: 9093
+      targetPort: 9093
+      name: web
+  type: NodePort

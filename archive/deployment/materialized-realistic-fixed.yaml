@@ -1,0 +1,423 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: materialized-realistic-script
+  namespace: crypto-data-collection
+data:
+  updater.py: |
+    #!/usr/bin/env python3
+    """
+    REALISTIC Materialized Updater - Based on ACTUAL Available Data
+    Uses only verified columns from real table schemas
+    """
+    import os
+    import sys
+    import time
+    import mysql.connector
+    from mysql.connector import pooling
+    from datetime import datetime, timedelta
+    import logging
+
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger('materialized-updater-realistic')
+
+    pool = None
+
+    def init_pool():
+        global pool
+        try:
+            pool = mysql.connector.pooling.MySQLConnectionPool(
+                pool_name="materialized_realistic_pool",
+                pool_size=5,
+                pool_reset_session=True,
+                host=os.getenv("MYSQL_HOST", "mysql-service"),
+                port=int(os.getenv("MYSQL_PORT", 3306)),
+                user=os.getenv("MYSQL_USER", "news_collector"),
+                password=os.getenv("MYSQL_PASSWORD", "99Rules!"),
+                database=os.getenv("MYSQL_DATABASE", "crypto_prices"),
+                charset="utf8mb4",
+                autocommit=True
+            )
+            logger.info("✅ Database connection pool initialized - Realistic Mode")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize database pool: {e}")
+            pool = None
+
+    def get_connection():
+        try:
+            if pool:
+                return pool.get_connection()
+            else:
+                return None
+        except Exception as e:
+            logger.error(f"❌ Failed to get database connection: {e}")
+            return None
+
+    def get_comprehensive_data(symbol, date_filter="CURDATE() - INTERVAL 1 DAY"):
+        """Get comprehensive data using only verified columns"""
+        try:
+            conn = get_connection()
+            if not conn:
+                return {}
+            cursor = conn.cursor()
+            
+            # Get price data - verified columns only
+            cursor.execute(f"""
+                SELECT current_price, volume_usd_24h, market_cap, price_change_24h,
+                       high, low, close, percent_change_24h
+                FROM price_data_real 
+                WHERE symbol = %s 
+                AND DATE(timestamp_iso) >= {date_filter}
+                AND current_price > 0
+                ORDER BY timestamp_iso DESC 
+                LIMIT 1
+            """, (symbol,))
+            
+            price_data = cursor.fetchone()
+            if not price_data:
+                cursor.close()
+                conn.close()
+                return {}
+            
+            # Get technical data - verified columns only
+            try:
+                cursor.execute(f"""
+                    SELECT sma_20, sma_50, rsi_14, macd_line, macd_signal, 
+                           bb_upper, bb_middle, bb_lower, vwap
+                    FROM technical_indicators
+                    WHERE symbol = %s 
+                    AND DATE(timestamp_iso) >= {date_filter}
+                    ORDER BY timestamp_iso DESC 
+                    LIMIT 1
+                """, (symbol,))
+                tech_data = cursor.fetchone()
+            except Exception as tech_e:
+                logger.debug(f"Technical data not available for {symbol}: {tech_e}")
+                tech_data = None
+            
+            # Get sentiment data - basic verified columns
+            try:
+                cursor.execute(f"""
+                    SELECT COUNT(*) as count, AVG(sentiment_score) as avg_sentiment
+                    FROM crypto_news
+                    WHERE symbol = %s 
+                    AND DATE(timestamp_iso) >= {date_filter}
+                    AND sentiment_score IS NOT NULL
+                """, (symbol,))
+                sentiment_data = cursor.fetchone()
+                if sentiment_data[0] == 0:
+                    sentiment_data = None
+            except Exception as sent_e:
+                logger.debug(f"Sentiment data not available for {symbol}: {sent_e}")
+                sentiment_data = None
+            
+            # Get onchain data - if available
+            try:
+                normalized_symbol = symbol.replace('-USD', '').replace('USD', '')
+                cursor.execute(f"""
+                    SELECT active_addresses_24h, transaction_count_24h, 
+                           exchange_net_flow_24h, price_volatility_7d
+                    FROM crypto_onchain_data
+                    WHERE coin_symbol = %s 
+                    AND DATE(collection_date) >= {date_filter}
+                    ORDER BY collection_date DESC 
+                    LIMIT 1
+                """, (normalized_symbol,))
+                onchain_data = cursor.fetchone()
+            except Exception as on_e:
+                logger.debug(f"Onchain data not available for {symbol}: {on_e}")
+                onchain_data = None
+            
+            cursor.close()
+            conn.close()
+            
+            return {
+                'price': price_data,
+                'technical': tech_data,
+                'sentiment': sentiment_data,
+                'onchain': onchain_data
+            }
+        except Exception as e:
+            logger.error(f"❌ Data error for {symbol}: {e}")
+            return {}
+
+    def get_macro_data():
+        """Get macro data using verified indicator names"""
+        try:
+            conn = get_connection()
+            if not conn:
+                return {}
+            cursor = conn.cursor()
+            
+            macro_indicators = {
+                'VIX': 'vix',
+                'DXY': 'dxy', 
+                'TNX': 'treasury_10y',
+                'US_UNEMPLOYMENT_RATE': 'unemployment_rate',
+                'US_INFLATION_RATE': 'inflation_rate'
+            }
+            
+            macro_data = {}
+            for indicator_name, column_name in macro_indicators.items():
+                try:
+                    cursor.execute("""
+                        SELECT value FROM macro_indicators 
+                        WHERE indicator_name = %s
+                        ORDER BY indicator_date DESC
+                        LIMIT 1
+                    """, (indicator_name,))
+                    
+                    result = cursor.fetchone()
+                    if result:
+                        macro_data[column_name] = float(result[0])
+                except Exception as macro_e:
+                    logger.debug(f"Macro indicator {indicator_name} not available: {macro_e}")
+            
+            cursor.close()
+            conn.close()
+            return macro_data
+        except Exception as e:
+            logger.error(f"❌ Macro data error: {e}")
+            return {}
+
+    def process_realistic_features():
+        """Process with realistic available columns"""
+        try:
+            logger.info("🚀 Starting REALISTIC processing with verified columns only")
+            
+            # Get symbols
+            conn = get_connection()
+            if not conn:
+                logger.error("❌ No database connection")
+                return
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT DISTINCT symbol 
+                FROM price_data_real 
+                WHERE DATE(timestamp_iso) >= CURDATE() - INTERVAL 1 DAY
+                AND current_price > 0
+                ORDER BY symbol LIMIT 50
+            """)
+            symbols = [row[0] for row in cursor.fetchall()]
+            cursor.close()
+            conn.close()
+            
+            if not symbols:
+                logger.warning("⚠️ No symbols found")
+                return
+            
+            logger.info(f"📊 Processing {len(symbols)} symbols with realistic columns")
+            
+            # Get macro data once
+            macro_data = get_macro_data()
+            
+            symbols_processed = 0
+            columns_populated = 0
+            
+            for symbol in symbols:
+                try:
+                    current_time = datetime.now()
+                    
+                    # Get data for this symbol
+                    symbol_data = get_comprehensive_data(symbol)
+                    if not symbol_data or not symbol_data.get('price'):
+                        continue
+                    
+                    # Build realistic feature record
+                    feature_data = {
+                        'symbol': symbol,
+                        'price_date': current_time.date(),
+                        'price_hour': current_time.hour,
+                        'timestamp_iso': current_time,
+                    }
+                    columns_populated = 4  # Core columns
+                    
+                    # Price data
+                    if symbol_data['price']:
+                        p = symbol_data['price']
+                        feature_data.update({
+                            'current_price': p[0],
+                            'volume_24h': p[1],
+                            'market_cap': p[2],
+                            'price_change_24h': p[3],
+                            'high_price': p[4],
+                            'low_price': p[5],
+                            'close_price': p[6],
+                            'price_change_percentage_24h': p[7],
+                        })
+                        columns_populated += 8
+                    
+                    # Technical data
+                    if symbol_data.get('technical'):
+                        t = symbol_data['technical']
+                        feature_data.update({
+                            'sma_20': t[0],
+                            'sma_50': t[1], 
+                            'rsi_14': t[2],
+                            'macd_line': t[3],
+                            'macd_signal': t[4],
+                            'bb_upper': t[5],
+                            'bb_middle': t[6],
+                            'bb_lower': t[7],
+                            'vwap': t[8],
+                        })
+                        columns_populated += 9
+                    
+                    # Sentiment data
+                    if symbol_data.get('sentiment'):
+                        s = symbol_data['sentiment']
+                        feature_data.update({
+                            'crypto_sentiment_count': s[0],
+                            'avg_sentiment_score': s[1],
+                        })
+                        columns_populated += 2
+                    
+                    # Onchain data
+                    if symbol_data.get('onchain'):
+                        o = symbol_data['onchain']
+                        feature_data.update({
+                            'active_addresses_24h': o[0],
+                            'transaction_count_24h': o[1],
+                            'exchange_net_flow_24h': o[2],
+                            'price_volatility_7d': o[3],
+                        })
+                        columns_populated += 4
+                    
+                    # Macro data
+                    feature_data.update({
+                        'vix': macro_data.get('vix'),
+                        'dxy': macro_data.get('dxy'),
+                        'treasury_10y': macro_data.get('treasury_10y'),
+                        'unemployment_rate': macro_data.get('unemployment_rate'),
+                        'inflation_rate': macro_data.get('inflation_rate'),
+                    })
+                    columns_populated += 5
+                    
+                    # Timestamps
+                    feature_data.update({
+                        'created_at': current_time,
+                        'updated_at': current_time,
+                    })
+                    columns_populated += 2
+                    
+                    # Insert record
+                    conn = get_connection()
+                    if conn:
+                        cursor = conn.cursor()
+                        
+                        # Build insert with available columns
+                        cols = list(feature_data.keys())
+                        vals = list(feature_data.values())
+                        placeholders = ', '.join(['%s'] * len(vals))
+                        col_str = ', '.join(cols)
+                        
+                        update_cols = [c for c in cols if c not in ['symbol', 'price_date', 'price_hour']]
+                        update_clause = ', '.join([f"{c} = VALUES({c})" for c in update_cols])
+                        
+                        query = f"""
+                            INSERT INTO ml_features_materialized ({col_str}) 
+                            VALUES ({placeholders})
+                            ON DUPLICATE KEY UPDATE {update_clause}
+                        """
+                        
+                        cursor.execute(query, vals)
+                        cursor.close()
+                        conn.close()
+                    
+                    symbols_processed += 1
+                    
+                    if symbols_processed % 10 == 0:
+                        logger.info(f"📊 Processed {symbols_processed}/{len(symbols)} symbols (avg {columns_populated} cols)")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error processing {symbol}: {e}")
+                    continue
+            
+            logger.info(f"✅ REALISTIC processing completed:")
+            logger.info(f"   📊 Processed: {symbols_processed}/{len(symbols)} symbols")
+            logger.info(f"   📈 Average columns populated: {columns_populated}")
+            logger.info(f"   ✅ Using REAL verified data only")
+            
+        except Exception as e:
+            logger.error(f"❌ Realistic processing error: {e}")
+
+    def main():
+        logger.info("🚀 REALISTIC Materialized Updater - Verified Columns Only")
+        logger.info("📊 Processing with real available data")
+        
+        init_pool()
+        if not pool:
+            logger.error("❌ Database connection failed")
+            return
+        
+        while True:
+            try:
+                process_realistic_features()
+                logger.info("⏰ Next realistic update in 30 minutes...")
+                time.sleep(1800)  # 30 minutes
+            except KeyboardInterrupt:
+                logger.info("👋 Shutting down realistic updater")
+                break
+            except Exception as e:
+                logger.error(f"❌ Main loop error: {e}")
+                time.sleep(300)  # 5 minute retry
+
+    if __name__ == "__main__":
+        main()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: materialized-updater-realistic
+  namespace: crypto-data-collection
+  labels:
+    app: materialized-updater-realistic
+    component: ml-features
+    tier: data-processing
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: materialized-updater-realistic
+  template:
+    metadata:
+      labels:
+        app: materialized-updater-realistic
+        component: ml-features
+    spec:
+      containers:
+      - name: materialized-updater-realistic
+        image: python:3.11-slim
+        command: ["sh", "-c"]
+        args:
+        - |
+          pip install mysql-connector-python &&
+          python /app/updater.py
+        env:
+        - name: MYSQL_HOST
+          value: "mysql-service"
+        - name: MYSQL_PORT
+          value: "3306"
+        - name: MYSQL_USER
+          value: "news_collector"
+        - name: MYSQL_PASSWORD
+          value: "99Rules!"
+        - name: MYSQL_DATABASE
+          value: "crypto_prices"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+        imagePullPolicy: Always
+        volumeMounts:
+        - name: script-volume
+          mountPath: /app
+      volumes:
+      - name: script-volume
+        configMap:
+          name: materialized-realistic-script
+      restartPolicy: Always

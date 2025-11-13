@@ -1,0 +1,188 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: materialized-updater
+  namespace: crypto-data-collection
+  labels:
+    app: materialized-updater
+    component: data-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: materialized-updater
+  template:
+    metadata:
+      labels:
+        app: materialized-updater
+        component: data-collector
+    spec:
+      tolerations:
+        - key: data-platform
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      containers:
+        - name: materialized-updater
+          image: python:3.11-slim
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              pip install fastapi uvicorn mysql-connector-python requests
+
+              # Create the materialized updater service
+              cat > materialized_updater.py << 'EOF'
+              import mysql.connector
+              import logging
+              import time
+              import os
+              from datetime import datetime, timedelta
+              from fastapi import FastAPI
+              from fastapi.responses import JSONResponse
+              import uvicorn
+
+              # Set up logging
+              logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+              logger = logging.getLogger(__name__)
+
+              app = FastAPI(title="Materialized Updater", version="1.0.0")
+
+              def get_db_connection():
+                  """Get database connection using environment variables"""
+                  config = {
+                      "host": os.getenv("MYSQL_HOST", "host.docker.internal"),
+                      "user": os.getenv("MYSQL_USER", "news_collector"),
+                      "password": os.getenv("MYSQL_PASSWORD", "99Rules!"),
+                      "database": os.getenv("MYSQL_DATABASE", "crypto_prices"),
+                      "charset": "utf8mb4"
+                  }
+                  return mysql.connector.connect(**config)
+
+              def load_symbols_from_db():
+                  """Load all active coin symbols from the crypto_assets table."""
+                  symbols = []
+                  try:
+                      conn = get_db_connection()
+                      cursor = conn.cursor(dictionary=True)
+                      cursor.execute("SELECT symbol FROM crypto_assets WHERE is_active=1")
+                      symbols = [row['symbol'] for row in cursor.fetchall()]
+                      cursor.close()
+                      conn.close()
+                      logger.info(f"✅ Loaded {len(symbols)} symbols from crypto_assets table.")
+                  except Exception as e:
+                      logger.error(f"❌ Error loading symbols from crypto_assets: {e}")
+                  return symbols
+
+              def update_materialized_table():
+                  """Update the materialized table with recent price data"""
+                  try:
+                      conn = get_db_connection()
+                      cursor = conn.cursor()
+                      
+                      # Get recent price data that hasn't been processed yet
+                      query = """
+                      INSERT INTO ml_features_materialized 
+                      (symbol, timestamp_iso, current_price, price_change_24h, volume_24h, market_cap)
+                      SELECT 
+                          symbol,
+                          timestamp_iso,
+                          current_price,
+                          price_change_24h,
+                          total_volume as volume_24h,
+                          market_cap
+                      FROM price_data_real pdr
+                      WHERE pdr.timestamp_iso > DATE_SUB(NOW(), INTERVAL 1 HOUR)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM ml_features_materialized mlf 
+                          WHERE mlf.symbol = pdr.symbol 
+                          AND mlf.timestamp_iso = pdr.timestamp_iso
+                      )
+                      """
+                      
+                      cursor.execute(query)
+                      rows_affected = cursor.rowcount
+                      conn.commit()
+                      cursor.close()
+                      conn.close()
+                      
+                      logger.info(f"✅ Updated materialized table with {rows_affected} new records")
+                      return rows_affected
+                      
+                  except Exception as e:
+                      logger.error(f"❌ Error updating materialized table: {e}")
+                      return 0
+
+              @app.get("/health")
+              def health_check():
+                  return {"status": "healthy", "service": "materialized-updater"}
+
+              @app.post("/update")
+              def update_materialized():
+                  try:
+                      count = update_materialized_table()
+                      return {"status": "success", "records_updated": count}
+                  except Exception as e:
+                      logger.error(f"Update error: {e}")
+                      return {"status": "error", "message": str(e)}
+
+              @app.get("/symbols")
+              def get_symbols():
+                  symbols = load_symbols_from_db()
+                  return {"symbols": symbols, "count": len(symbols)}
+
+              @app.get("/")
+              def root():
+                  return {"message": "Materialized Updater Service", "status": "running"}
+
+              if __name__ == "__main__":
+                  logger.info("🚀 Starting Materialized Updater Service")
+                  uvicorn.run(app, host="0.0.0.0", port=8000)
+              EOF
+
+              # Start the service
+              python materialized_updater.py
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: MYSQL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_HOST
+            - name: MYSQL_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_PORT
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-user
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: centralized-db-secrets
+                  key: mysql-password
+            - name: MYSQL_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: centralized-db-config
+                  key: MYSQL_DATABASE
+          resources:
+            limits:
+              cpu: 200m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          imagePullPolicy: IfNotPresent
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30

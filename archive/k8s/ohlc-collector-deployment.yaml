@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ohlc-collector
+  namespace: crypto-data-collection
+  labels:
+    app: ohlc-collector
+    component: data-collection
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ohlc-collector
+  template:
+    metadata:
+      labels:
+        app: ohlc-collector
+    spec:
+      containers:
+      - name: ohlc-collector
+        image: crypto-data-collection/ohlc-collector:latest
+        ports:
+        - containerPort: 8002
+        env:
+        # Database configuration from ConfigMap
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: database-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: database-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: database-config
+              key: DB_NAME
+        # Database secrets
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: database-secrets
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-secrets
+              key: DB_PASSWORD
+        # API configuration
+        - name: COINGECKO_BASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: database-config
+              key: COINGECKO_BASE_URL
+        - name: COINGECKO_PREMIUM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: database-secrets
+              key: COINGECKO_PREMIUM_API_KEY
+        # Collection configuration
+        - name: COLLECTION_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: database-config
+              key: COLLECTION_INTERVAL
+        - name: BATCH_SIZE
+          valueFrom:
+            configMapKeyRef:
+              name: database-config
+              key: BATCH_SIZE
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: database-config
+              key: LOG_LEVEL
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ohlc-collector-service
+  namespace: crypto-data-collection
+spec:
+  selector:
+    app: ohlc-collector
+  ports:
+  - protocol: TCP
+    port: 8002
+    targetPort: 8002
+  type: ClusterIP
