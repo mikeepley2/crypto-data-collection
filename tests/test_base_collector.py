@@ -19,7 +19,7 @@ import os
 from contextlib import asynccontextmanager
 
 # Import the base collector and components
-from templates.collector_template.base_collector_template import (
+from base_collector_template import (
     BaseCollector, CollectorConfig, HealthResponse, ReadinessResponse, 
     DataQualityReport, PerformanceMetrics, CircuitBreaker, RateLimiter
 )

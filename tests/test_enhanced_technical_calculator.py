@@ -10,8 +10,8 @@ from unittest.mock import Mock, patch, AsyncMock
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 
-from services.enhanced_technical_calculator_template import (
-    EnhancedTechnicalCalculatorCollector,
+from enhanced_technical_calculator_template import (
+    EnhancedTechnicalCalculator,
     TechnicalCalculatorConfig
 )
 from tests.test_base_collector import BaseCollectorTestCase
@@ -49,7 +49,7 @@ class TestTechnicalCalculatorConfig:
         assert config.sma_periods == [10, 20, 50, 200]
         assert config.ema_periods == [12, 26]
 
-class TestEnhancedTechnicalCalculatorCollector(BaseCollectorTestCase):
+class TestEnhancedTechnicalCalculator(BaseCollectorTestCase):
     """Test Enhanced Technical Calculator Collector functionality"""
     
     @pytest.fixture
@@ -62,7 +62,7 @@ class TestEnhancedTechnicalCalculatorCollector(BaseCollectorTestCase):
             'DB_NAME': 'test_db',
             'SERVICE_NAME': 'enhanced-technical-calculator'
         }):
-            return EnhancedTechnicalCalculatorCollector()
+            return EnhancedTechnicalCalculator()
     
     @pytest.fixture
     def sample_price_data(self):
@@ -414,7 +414,7 @@ class TestTechnicalIndicatorMath:
         prices = pd.Series([10, 12, 14, 16, 18])
         period = 3
         
-        collector = EnhancedTechnicalCalculatorCollector()
+        collector = EnhancedTechnicalCalculator()
         sma = collector._calculate_sma(prices, period)
         
         # Manual calculation for period 3
@@ -428,7 +428,7 @@ class TestTechnicalIndicatorMath:
     
     def test_rsi_boundary_conditions(self):
         """Test RSI boundary conditions"""
-        collector = EnhancedTechnicalCalculatorCollector()
+        collector = EnhancedTechnicalCalculator()
         
         # All prices increasing (should approach 100)
         increasing_prices = pd.Series(range(1, 101))  # 1 to 100
@@ -447,7 +447,7 @@ class TestTechnicalIndicatorMath:
     
     def test_bollinger_bands_properties(self):
         """Test Bollinger Bands mathematical properties"""
-        collector = EnhancedTechnicalCalculatorCollector()
+        collector = EnhancedTechnicalCalculator()
         
         # Create sample data
         np.random.seed(42)  # For reproducible results
@@ -466,7 +466,7 @@ class TestPerformanceOptimizations:
     @pytest.mark.asyncio
     async def test_large_dataset_handling(self):
         """Test handling of large datasets"""
-        collector = EnhancedTechnicalCalculatorCollector()
+        collector = EnhancedTechnicalCalculator()
         
         # Large dataset
         large_df = pd.DataFrame({
@@ -486,7 +486,7 @@ class TestPerformanceOptimizations:
     
     def test_edge_case_insufficient_data(self):
         """Test edge case with insufficient data"""
-        collector = EnhancedTechnicalCalculatorCollector()
+        collector = EnhancedTechnicalCalculator()
         
         # Very small dataset
         small_df = pd.DataFrame({

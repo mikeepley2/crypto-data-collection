@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-materialized-updater
+  namespace: crypto-data-collection
+  labels:
+    app: enhanced-materialized-updater
+    component: data-processing
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-materialized-updater
+  template:
+    metadata:
+      labels:
+        app: enhanced-materialized-updater
+        component: data-processing
+    spec:
+      tolerations:
+      - key: "data-platform"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      containers:
+      - name: materialized-updater
+        image: mikeepley2/crypto-enhanced-materialized-updater:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: MYSQL_HOST
+          value: "host.docker.internal"
+        - name: MYSQL_PORT
+          value: "3306"
+        - name: MYSQL_USER
+          value: "news_collector"
+        - name: MYSQL_PASSWORD
+          value: "99Rules!"
+        - name: MYSQL_DATABASE
+          value: "crypto_prices"
+        - name: PYTHONPATH
+          value: "/app"
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        volumeMounts:
+        - name: app-code
+          mountPath: /app
+        command:
+        - /bin/bash
+        - -c
+        - |
+          cd /app/src/docker/materialized_updater
+          pip install --no-cache-dir -r requirements.txt
+          python -m uvicorn realtime_materialized_updater:app --host 0.0.0.0 --port 8000
+      volumes:
+      - name: app-code
+        hostPath:
+          path: /mnt/e/git/crypto-data-collection
+          type: DirectoryOrCreate
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: materialized-updater
+  namespace: crypto-data-collection
+spec:
+  selector:
+    app: enhanced-materialized-updater
+  ports:
+  - port: 8000
+    targetPort: 8000
+  type: ClusterIP

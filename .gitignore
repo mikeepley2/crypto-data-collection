@@ -84,3 +84,6 @@ datasets/
 tmp/
 temp/
 *.tmp
+
+# Test env
+test-env/

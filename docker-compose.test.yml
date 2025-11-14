@@ -1,0 +1,249 @@
+services:
+  # Test Database - MySQL to match production
+  test-mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: test_root_password
+      MYSQL_DATABASE: crypto_prices_test
+      MYSQL_USER: test_user
+      MYSQL_PASSWORD: test_password
+    ports:
+      - "3307:3306"
+    volumes:
+      - test_mysql_data:/var/lib/mysql
+      - ./tests/fixtures/test-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./tests/fixtures/test-data.sql:/docker-entrypoint-initdb.d/02-data.sql
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 5s
+      retries: 10
+      interval: 10s
+
+  # Test Redis for caching
+  test-redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # API Rate Limiting Proxy (nginx for test rate limiting)
+  api-proxy:
+    image: nginx:alpine
+    volumes:
+      - ./tests/configs/nginx.conf:/etc/nginx/nginx.conf
+    ports:
+      - "8090:80"
+    depends_on:
+      - test-mysql
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Enhanced Onchain Collector Test - Using existing K8s Dockerfile
+  onchain-collector-test:
+    build:
+      context: .
+      dockerfile: build/docker/Dockerfile.enhanced-onchain-collector
+    environment:
+      - ENVIRONMENT=test
+      - MYSQL_HOST=test-mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=test_user
+      - MYSQL_PASSWORD=test_password
+      - MYSQL_DATABASE=crypto_prices_test
+      - REDIS_HOST=test-redis
+      - REDIS_PORT=6379
+      - COINGECKO_API_KEY=CG-94NCcVD2euxaGTZe94bS2oYz
+      - DEFILLAMA_RATE_LIMIT=0.5
+      - COLLECTION_INTERVAL=60
+      - RATE_LIMIT_DELAY=0.5
+      - LOG_LEVEL=DEBUG
+      - SERVICE_NAME=onchain-collector-test
+    depends_on:
+      test-mysql:
+        condition: service_healthy
+      test-redis:
+        condition: service_healthy
+    volumes:
+      - ./tests:/app/tests
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # News Collector Test - Using existing K8s Dockerfile  
+  news-collector-test:
+    build:
+      context: .
+      dockerfile: build/docker/Dockerfile.enhanced-news-collector
+    environment:
+      - ENVIRONMENT=test
+      - MYSQL_HOST=test-mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=test_user
+      - MYSQL_PASSWORD=test_password
+      - MYSQL_DATABASE=crypto_prices_test
+      - REDIS_HOST=test-redis
+      - REDIS_PORT=6379
+      - GUARDIAN_API_KEY=test_guardian_key
+      - COLLECTION_INTERVAL=120
+      - LOG_LEVEL=DEBUG
+      - SERVICE_NAME=news-collector-test
+    depends_on:
+      test-mysql:
+        condition: service_healthy
+      test-redis:
+        condition: service_healthy
+    ports:
+      - "8001:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Technical Calculator Test - Using existing K8s Dockerfile
+  technical-calculator-test:
+    build:
+      context: .
+      dockerfile: build/docker/Dockerfile.enhanced-technical-calculator
+    environment:
+      - ENVIRONMENT=test
+      - MYSQL_HOST=test-mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=test_user
+      - MYSQL_PASSWORD=test_password
+      - MYSQL_DATABASE=crypto_prices_test
+      - REDIS_HOST=test-redis
+      - REDIS_PORT=6379
+      - CALCULATION_INTERVAL=60
+      - LOG_LEVEL=DEBUG
+      - SERVICE_NAME=technical-calculator-test
+    depends_on:
+      test-mysql:
+        condition: service_healthy
+      test-redis:
+        condition: service_healthy
+    ports:
+      - "8002:8082"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Sentiment ML Test - Using existing K8s Dockerfile
+  sentiment-ml-test:
+    build:
+      context: .
+      dockerfile: build/docker/Dockerfile.enhanced-sentiment-ml
+    environment:
+      - ENVIRONMENT=test
+      - MYSQL_HOST=test-mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=test_user
+      - MYSQL_PASSWORD=test_password
+      - MYSQL_DATABASE=crypto_prices_test
+      - REDIS_HOST=test-redis
+      - REDIS_PORT=6379
+      - ML_MODEL_PATH=/app/models/sentiment_model.pkl
+      - LOG_LEVEL=DEBUG
+      - SERVICE_NAME=sentiment-ml-test
+    depends_on:
+      test-mysql:
+        condition: service_healthy
+      test-redis:
+        condition: service_healthy
+    ports:
+      - "8003:8081"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Materialized Updater Test - Using existing K8s Dockerfile
+  materialized-updater-test:
+    build:
+      context: .
+      dockerfile: build/docker/Dockerfile.enhanced-materialized-updater
+    environment:
+      - ENVIRONMENT=test
+      - MYSQL_HOST=test-mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=test_user
+      - MYSQL_PASSWORD=test_password
+      - MYSQL_DATABASE=crypto_prices_test
+      - REDIS_HOST=test-redis
+      - REDIS_PORT=6379
+      - UPDATE_INTERVAL=300
+      - LOG_LEVEL=DEBUG
+      - SERVICE_NAME=materialized-updater-test
+    depends_on:
+      test-mysql:
+        condition: service_healthy
+      test-redis:
+        condition: service_healthy
+    ports:
+      - "8004:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Test Runner Container
+  test-runner:
+    build:
+      context: .
+      dockerfile: tests/Dockerfile.test-runner
+    environment:
+      - ENVIRONMENT=test
+      - MYSQL_HOST=test-mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=test_user
+      - MYSQL_PASSWORD=test_password
+      - MYSQL_DATABASE=crypto_prices_test
+      - REDIS_HOST=test-redis
+      - COINGECKO_API_KEY=CG-94NCcVD2euxaGTZe94bS2oYz
+      - FRED_API_KEY=35478996c5e061d0fc99fc73f5ce348d
+      - GUARDIAN_API_KEY=test_guardian_key
+      - PYTHONPATH=/app
+    depends_on:
+      test-mysql:
+        condition: service_healthy
+      test-redis:
+        condition: service_healthy
+      onchain-collector-test:
+        condition: service_started
+      news-collector-test:
+        condition: service_started
+      technical-calculator-test:
+        condition: service_started
+      sentiment-ml-test:
+        condition: service_started
+      materialized-updater-test:
+        condition: service_started
+    volumes:
+      - .:/app
+      - test_results:/app/test-results
+    working_dir: /app
+    command: ["pytest", "tests/", "-v", "--junitxml=/app/test-results/results.xml", "--cov=services", "--cov-report=html:/app/test-results/coverage"]
+
+volumes:
+  test_mysql_data:
+  test_results:
+
+networks:
+  default:
+    name: crypto-test-network

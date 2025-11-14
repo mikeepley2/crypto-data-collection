@@ -11,7 +11,7 @@ import feedparser
 import hashlib
 from typing import List, Dict
 
-from services.enhanced_news_collector_template import (
+from enhanced_news_collector_template import (
     EnhancedNewsCollector, 
     EnhancedNewsCollectorConfig
 )

@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from datetime import datetime, timezone
 from typing import List, Dict
 
-from services.enhanced_sentiment_ml_template import (
+from enhanced_sentiment_ml_template import (
     EnhancedMLSentimentCollector,
     MLSentimentCollectorConfig
 )

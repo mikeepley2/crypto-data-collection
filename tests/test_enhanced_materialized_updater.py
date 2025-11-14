@@ -9,9 +9,8 @@ from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List
 
-from services.enhanced_materialized_updater_template import (
-    EnhancedMaterializedUpdaterCollector,
-    MaterializedUpdaterConfig
+from enhanced_materialized_updater_template import (
+    EnhancedMaterializedTableUpdater,
 )
 from tests.test_base_collector import BaseCollectorTestCase
 
@@ -45,7 +44,7 @@ class TestMaterializedUpdaterConfig:
         assert config.refresh_concurrency == 3
         assert config.view_dependencies == {}
 
-class TestEnhancedMaterializedUpdaterCollector(BaseCollectorTestCase):
+class TestEnhancedMaterializedUpdater(BaseCollectorTestCase):
     """Test Enhanced Materialized Updater Collector functionality"""
     
     @pytest.fixture
@@ -58,7 +57,7 @@ class TestEnhancedMaterializedUpdaterCollector(BaseCollectorTestCase):
             'DB_NAME': 'test_db',
             'SERVICE_NAME': 'enhanced-materialized-updater'
         }):
-            return EnhancedMaterializedUpdaterCollector()
+            return EnhancedMaterializedTableUpdater()
     
     @pytest.fixture
     def mock_materialized_views(self):
@@ -403,7 +402,7 @@ class TestViewRefreshStrategies:
     @pytest.fixture
     def updater_collector(self):
         """Create collector for strategy testing"""
-        return EnhancedMaterializedUpdaterCollector()
+        return EnhancedMaterializedTableUpdater()
     
     def test_refresh_strategy_full(self, updater_collector):
         """Test full refresh strategy"""
@@ -440,7 +439,7 @@ class TestPerformanceMonitoring:
     @pytest.fixture
     def updater_collector(self):
         """Create collector for performance testing"""
-        return EnhancedMaterializedUpdaterCollector()
+        return EnhancedMaterializedTableUpdater()
     
     @pytest.mark.asyncio
     async def test_view_refresh_performance_tracking(self, updater_collector, mock_database):
@@ -484,7 +483,7 @@ class TestConcurrencyAndLocking:
     @pytest.fixture
     def updater_collector(self):
         """Create collector for concurrency testing"""
-        return EnhancedMaterializedUpdaterCollector()
+        return EnhancedMaterializedTableUpdater()
     
     @pytest.mark.asyncio
     async def test_view_refresh_locking(self, updater_collector, mock_database):

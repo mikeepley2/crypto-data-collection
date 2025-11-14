@@ -5,7 +5,7 @@
 echo "🔍 Crypto Data Collection Service Health Check"
 echo "=============================================="
 
-NAMESPACE="crypto-collectors"
+NAMESPACE="crypto-data-collection"
 
 # Function to check deployment health
 check_deployment_health() {
