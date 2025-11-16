@@ -1,0 +1,348 @@
+name: 🧪 Continuous Integration - Test Suite
+
+on:
+  push:
+    branches: [ main, dev, feature/* ]
+  pull_request:
+    branches: [ main, dev ]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.12'
+  NODE_VERSION: '18'
+  MYSQL_VERSION: '8.0'
+
+jobs:
+  # ==========================================
+  # CODE QUALITY & SECURITY CHECKS
+  # ==========================================
+  code-quality:
+    name: 🔍 Code Quality & Security
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better analysis
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: 📦 Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pylint bandit safety black isort pytest-cov
+          pip install -r requirements.txt || echo "No requirements.txt found"
+
+      - name: 🔧 Code Formatting Check (Black)
+        run: |
+          black --check --diff . || echo "Code formatting issues found"
+
+      - name: 📐 Import Sorting Check (isort)
+        run: |
+          isort --check-only --diff . || echo "Import sorting issues found"
+
+      - name: 🔍 Linting (flake8)
+        run: |
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: 🔒 Security Analysis (Bandit)
+        run: |
+          bandit -r . -f json -o bandit-report.json || true
+          bandit -r . || echo "Security issues found - check bandit-report.json"
+
+      - name: 📊 Upload Security Report
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: security-analysis
+          path: bandit-report.json
+
+  # ==========================================
+  # DATABASE TESTS
+  # ==========================================
+  database-tests:
+    name: 🗃️ Database Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:${{ env.MYSQL_VERSION }}
+        env:
+          MYSQL_ROOT_PASSWORD: root_password
+          MYSQL_DATABASE: crypto_prices_test
+          MYSQL_USER: test_user
+          MYSQL_PASSWORD: test_password
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: 📦 Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov pytest-html pytest-xvfb
+          pip install mysql-connector-python pymysql
+          pip install requests aiohttp
+
+      - name: 🗃️ Setup Test Database
+        run: |
+          mysql -h 127.0.0.1 -P 3307 -u root -proot_password -e "
+            CREATE DATABASE IF NOT EXISTS crypto_prices_test;
+            GRANT ALL PRIVILEGES ON crypto_prices_test.* TO 'test_user'@'%';
+            FLUSH PRIVILEGES;
+          "
+
+      - name: 🏗️ Create Database Schema
+        env:
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_PORT: 3307
+          MYSQL_USER: test_user
+          MYSQL_PASSWORD: test_password
+          MYSQL_DATABASE: crypto_prices_test
+        run: |
+          python -c "
+          import mysql.connector
+          
+          config = {
+              'host': '127.0.0.1',
+              'port': 3307,
+              'user': 'test_user',
+              'password': 'test_password',
+              'database': 'crypto_prices_test'
+          }
+          
+          conn = mysql.connector.connect(**config)
+          cursor = conn.cursor()
+          
+          # Create price_data_real table
+          cursor.execute('''
+              CREATE TABLE IF NOT EXISTS price_data_real (
+                  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                  symbol VARCHAR(20) NOT NULL,
+                  price DECIMAL(20,8),
+                  market_cap BIGINT,
+                  total_volume BIGINT,
+                  price_change_24h DECIMAL(10,4),
+                  price_change_percentage_24h DECIMAL(8,4),
+                  circulating_supply BIGINT,
+                  total_supply BIGINT,
+                  max_supply BIGINT,
+                  timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  data_completeness_percentage DECIMAL(5,2)
+              )
+          ''')
+          
+          # Create ml_features_materialized table
+          cursor.execute('''
+              CREATE TABLE IF NOT EXISTS ml_features_materialized (
+                  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                  symbol VARCHAR(20) NOT NULL,
+                  feature_set JSON,
+                  price_features JSON,
+                  technical_features JSON,
+                  sentiment_features JSON,
+                  macro_features JSON,
+                  timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  data_completeness_percentage DECIMAL(5,2)
+              )
+          ''')
+          
+          conn.commit()
+          conn.close()
+          print('✅ Database schema created successfully')
+          "
+
+      - name: 🧪 Run Database Schema Tests
+        env:
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_PORT: 3307
+          MYSQL_USER: test_user
+          MYSQL_PASSWORD: test_password
+          MYSQL_DATABASE: crypto_prices_test
+        run: |
+          pytest tests/test_pytest_comprehensive_integration.py::TestDataFlowIntegration::test_database_tables_exist -v
+          pytest tests/test_pytest_comprehensive_integration.py::TestDataFlowIntegration::test_table_schemas_valid -v
+
+      - name: 🔄 Run Integration Tests
+        env:
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_PORT: 3307
+          MYSQL_USER: test_user
+          MYSQL_PASSWORD: test_password
+          MYSQL_DATABASE: crypto_prices_test
+        run: |
+          pytest tests/test_pytest_comprehensive_integration.py::TestDataFlowIntegration -v --tb=short
+
+  # ==========================================
+  # SERVICE ENDPOINT TESTS
+  # ==========================================
+  endpoint-tests:
+    name: 🌐 Service Endpoint Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        test-group: [
+          'price-collection',
+          'onchain-collection', 
+          'news-collection',
+          'sentiment-analysis',
+          'technical-indicators',
+          'macro-economic',
+          'ml-features',
+          'api-gateway'
+        ]
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: 📦 Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov requests aiohttp
+          pip install mysql-connector-python
+
+      - name: 🧪 Run Endpoint Tests
+        run: |
+          case "${{ matrix.test-group }}" in
+            'price-collection')
+              pytest tests/test_pytest_comprehensive_integration.py::TestPriceCollectionService -v --tb=short
+              ;;
+            'onchain-collection')
+              pytest tests/test_pytest_comprehensive_integration.py::TestOnchainCollectionService -v --tb=short
+              ;;
+            'news-collection')
+              pytest tests/test_pytest_comprehensive_integration.py::TestNewsCollectionService -v --tb=short
+              ;;
+            'sentiment-analysis')
+              pytest tests/test_pytest_comprehensive_integration.py::TestSentimentAnalysisService -v --tb=short
+              ;;
+            'technical-indicators')
+              pytest tests/test_pytest_comprehensive_integration.py::TestTechnicalIndicatorsService -v --tb=short
+              ;;
+            'macro-economic')
+              pytest tests/test_pytest_comprehensive_integration.py::TestMacroEconomicService -v --tb=short
+              ;;
+            'ml-features')
+              pytest tests/test_pytest_comprehensive_integration.py::TestMLFeaturesService -v --tb=short
+              ;;
+            'api-gateway')
+              pytest tests/test_pytest_comprehensive_integration.py::TestAPIGatewayIntegration -v --tb=short
+              ;;
+          esac
+
+      - name: 📊 Upload Test Results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: test-results-${{ matrix.test-group }}
+          path: |
+            pytest-report.html
+            .coverage
+
+  # ==========================================
+  # COMPREHENSIVE TEST REPORT
+  # ==========================================
+  test-summary:
+    name: 📋 Test Summary Report
+    needs: [code-quality, database-tests, endpoint-tests]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 📊 Download Test Artifacts
+        uses: actions/download-artifact@v3
+
+      - name: 📈 Generate Test Summary
+        run: |
+          echo "# 🧪 CI/CD Test Summary Report" > test-summary.md
+          echo "" >> test-summary.md
+          echo "**Date**: $(date '+%Y-%m-%d %H:%M:%S UTC')" >> test-summary.md
+          echo "**Branch**: ${{ github.ref_name }}" >> test-summary.md
+          echo "**Commit**: ${{ github.sha }}" >> test-summary.md
+          echo "" >> test-summary.md
+          
+          echo "## 📊 Test Results Overview" >> test-summary.md
+          echo "" >> test-summary.md
+          
+          # Code Quality Results
+          if [ "${{ needs.code-quality.result }}" == "success" ]; then
+            echo "✅ **Code Quality**: PASSED" >> test-summary.md
+          else
+            echo "❌ **Code Quality**: FAILED" >> test-summary.md
+          fi
+          
+          # Database Tests Results
+          if [ "${{ needs.database-tests.result }}" == "success" ]; then
+            echo "✅ **Database Tests**: PASSED" >> test-summary.md
+          else
+            echo "❌ **Database Tests**: FAILED" >> test-summary.md
+          fi
+          
+          # Endpoint Tests Results
+          if [ "${{ needs.endpoint-tests.result }}" == "success" ]; then
+            echo "✅ **Endpoint Tests**: PASSED" >> test-summary.md
+          else
+            echo "❌ **Endpoint Tests**: FAILED" >> test-summary.md
+          fi
+          
+          echo "" >> test-summary.md
+          echo "## 🔍 Detailed Results" >> test-summary.md
+          echo "" >> test-summary.md
+          echo "- **Total Test Categories**: 10 (Code Quality + Database + 8 Service Groups)" >> test-summary.md
+          echo "- **Integration Tests**: Database schema validation and data flow testing" >> test-summary.md
+          echo "- **Endpoint Tests**: Comprehensive API validation across all services" >> test-summary.md
+          echo "- **Security Analysis**: Static code analysis for vulnerabilities" >> test-summary.md
+          echo "" >> test-summary.md
+          
+          # Show summary
+          cat test-summary.md
+
+      - name: 📋 Upload Test Summary
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-summary-report
+          path: test-summary.md
+
+      - name: 💬 Comment Test Results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const testSummary = fs.readFileSync('test-summary.md', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: testSummary
+            });

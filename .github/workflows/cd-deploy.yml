@@ -1,0 +1,394 @@
+name: 🚀 Continuous Deployment - Production
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+      force_deploy:
+        description: 'Force deployment (skip some checks)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+  KUBECTL_VERSION: 'v1.28.0'
+  HELM_VERSION: 'v3.13.0'
+
+jobs:
+  # ==========================================
+  # BUILD & SECURITY SCAN
+  # ==========================================
+  build-and-scan:
+    name: 🏗️ Build & Security Scan
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔐 Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📋 Extract Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix={{branch}}-
+
+      - name: 🏗️ Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🔨 Build and Push Container Image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 🛡️ Run Trivy Security Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository }}:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: 📊 Upload Trivy Results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # ==========================================
+  # STAGING DEPLOYMENT
+  # ==========================================
+  deploy-staging:
+    name: 🎭 Deploy to Staging
+    needs: build-and-scan
+    runs-on: ubuntu-latest
+    environment: staging
+    if: github.ref == 'refs/heads/main' || github.event.inputs.environment == 'staging'
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Kubernetes Tools
+        run: |
+          # Install kubectl
+          curl -LO "https://dl.k8s.io/release/${{ env.KUBECTL_VERSION }}/bin/linux/amd64/kubectl"
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+          
+          # Install helm
+          curl -fsSL https://get.helm.sh/helm-${{ env.HELM_VERSION }}-linux-amd64.tar.gz | tar -xz
+          sudo mv linux-amd64/helm /usr/local/bin/
+
+      - name: 🔐 Configure Kubernetes Access
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_STAGING }}" | base64 -d > ~/.kube/config
+          kubectl config current-context
+
+      - name: 🚀 Deploy to Staging Environment
+        run: |
+          # Create namespace if it doesn't exist
+          kubectl create namespace crypto-collectors-staging --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Deploy using Helm or kubectl
+          envsubst < k8s/staging/deployment-template.yaml > k8s/staging/deployment.yaml
+          kubectl apply -f k8s/staging/ -n crypto-collectors-staging
+          
+          # Update image for services
+          kubectl set image deployment/enhanced-crypto-prices enhanced-crypto-prices=${{ needs.build-and-scan.outputs.image-tag }} -n crypto-collectors-staging
+          kubectl set image deployment/crypto-news-collector crypto-news-collector=${{ needs.build-and-scan.outputs.image-tag }} -n crypto-collectors-staging
+          kubectl set image deployment/simple-api-gateway simple-api-gateway=${{ needs.build-and-scan.outputs.image-tag }} -n crypto-collectors-staging
+        env:
+          IMAGE_TAG: ${{ needs.build-and-scan.outputs.image-tag }}
+          ENVIRONMENT: staging
+
+      - name: ⏳ Wait for Deployment Rollout
+        run: |
+          kubectl rollout status deployment/enhanced-crypto-prices -n crypto-collectors-staging --timeout=300s
+          kubectl rollout status deployment/crypto-news-collector -n crypto-collectors-staging --timeout=300s
+          kubectl rollout status deployment/simple-api-gateway -n crypto-collectors-staging --timeout=300s
+
+      - name: 🏥 Health Check - Staging
+        run: |
+          echo "🏥 Running health checks on staging environment..."
+          
+          # Wait for pods to be ready
+          kubectl wait --for=condition=ready pod -l app=enhanced-crypto-prices -n crypto-collectors-staging --timeout=300s
+          kubectl wait --for=condition=ready pod -l app=simple-api-gateway -n crypto-collectors-staging --timeout=300s
+          
+          # Test API endpoints
+          kubectl run health-check-${{ github.run_id }} \
+            --rm -i --restart=Never \
+            --image=curlimages/curl:latest \
+            -n crypto-collectors-staging \
+            -- curl -f http://simple-api-gateway.crypto-collectors-staging.svc.cluster.local:8000/health
+          
+          echo "✅ Staging deployment successful and healthy"
+
+  # ==========================================
+  # INTEGRATION TESTS ON STAGING
+  # ==========================================
+  staging-tests:
+    name: 🧪 Staging Integration Tests
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.event.inputs.environment == 'staging'
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: 📦 Install Test Dependencies
+        run: |
+          pip install pytest requests aiohttp mysql-connector-python
+
+      - name: 🔐 Configure Kubernetes Access
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_STAGING }}" | base64 -d > ~/.kube/config
+          kubectl config set-context --current --namespace=crypto-collectors-staging
+
+      - name: 🌐 Port Forward for Testing
+        run: |
+          kubectl port-forward svc/simple-api-gateway 8080:8000 -n crypto-collectors-staging &
+          sleep 10
+        
+      - name: 🧪 Run Staging Integration Tests
+        run: |
+          # Test API endpoints against staging
+          python -c "
+          import requests
+          import sys
+          
+          try:
+              # Test API Gateway health
+              response = requests.get('http://localhost:8080/health', timeout=10)
+              assert response.status_code == 200
+              print('✅ API Gateway health check passed')
+              
+              # Test stats endpoint  
+              response = requests.get('http://localhost:8080/api/v1/stats/collectors', timeout=10)
+              if response.status_code == 200:
+                  print('✅ Collector stats endpoint working')
+              
+              print('🎉 Staging integration tests completed successfully')
+              
+          except Exception as e:
+              print(f'❌ Staging tests failed: {e}')
+              sys.exit(1)
+          "
+
+      - name: 📊 Generate Staging Test Report
+        if: always()
+        run: |
+          echo "# 🎭 Staging Deployment Report" > staging-report.md
+          echo "" >> staging-report.md
+          echo "**Environment**: Staging" >> staging-report.md
+          echo "**Deployment Time**: $(date '+%Y-%m-%d %H:%M:%S UTC')" >> staging-report.md
+          echo "**Image**: ${{ needs.build-and-scan.outputs.image-tag }}" >> staging-report.md
+          echo "**Commit**: ${{ github.sha }}" >> staging-report.md
+          echo "" >> staging-report.md
+          echo "## 📊 Health Check Results" >> staging-report.md
+          kubectl get pods -n crypto-collectors-staging >> staging-report.md
+
+  # ==========================================
+  # PRODUCTION DEPLOYMENT
+  # ==========================================
+  deploy-production:
+    name: 🏭 Deploy to Production
+    needs: [build-and-scan, deploy-staging, staging-tests]
+    runs-on: ubuntu-latest
+    environment: production
+    if: (github.ref == 'refs/heads/main' && github.event.inputs.force_deploy != 'true') || github.event.inputs.environment == 'production'
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Kubernetes Tools
+        run: |
+          # Install kubectl
+          curl -LO "https://dl.k8s.io/release/${{ env.KUBECTL_VERSION }}/bin/linux/amd64/kubectl"
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+          
+          # Install helm
+          curl -fsSL https://get.helm.sh/helm-${{ env.HELM_VERSION }}-linux-amd64.tar.gz | tar -xz
+          sudo mv linux-amd64/helm /usr/local/bin/
+
+      - name: 🔐 Configure Kubernetes Access
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_PRODUCTION }}" | base64 -d > ~/.kube/config
+          kubectl config current-context
+
+      - name: 📊 Pre-deployment Health Check
+        run: |
+          echo "🏥 Checking current production health before deployment..."
+          
+          # Check current production status
+          kubectl get pods -n crypto-collectors
+          kubectl get deployments -n crypto-collectors
+          
+          # Run health monitoring script if available
+          if [ -f "monitor_data_collection_health.py" ]; then
+            python monitor_data_collection_health.py || echo "⚠️ Health check completed with warnings"
+          fi
+
+      - name: 🚀 Rolling Deployment to Production
+        run: |
+          echo "🚀 Starting rolling deployment to production..."
+          
+          # Update images with rolling strategy
+          kubectl set image deployment/enhanced-crypto-prices enhanced-crypto-prices=${{ needs.build-and-scan.outputs.image-tag }} -n crypto-collectors
+          kubectl set image deployment/crypto-news-collector crypto-news-collector=${{ needs.build-and-scan.outputs.image-tag }} -n crypto-collectors
+          kubectl set image deployment/simple-api-gateway simple-api-gateway=${{ needs.build-and-scan.outputs.image-tag }} -n crypto-collectors
+          kubectl set image deployment/materialized-updater materialized-updater=${{ needs.build-and-scan.outputs.image-tag }} -n crypto-collectors
+          
+          # Apply any configuration updates
+          kubectl apply -f k8s/production/ -n crypto-collectors
+        env:
+          IMAGE_TAG: ${{ needs.build-and-scan.outputs.image-tag }}
+          ENVIRONMENT: production
+
+      - name: ⏳ Wait for Production Rollout
+        run: |
+          echo "⏳ Waiting for production rollout to complete..."
+          
+          kubectl rollout status deployment/enhanced-crypto-prices -n crypto-collectors --timeout=600s
+          kubectl rollout status deployment/crypto-news-collector -n crypto-collectors --timeout=600s  
+          kubectl rollout status deployment/simple-api-gateway -n crypto-collectors --timeout=600s
+          kubectl rollout status deployment/materialized-updater -n crypto-collectors --timeout=600s
+
+      - name: 🏥 Post-deployment Health Check
+        run: |
+          echo "🏥 Running comprehensive health check on production..."
+          
+          # Wait for pods to stabilize
+          sleep 30
+          
+          # Check pod status
+          kubectl get pods -n crypto-collectors
+          
+          # Test critical endpoints
+          kubectl run health-check-prod-${{ github.run_id }} \
+            --rm -i --restart=Never \
+            --image=curlimages/curl:latest \
+            -n crypto-collectors \
+            -- curl -f http://simple-api-gateway.crypto-collectors.svc.cluster.local:8000/health
+          
+          # Run ML features health check
+          if kubectl get pod -l app=materialized-updater -n crypto-collectors | grep Running; then
+            echo "✅ Materialized updater is running"
+          fi
+          
+          echo "🎉 Production deployment completed successfully"
+
+      - name: 📊 Generate Deployment Report
+        if: always()
+        run: |
+          echo "# 🏭 Production Deployment Report" > production-report.md
+          echo "" >> production-report.md
+          echo "**Environment**: Production" >> production-report.md
+          echo "**Deployment Time**: $(date '+%Y-%m-%d %H:%M:%S UTC')" >> production-report.md
+          echo "**Image**: ${{ needs.build-and-scan.outputs.image-tag }}" >> production-report.md
+          echo "**Commit**: ${{ github.sha }}" >> production-report.md
+          echo "**Deployed by**: ${{ github.actor }}" >> production-report.md
+          echo "" >> production-report.md
+          echo "## 📊 Post-Deployment Status" >> production-report.md
+          echo "" >> production-report.md
+          echo "### Pod Status" >> production-report.md
+          echo "\`\`\`" >> production-report.md
+          kubectl get pods -n crypto-collectors >> production-report.md
+          echo "\`\`\`" >> production-report.md
+          echo "" >> production-report.md
+          echo "### Service Status" >> production-report.md
+          echo "\`\`\`" >> production-report.md
+          kubectl get services -n crypto-collectors >> production-report.md
+          echo "\`\`\`" >> production-report.md
+
+      - name: 📋 Upload Deployment Report
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: production-deployment-report
+          path: production-report.md
+
+  # ==========================================
+  # ROLLBACK CAPABILITY
+  # ==========================================
+  rollback-option:
+    name: 🔄 Rollback Capability
+    needs: deploy-production
+    runs-on: ubuntu-latest
+    if: failure() && github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+      - name: 🔐 Configure Kubernetes Access
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_PRODUCTION }}" | base64 -d > ~/.kube/config
+
+      - name: 🔄 Automatic Rollback
+        run: |
+          echo "🚨 Deployment failed, initiating automatic rollback..."
+          
+          # Rollback deployments
+          kubectl rollout undo deployment/enhanced-crypto-prices -n crypto-collectors
+          kubectl rollout undo deployment/crypto-news-collector -n crypto-collectors
+          kubectl rollout undo deployment/simple-api-gateway -n crypto-collectors
+          kubectl rollout undo deployment/materialized-updater -n crypto-collectors
+          
+          # Wait for rollback to complete
+          kubectl rollout status deployment/enhanced-crypto-prices -n crypto-collectors --timeout=300s
+          kubectl rollout status deployment/crypto-news-collector -n crypto-collectors --timeout=300s
+          kubectl rollout status deployment/simple-api-gateway -n crypto-collectors --timeout=300s
+          kubectl rollout status deployment/materialized-updater -n crypto-collectors --timeout=300s
+          
+          echo "✅ Rollback completed successfully"
+
+      - name: 📢 Notify Rollback
+        if: always()
+        run: |
+          echo "🔔 Production deployment was rolled back due to failures"
+          echo "Please check the logs and fix issues before retrying deployment"

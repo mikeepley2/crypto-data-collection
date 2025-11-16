@@ -1,0 +1,386 @@
+# Production Environment Deployment Template
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-crypto-prices
+  namespace: crypto-collectors-production
+  labels:
+    app: enhanced-crypto-prices
+    environment: production
+    version: "${IMAGE_TAG}"
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: enhanced-crypto-prices
+  template:
+    metadata:
+      labels:
+        app: enhanced-crypto-prices
+        environment: production
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - enhanced-crypto-prices
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: enhanced-crypto-prices
+        image: ${IMAGE_TAG}
+        target: price-collector
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: ENVIRONMENT
+          value: "production"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: MYSQL_HOST
+          value: "mysql.crypto-collectors-production.svc.cluster.local"
+        - name: REDIS_HOST
+          value: "redis.crypto-collectors-production.svc.cluster.local"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+      restartPolicy: Always
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-crypto-prices
+  namespace: crypto-collectors-production
+  labels:
+    app: enhanced-crypto-prices
+    environment: production
+spec:
+  selector:
+    app: enhanced-crypto-prices
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http
+  type: ClusterIP
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: enhanced-crypto-prices-pdb
+  namespace: crypto-collectors-production
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: enhanced-crypto-prices
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crypto-news-collector
+  namespace: crypto-collectors-production
+  labels:
+    app: crypto-news-collector
+    environment: production
+    version: "${IMAGE_TAG}"
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: crypto-news-collector
+  template:
+    metadata:
+      labels:
+        app: crypto-news-collector
+        environment: production
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8001"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - crypto-news-collector
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: crypto-news-collector
+        image: ${IMAGE_TAG}
+        target: news-collector
+        ports:
+        - containerPort: 8001
+          name: http
+        env:
+        - name: ENVIRONMENT
+          value: "production"
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crypto-news-collector
+  namespace: crypto-collectors-production
+  labels:
+    app: crypto-news-collector
+    environment: production
+spec:
+  selector:
+    app: crypto-news-collector
+  ports:
+  - port: 8001
+    targetPort: 8001
+    name: http
+  type: ClusterIP
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: crypto-news-collector-pdb
+  namespace: crypto-collectors-production
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: crypto-news-collector
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simple-api-gateway
+  namespace: crypto-collectors-production
+  labels:
+    app: simple-api-gateway
+    environment: production
+    version: "${IMAGE_TAG}"
+spec:
+  replicas: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 2
+      maxSurge: 2
+  selector:
+    matchLabels:
+      app: simple-api-gateway
+  template:
+    metadata:
+      labels:
+        app: simple-api-gateway
+        environment: production
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - simple-api-gateway
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: simple-api-gateway
+        image: ${IMAGE_TAG}
+        target: production
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: ENVIRONMENT
+          value: "production"
+        - name: LOG_LEVEL
+          value: "WARNING"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: simple-api-gateway
+  namespace: crypto-collectors-production
+  labels:
+    app: simple-api-gateway
+    environment: production
+spec:
+  selector:
+    app: simple-api-gateway
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http
+  type: ClusterIP
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: simple-api-gateway-pdb
+  namespace: crypto-collectors-production
+spec:
+  minAvailable: 3
+  selector:
+    matchLabels:
+      app: simple-api-gateway
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: crypto-api-production
+  namespace: crypto-collectors-production
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  tls:
+  - hosts:
+    - crypto-api.yourdomain.com
+    secretName: crypto-api-tls
+  rules:
+  - host: crypto-api.yourdomain.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: simple-api-gateway
+            port:
+              number: 8000
