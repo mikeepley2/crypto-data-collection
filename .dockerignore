@@ -1,0 +1,66 @@
+# Docker ignore file for crypto-data-collection
+
+# Large directories to exclude
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.pytest_cache/
+
+# Git files
+.git/
+.gitignore
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Log files and databases
+*.log
+*.sqlite3
+*.db
+
+# Archive and backup directories
+archive/
+backfill/
+logs/
+monitoring/
+dashboards/
+
+# Build directories
+build/
+dist/
+*.egg-info/
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Test environments
+test-env/
+
+# Large data files
+*.csv
+*.json.gz
+*.tar.gz
+*.zip
+
+# Temporary files
+tmp/
+temp/
