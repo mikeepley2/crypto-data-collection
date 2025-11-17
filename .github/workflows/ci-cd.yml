@@ -1,0 +1,471 @@
+name: Crypto Data Collection CI/CD (DISABLED)
+
+# DISABLED: Use complete-ci-cd.yml instead
+# All automatic triggers disabled - manual only
+on:
+  workflow_dispatch:  # Manual trigger only
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+
+jobs:
+  # Code Quality Checks
+  code-quality:
+    name: Code Quality & Security
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 black isort bandit safety mypy
+        
+    - name: Code formatting check (black)
+      run: black --check --diff .
+      
+    - name: Import sorting check (isort)
+      run: isort --check-only --diff .
+      
+    - name: Linting (flake8)
+      run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+      
+    - name: Security audit (bandit)
+      run: bandit -r services/ templates/ -f json -o bandit-report.json || true
+      
+    - name: Dependency vulnerability check (safety)
+      run: safety check --json --output safety-report.json || true
+      
+    - name: Type checking (mypy)
+      run: mypy services/ templates/ --ignore-missing-imports || true
+      
+    - name: Upload security reports
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: security-reports
+        path: |
+          bandit-report.json
+          safety-report.json
+
+  # Unit Tests
+  test-unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11']
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_USER: test
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+          
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+        
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client
+        
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-asyncio pytest-mock pytest-cov
+        
+    - name: Wait for services
+      run: |
+        until pg_isready -h localhost -p 5432 -U test; do sleep 1; done
+        until redis-cli -h localhost -p 6379 ping; do sleep 1; done
+        
+    - name: Set up test database
+      env:
+        DB_HOST: localhost
+        DB_PORT: 5432
+        DB_USER: test
+        DB_PASSWORD: test
+        DB_NAME: test_db
+      run: |
+        python -c "
+        import asyncio
+        import asyncpg
+        
+        async def setup_db():
+            conn = await asyncpg.connect(
+                host='localhost', port=5432,
+                user='test', password='test', database='test_db'
+            )
+            # Create test schema and tables
+            await conn.execute('CREATE SCHEMA IF NOT EXISTS test')
+            await conn.close()
+            
+        asyncio.run(setup_db())
+        "
+        
+    - name: Run unit tests
+      env:
+        DB_HOST: localhost
+        DB_PORT: 5432
+        DB_USER: test
+        DB_PASSWORD: test
+        DB_NAME: test_db
+        REDIS_HOST: localhost
+        REDIS_PORT: 6379
+        ENVIRONMENT: test
+      run: |
+        pytest tests/ \
+          --cov=services \
+          --cov=templates \
+          --cov-report=xml \
+          --cov-report=html \
+          --cov-report=term-missing \
+          --junitxml=pytest-results.xml \
+          -v
+          
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results-${{ matrix.python-version }}
+        path: |
+          pytest-results.xml
+          htmlcov/
+          
+    - name: Upload coverage to Codecov
+      if: matrix.python-version == '3.11'
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+  # Integration Tests
+  test-integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [test-unit]
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_USER: test
+          POSTGRES_DB: crypto_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+          
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-asyncio pytest-integration
+        
+    - name: Run integration tests
+      env:
+        DB_HOST: localhost
+        DB_USER: test
+        DB_PASSWORD: test
+        DB_NAME: crypto_test
+        REDIS_HOST: localhost
+        ENVIRONMENT: integration
+      run: |
+        pytest tests/ -m integration \
+          --junitxml=integration-results.xml \
+          -v
+          
+    - name: Upload integration test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: integration-test-results
+        path: integration-results.xml
+
+  # Performance Tests
+  test-performance:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    needs: [test-unit]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-benchmark pytest-xdist
+        
+    - name: Run performance tests
+      run: |
+        pytest tests/ -m "performance or benchmark" \
+          --benchmark-json=benchmark-results.json \
+          -v
+          
+    - name: Upload performance results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: performance-results
+        path: benchmark-results.json
+
+  # Build Docker Images
+  build-images:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [code-quality, test-unit]
+    
+    strategy:
+      matrix:
+        service: [
+          enhanced-news-collector,
+          enhanced-sentiment-ml,
+          enhanced-technical-calculator,
+          enhanced-materialized-updater
+        ]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Login to Docker Hub
+      if: github.event_name != 'pull_request'
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+        
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ secrets.DOCKER_USERNAME }}/crypto-${{ matrix.service }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+          
+    - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: build/docker/Dockerfile.${{ matrix.service }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64  # Security Scanning
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    needs: [build-images]
+    if: github.event_name != 'pull_request'
+    
+    strategy:
+      matrix:
+        service: [
+          enhanced-news-collector,
+          enhanced-sentiment-ml,
+          enhanced-technical-calculator,
+          enhanced-materialized-updater
+        ]
+    
+    steps:
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: '${{ secrets.DOCKER_USERNAME }}/crypto-${{ matrix.service }}:${{ github.sha }}'
+        format: 'sarif'
+        output: 'trivy-${{ matrix.service }}.sarif'
+        
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-${{ matrix.service }}.sarif'
+
+  # Deploy to Staging
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build-images, test-integration]
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Configure kubectl
+      uses: azure/k8s-set-context@v3
+      with:
+        method: kubeconfig
+        kubeconfig: ${{ secrets.KUBE_CONFIG_STAGING }}
+        
+    - name: Deploy to staging
+      run: |
+        # Update image tags in Kubernetes manifests
+        sed -i "s|image: crypto-.*:.*|image: ${{ secrets.DOCKER_USERNAME }}/crypto-enhanced-news-collector:${{ github.sha }}|g" build/k8s/staging/news-collector.yaml
+        sed -i "s|image: crypto-.*:.*|image: ${{ secrets.DOCKER_USERNAME }}/crypto-enhanced-sentiment-ml:${{ github.sha }}|g" build/k8s/staging/sentiment-ml.yaml
+        sed -i "s|image: crypto-.*:.*|image: ${{ secrets.DOCKER_USERNAME }}/crypto-enhanced-technical-calculator:${{ github.sha }}|g" build/k8s/staging/technical-calculator.yaml
+        sed -i "s|image: crypto-.*:.*|image: ${{ secrets.DOCKER_USERNAME }}/crypto-enhanced-materialized-updater:${{ github.sha }}|g" build/k8s/staging/materialized-updater.yaml
+        
+        # Apply manifests
+        kubectl apply -k build/k8s/staging/
+        
+        # Wait for rollout
+        kubectl rollout status deployment/staging-enhanced-news-collector -n crypto-staging --timeout=300s
+        kubectl rollout status deployment/staging-enhanced-sentiment-ml -n crypto-staging --timeout=300s
+        kubectl rollout status deployment/staging-enhanced-technical-calculator -n crypto-staging --timeout=300s
+        kubectl rollout status deployment/staging-enhanced-materialized-updater -n crypto-staging --timeout=300s
+
+  # Deploy to Production
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, security-scan]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Configure kubectl
+      uses: azure/k8s-set-context@v3
+      with:
+        method: kubeconfig
+        kubeconfig: ${{ secrets.KUBE_CONFIG_PRODUCTION }}
+        
+    - name: Deploy to production
+      run: |
+        # Update image tags in Kubernetes manifests
+        sed -i "s|image: crypto-.*:.*|image: ${{ secrets.DOCKER_USERNAME }}/crypto-enhanced-news-collector:${{ github.sha }}|g" build/k8s/production/news-collector.yaml
+        sed -i "s|image: crypto-.*:.*|image: ${{ secrets.DOCKER_USERNAME }}/crypto-enhanced-sentiment-ml:${{ github.sha }}|g" build/k8s/production/sentiment-ml.yaml
+        sed -i "s|image: crypto-.*:.*|image: ${{ secrets.DOCKER_USERNAME }}/crypto-enhanced-technical-calculator:${{ github.sha }}|g" build/k8s/production/technical-calculator.yaml
+        sed -i "s|image: crypto-.*:.*|image: ${{ secrets.DOCKER_USERNAME }}/crypto-enhanced-materialized-updater:${{ github.sha }}|g" build/k8s/production/materialized-updater.yaml
+        
+        # Apply manifests with rolling update
+        kubectl apply -k build/k8s/production/
+        
+        # Wait for rollout
+        kubectl rollout status deployment/prod-enhanced-news-collector -n crypto-production --timeout=600s
+        kubectl rollout status deployment/prod-enhanced-sentiment-ml -n crypto-production --timeout=600s
+        kubectl rollout status deployment/prod-enhanced-technical-calculator -n crypto-production --timeout=600s
+        kubectl rollout status deployment/prod-enhanced-materialized-updater -n crypto-production --timeout=600s
+        
+    - name: Run smoke tests
+      run: |
+        # Wait for services to be ready
+        sleep 30
+        
+        # Health check endpoints
+        kubectl port-forward service/prod-enhanced-news-collector-service 8080:80 -n crypto-production &
+        sleep 5
+        curl -f http://localhost:8080/health || exit 1
+        curl -f http://localhost:8080/ready || exit 1
+        
+        # Kill port-forward
+        pkill -f "kubectl port-forward"
+
+  # Monitoring and Alerts
+  notify:
+    name: Notifications
+    runs-on: ubuntu-latest
+    needs: [deploy-production, deploy-staging]
+    if: always()
+    
+    steps:
+    - name: Notify Slack on success
+      if: success()
+      uses: rtCamp/action-slack-notify@v2
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        SLACK_CHANNEL: '#crypto-deployments'
+        SLACK_USERNAME: 'GitHub Actions'
+        SLACK_MESSAGE: '🚀 Crypto Data Collection deployment successful!'
+        SLACK_COLOR: good
+        
+    - name: Notify Slack on failure
+      if: failure()
+      uses: rtCamp/action-slack-notify@v2
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        SLACK_CHANNEL: '#crypto-alerts'
+        SLACK_USERNAME: 'GitHub Actions'
+        SLACK_MESSAGE: '❌ Crypto Data Collection deployment failed!'
+        SLACK_COLOR: danger
