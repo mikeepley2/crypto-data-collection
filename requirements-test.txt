@@ -74,7 +74,7 @@ loguru==0.7.2               # Enhanced logging
 delorean==1.0.0             # Date/time utilities
 
 # Network Testing
-wiremock==2.35.0            # HTTP service mocking
+wiremock==2.7.0             # HTTP service mocking (latest available)
 
 # Security Testing
 cryptography==41.0.7        # Cryptographic testing
