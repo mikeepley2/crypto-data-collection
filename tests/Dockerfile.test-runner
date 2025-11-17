@@ -1,5 +1,5 @@
-# Test Runner Dockerfile
-# This container runs the comprehensive test suite
+# Containerized Test Runner for CI/CD
+# Eliminates local Python environment dependencies
 
 FROM python:3.11-slim
 
@@ -10,58 +10,69 @@ RUN apt-get update && apt-get install -y \
     default-libmysqlclient-dev \
     curl \
     netcat-openbsd \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
 
-# Copy requirements
-COPY requirements.txt .
-COPY requirements-test.txt .
+# Copy requirements first for better caching
+COPY requirements*.txt ./
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir -r requirements-test.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Install additional test dependencies
-RUN pip install \
+# Install test dependencies
+RUN pip install --no-cache-dir \
     pytest==7.4.3 \
     pytest-asyncio==0.21.1 \
     pytest-cov==4.1.0 \
     pytest-xdist==3.3.1 \
     pytest-timeout==2.1.0 \
     pytest-mock==3.11.1 \
-    docker==6.1.3 \
-    testcontainers==3.7.1 \
     mysql-connector-python==8.2.0 \
     redis==5.0.1 \
     requests==2.31.0 \
-    aiohttp==3.9.1 \
+    fastapi==0.104.1 \
+    httpx==0.25.2 \
     psutil==5.9.6
 
-# Copy test files
-COPY tests/ ./tests/
-COPY services/ ./services/
-COPY shared/ ./shared/
-COPY templates/ ./templates/
+# Create necessary directories
+RUN mkdir -p /app/test-results /app/htmlcov
 
-# Create test results directory
-RUN mkdir -p /app/test-results
-
-# Set environment variables
+# Set environment variables for containerized testing
 ENV PYTHONPATH=/app
 ENV TESTING=1
 ENV ENVIRONMENT=test
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
-# Health check script
+# Health check script for container orchestration
 RUN echo '#!/bin/bash\n\
-echo "Test runner health check"\n\
-python -c "import pytest; print(f\'pytest version: {pytest.__version__}\')"\n\
-echo "Ready to run tests"' > /app/healthcheck.sh && \
+echo "🧪 Test runner container health check"\n\
+python -c "import pytest, mysql.connector, redis; print(f\'Dependencies OK: pytest={pytest.__version__}\')"\n\
+echo "✅ Ready to run tests"' > /app/healthcheck.sh && \
     chmod +x /app/healthcheck.sh
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD /app/healthcheck.sh
 
+# Wait script for service dependencies
+RUN echo '#!/bin/bash\n\
+echo "⏳ Waiting for test services..."\n\
+until nc -z ${MYSQL_HOST:-test-mysql} ${MYSQL_PORT:-3306}; do\n\
+  echo "Waiting for MySQL..."\n\
+  sleep 2\n\
+done\n\
+echo "✅ MySQL is ready"\n\
+\n\
+until nc -z ${REDIS_HOST:-test-redis} ${REDIS_PORT:-6379}; do\n\
+  echo "Waiting for Redis..."\n\
+  sleep 2\n\
+done\n\
+echo "✅ Redis is ready"\n\
+echo "🚀 All services ready, starting tests..."' > /app/wait-for-services.sh && \
+    chmod +x /app/wait-for-services.sh
+
 # Default command - wait for services then run tests
-CMD ["bash", "-c", "sleep 30 && pytest tests/ -v --tb=short --durations=10"]
+CMD ["/app/wait-for-services.sh"]

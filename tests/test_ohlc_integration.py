@@ -32,11 +32,11 @@ class TestDatabaseConfig:
     
     # Test database configuration - NEVER production values
     TEST_DB_CONFIG = {
-        'host': 'localhost',
-        'port': 3307,  # DIFFERENT from production port 3306
-        'user': 'test_user',
-        'password': 'test_password', 
-        'database': 'crypto_prices_test',  # DIFFERENT from production DB
+        'host': os.getenv('MYSQL_HOST', 'localhost'),
+        'port': int(os.getenv('MYSQL_PORT', '3308')),  # Different from production port 3306
+        'user': os.getenv('MYSQL_USER', 'test_user'),
+        'password': os.getenv('MYSQL_PASSWORD', 'test_password'),
+        'database': os.getenv('MYSQL_DATABASE', 'crypto_prices_test'),  # Different from production DB
         'charset': 'utf8mb4',
         'autocommit': False,  # Explicit transaction control
         'connection_timeout': 30

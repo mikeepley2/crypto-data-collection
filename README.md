@@ -200,6 +200,54 @@ kubectl port-forward svc/cache-manager 8007:8000 -n crypto-data-collection
 3. **Cost Tracking**: Real-time costs, optimization scores, resource breakdown
 4. **Cache Management**: Redis performance, hit rates, eviction monitoring
 
+## 🧪 **Testing Strategy**
+
+This project implements **fully containerized testing** that eliminates local Python environment dependencies and provides perfect CI/CD pipeline integration.
+
+### **Quick Testing Commands**
+
+```bash
+# Quick integration test (recommended for development)
+./run_containerized_tests.sh integration
+
+# Full test suite with coverage
+./run_containerized_tests.sh all
+
+# Unit tests only (fast validation)
+./run_containerized_tests.sh unit
+
+# Using Make (convenient shortcuts)
+make test-integration    # 30-60 seconds
+make test-unit          # < 10 seconds  
+make test-all           # 60+ seconds
+```
+
+### **Key Testing Features**
+
+- **🐳 Fully Containerized**: Zero local Python setup required
+- **🛡️ Production Safe**: Isolated test database (port 3308) with safety validations
+- **🚀 CI/CD Ready**: Works in any containerized CI/CD platform
+- **⚡ Fast Feedback**: Unit tests complete in seconds, integration tests in under a minute
+- **📊 Comprehensive**: Integration tests validate actual data collection to test database
+- **🧹 Auto Cleanup**: Transaction rollback ensures clean test environment
+
+### **Test Validation**
+
+The integration tests answer critical questions:
+- ✅ **Data Collection**: Confirms data gets collected to isolated test database
+- ✅ **Schema Validation**: Verifies all expected columns are populated correctly  
+- ✅ **Backfill Functionality**: Tests backfill for small time periods end-to-end
+- ✅ **API Endpoints**: Validates all collector endpoints work with real implementations
+
+### **Full Documentation**
+
+📖 **Complete Testing Guide**: See [`TESTING_CONTAINERIZED.md`](TESTING_CONTAINERIZED.md) for comprehensive documentation including:
+- Containerized test architecture
+- CI/CD pipeline integration
+- Development workflow
+- Troubleshooting guide
+- Jenkins/GitHub Actions examples
+
 ## 🏗️ **System Architecture**
 
 ### **Production-Ready System Overview**
