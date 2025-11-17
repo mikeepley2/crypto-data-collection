@@ -1,18 +1,6 @@
 # Docker ignore file for crypto-data-collection
 
-# Large ML model directories and files
-archive/
-models/
-*.bin
-*.pkl
-*.model
-*.h5
-*.pt
-*.pth
-*.ckpt
-*.safetensors
-
-# Python virtual environments
+# Python virtual environments (exclude these completely)
 venv/
 .venv/
 test-env/
@@ -50,7 +38,16 @@ Thumbs.db
 *.db
 logs/
 
-# Archive and backup directories
+# Archive directories (exclude most, but keep models for production)
+archive/analysis-tools/
+archive/duplicate-services/
+archive/migration-scripts/
+archive/old-collectors/
+archive/src/
+archive/backend/
+# Keep: archive/models/ for production builds
+
+# Other large directories
 backfill/
 monitoring/
 dashboards/

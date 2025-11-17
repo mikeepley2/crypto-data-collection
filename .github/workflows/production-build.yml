@@ -1,0 +1,124 @@
+name: 🚀 Production Build with ML Models
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag for the production build'
+        required: true
+        default: 'v1.0.0'
+      include_models:
+        description: 'Include ML models in build'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+        - 'true'
+        - 'false'
+
+jobs:
+  production-build:
+    name: 🏭 Production Build with ML Models
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: 🔧 Set up Docker  
+      uses: docker/setup-buildx-action@v3
+      with:
+        driver: docker-container
+        
+    - name: 🔐 Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ secrets.DOCKER_REGISTRY || 'docker.io' }}
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+        
+    - name: 🧠 Build Production Image with ML Models
+      if: inputs.include_models == 'true'
+      run: |
+        echo "Building production image with ML models..."
+        
+        # Build production image with ML models
+        docker build --target production \
+          -t ${{ secrets.DOCKER_USERNAME || 'megabob70' }}/crypto-data-collection:production-${{ inputs.version }} \
+          -t ${{ secrets.DOCKER_USERNAME || 'megabob70' }}/crypto-data-collection:production-latest \
+          .
+          
+        echo "Production build completed successfully"
+        
+    - name: 📊 Build Lightweight Production Image  
+      if: inputs.include_models == 'false'
+      run: |
+        echo "Building lightweight production image..."
+        
+        # Build testing image for production (without ML models)
+        docker build --target testing \
+          -t ${{ secrets.DOCKER_USERNAME || 'megabob70' }}/crypto-data-collection:production-${{ inputs.version }}-lite \
+          -t ${{ secrets.DOCKER_USERNAME || 'megabob70' }}/crypto-data-collection:production-lite \
+          .
+          
+        echo "Lightweight production build completed successfully"
+        
+    - name: 🔍 Image Analysis
+      run: |
+        echo "## 📊 Production Build Analysis" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ inputs.include_models }}" == "true" ]; then
+          IMAGE_NAME="${{ secrets.DOCKER_USERNAME || 'megabob70' }}/crypto-data-collection:production-${{ inputs.version }}"
+          echo "### 🧠 Production Image (with ML Models)" >> $GITHUB_STEP_SUMMARY
+        else
+          IMAGE_NAME="${{ secrets.DOCKER_USERNAME || 'megabob70' }}/crypto-data-collection:production-${{ inputs.version }}-lite"
+          echo "### 📊 Production Image (lightweight)" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Get image size
+        IMAGE_SIZE=$(docker images $IMAGE_NAME --format "table {{.Size}}" | tail -n +2)
+        echo "- **Image Size**: $IMAGE_SIZE" >> $GITHUB_STEP_SUMMARY
+        echo "- **Version**: ${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **ML Models Included**: ${{ inputs.include_models }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Registry**: docker.io/${{ secrets.DOCKER_USERNAME || 'megabob70' }}/crypto-data-collection" >> $GITHUB_STEP_SUMMARY
+        
+    - name: 🚀 Push Production Images
+      run: |
+        if [ "${{ inputs.include_models }}" == "true" ]; then
+          echo "Pushing production images with ML models..."
+          docker push ${{ secrets.DOCKER_USERNAME || 'megabob70' }}/crypto-data-collection:production-${{ inputs.version }}
+          docker push ${{ secrets.DOCKER_USERNAME || 'megabob70' }}/crypto-data-collection:production-latest
+        else
+          echo "Pushing lightweight production images..."
+          docker push ${{ secrets.DOCKER_USERNAME || 'megabob70' }}/crypto-data-collection:production-${{ inputs.version }}-lite
+          docker push ${{ secrets.DOCKER_USERNAME || 'megabob70' }}/crypto-data-collection:production-lite
+        fi
+        
+    - name: 🎊 Production Build Summary
+      run: |
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🎯 Available Production Images:" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ inputs.include_models }}" == "true" ]; then
+          echo "- \`${{ secrets.DOCKER_USERNAME || 'megabob70' }}/crypto-data-collection:production-${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ secrets.DOCKER_USERNAME || 'megabob70' }}/crypto-data-collection:production-latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🧠 ML Models Included:" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ FinBERT (Financial sentiment analysis)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ CryptoBERT (Crypto-specific sentiment)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Production-ready deployment" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "- \`${{ secrets.DOCKER_USERNAME || 'megabob70' }}/crypto-data-collection:production-${{ inputs.version }}-lite\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ secrets.DOCKER_USERNAME || 'megabob70' }}/crypto-data-collection:production-lite\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Lightweight Features:" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Fast startup and deployment" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Minimal resource requirements" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ External ML model integration ready" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🚀 Deployment Ready!" >> $GITHUB_STEP_SUMMARY
+        echo "Your production images are now available in Docker Hub and ready for Kubernetes deployment." >> $GITHUB_STEP_SUMMARY

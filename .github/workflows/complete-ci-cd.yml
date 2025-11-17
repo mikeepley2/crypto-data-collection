@@ -75,11 +75,21 @@ jobs:
         
     - name: 🏗️ Build Container Image
       run: |
-        docker build -t ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:latest .
-        docker build -t ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:${{ github.sha }} .
+        # Build lightweight testing image for CI/CD (default)
+        docker build --target testing -t ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest .
+        docker build --target testing -t ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-${{ github.sha }} .
+        
+        # Also tag as latest for backward compatibility
+        docker tag ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:latest
+        docker tag ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-${{ github.sha }} ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:${{ github.sha }}
         
     - name: 🚀 Push Container Images
       run: |
+        # Push testing images
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-${{ github.sha }}
+        
+        # Push latest tags for compatibility
         docker push ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:latest
         docker push ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:${{ github.sha }}
         
