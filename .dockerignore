@@ -1,14 +1,28 @@
 # Docker ignore file for crypto-data-collection
 
-# Large directories to exclude
+# Large ML model directories and files
+archive/
+models/
+*.bin
+*.pkl
+*.model
+*.h5
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Python virtual environments
 venv/
 .venv/
+test-env/
+env/
+.env/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
-env/
 pip-log.txt
 pip-delete-this-directory.txt
 .tox/
@@ -34,11 +48,10 @@ Thumbs.db
 *.log
 *.sqlite3
 *.db
+logs/
 
 # Archive and backup directories
-archive/
 backfill/
-logs/
 monitoring/
 dashboards/
 
@@ -51,9 +64,6 @@ dist/
 docs/
 *.md
 !README.md
-
-# Test environments
-test-env/
 
 # Large data files
 *.csv

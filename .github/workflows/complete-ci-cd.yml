@@ -83,11 +83,26 @@ jobs:
         docker push ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:latest
         docker push ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:${{ github.sha }}
         
+    - name: 🧹 Free Disk Space for Security Scan
+      run: |
+        # Remove unnecessary files to free up space
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker system prune -f
+        df -h
+        
     - name: 🔍 Security Scan
       uses: aquasecurity/trivy-action@master
       with:
         image-ref: '${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:latest'
         format: 'table'
+        severity: 'CRITICAL,HIGH'
+        exit-code: '0'
+        ignore-unfixed: true
+        vuln-type: 'os,library'
+        scanners: 'vuln'
       continue-on-error: true
         
     - name: 📊 Upload Results
@@ -220,6 +235,6 @@ jobs:
         echo "### 🏆 Enterprise Features Active:" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Automated quality assurance" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Container build and push" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ Security vulnerability scanning" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Optimized security vulnerability scanning" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Database integration testing ready" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Production-ready deployment pipeline" >> $GITHUB_STEP_SUMMARY

@@ -1,5 +1,5 @@
-# Crypto Data Collection System - Dockerfile
-# Simple build for current project structure
+# Crypto Data Collection System - Optimized Dockerfile
+# Minimal build excluding large ML models and archives
 
 FROM python:3.11-slim
 
@@ -14,39 +14,42 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy requirements and install dependencies
-COPY requirements.txt* ./
-COPY requirements-test.txt* ./
-
-# Install Python dependencies
+# Copy and install requirements first for better layer caching
+COPY requirements*.txt ./
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt 2>/dev/null || \
     pip install --no-cache-dir requests aiohttp mysql-connector-python pymongo redis flask pytest
 
-# Install additional dependencies for testing and development
-RUN pip install --no-cache-dir pytest flake8 black isort bandit pytest-cov
+# Install additional dependencies for testing
+RUN pip install --no-cache-dir pytest flake8 black bandit pytest-cov
 
-# Copy project files
-COPY . .
+# Copy only essential application files (excluding archive/, venv/, etc.)
+COPY *.py ./
+COPY services/ ./services/
+COPY shared/ ./shared/
+COPY scripts/ ./scripts/
+COPY templates/ ./templates/
+COPY tests/ ./tests/
+COPY k8s/ ./k8s/
 
 # Create non-root user for security
 RUN groupadd -r appuser && useradd -r -g appuser appuser && \
     chown -R appuser:appuser /app
 
 # Set environment variables
-ENV ENVIRONMENT=production
-ENV LOG_LEVEL=INFO
-ENV PYTHONPATH=/app
+ENV ENVIRONMENT=production \
+    LOG_LEVEL=INFO \
+    PYTHONPATH=/app
 
 # Expose default port
 EXPOSE 8000
 
-# Health check (simple version)
+# Simple health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD python -c "import sys; sys.exit(0)" || exit 1
 
 # Switch to non-root user
 USER appuser
 
-# Default command - run a simple Python server or keep container alive
+# Default command
 CMD ["python", "-c", "print('Crypto Data Collection Container Ready'); import time; time.sleep(3600)"]
