@@ -20,11 +20,20 @@ jobs:
     - name: 📥 Checkout code
       uses: actions/checkout@v4
       
-    - name: 🐳 Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-test.txt
       
-    - name: 🔧 Run unit tests in container
-      run: ./run_containerized_tests.sh unit
+    - name: 🔧 Run unit tests
+      run: |
+        python -m pytest tests/ -v --tb=short -x --disable-warnings
       
     - name: �� Upload unit test results
       uses: actions/upload-artifact@v4
@@ -47,11 +56,38 @@ jobs:
     - name: 📥 Checkout code
       uses: actions/checkout@v4
       
-    - name: 🐳 Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-test.txt
       
-    - name: �� Run integration tests in container
-      run: ./run_containerized_tests.sh integration
+    - name: 🗄️ Set up MySQL
+      uses: mirromutth/mysql-action@v1.1
+      with:
+        host port: 3307
+        container port: 3306
+        character set server: 'utf8'
+        collation server: 'utf8_general_ci'
+        mysql version: '8.0'
+        mysql database: 'crypto_prices_test'
+        mysql user: 'test_user'
+        mysql password: 'test_password'
+      
+    - name: 🔗 Run integration tests
+      env:
+        MYSQL_HOST: 127.0.0.1
+        MYSQL_PORT: 3307
+        MYSQL_USER: test_user
+        MYSQL_PASSWORD: test_password
+        MYSQL_DATABASE: crypto_prices_test
+      run: |
+        python -m pytest tests/test_pytest_comprehensive_integration.py -v --tb=short
       env:
         COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
         FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -79,11 +115,38 @@ jobs:
     - name: 📥 Checkout code
       uses: actions/checkout@v4
       
-    - name: 🐳 Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-test.txt
       
-    - name: 🚀 Run full test suite in container
-      run: ./run_containerized_tests.sh all
+    - name: 🗄️ Set up MySQL
+      uses: mirromutth/mysql-action@v1.1
+      with:
+        host port: 3307
+        container port: 3306
+        character set server: 'utf8'
+        collation server: 'utf8_general_ci'
+        mysql version: '8.0'
+        mysql database: 'crypto_prices_test'
+        mysql user: 'test_user'
+        mysql password: 'test_password'
+      
+    - name: 🚀 Run full test suite
+      env:
+        MYSQL_HOST: 127.0.0.1
+        MYSQL_PORT: 3307
+        MYSQL_USER: test_user
+        MYSQL_PASSWORD: test_password
+        MYSQL_DATABASE: crypto_prices_test
+      run: |
+        python -m pytest tests/ -v --tb=short
       env:
         COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
         FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
