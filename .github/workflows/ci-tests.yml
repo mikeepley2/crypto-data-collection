@@ -1,11 +1,8 @@
 name: 🧪 Continuous Integration - Test Suite (DISABLED)
 
 # DISABLED: Use complete-ci-cd.yml instead
+# All automatic triggers disabled - manual only
 on:
-  push:
-    branches: [ main, feature/* ]  # Removed 'dev' to avoid conflicts
-  pull_request:
-    branches: [ main ]  # Removed 'dev' to avoid conflicts
   workflow_dispatch:
 
 env:

@@ -1,10 +1,9 @@
-name: 📋 Pull Request Validation
+name: 📋 Pull Request Validation (DISABLED)
 
+# DISABLED: Use complete-ci-cd.yml instead
+# All automatic triggers disabled - manual only
 on:
-  pull_request:
-    branches: [ main, dev ]
-  pull_request_review:
-    types: [submitted]
+  workflow_dispatch:  # Manual trigger only
 
 env:
   PYTHON_VERSION: '3.12'

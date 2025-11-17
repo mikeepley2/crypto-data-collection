@@ -1,13 +1,9 @@
-name: 🧪 Containerized Test Pipeline
+name: 🧪 Containerized Test Pipeline (DISABLED)
 
+# DISABLED: Use complete-ci-cd.yml instead
+# All automatic triggers disabled - manual only
 on:
-  push:
-    branches: [ main, dev ]
-  pull_request:
-    branches: [ main, dev ]
-  schedule:
-    # Run tests daily at 2 AM UTC
-    - cron: '0 2 * * *'
+  workflow_dispatch:  # Manual trigger only
 
 jobs:
   # Fast unit tests - run first for quick feedback
