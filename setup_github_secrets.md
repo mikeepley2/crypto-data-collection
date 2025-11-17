@@ -20,13 +20,13 @@ Value: 99988Anchove!
 ### Staging Database
 ```
 Name: STAGING_MYSQL_ROOT_PASSWORD
-Value: dNXhRCdvh60C4rNMtFYAiLOC4dcbKH73FK2HsYnMINs=
+Value: 99Rules!
 
 Name: STAGING_MYSQL_USER
-Value: crypto_user
+Value: news_collector
 
 Name: STAGING_MYSQL_PASSWORD
-Value: GPPluPuZm4LmEYyTJzH2JSQ1MEWrWazXXniNOexgUeU=
+Value: 99Rules!
 
 Name: STAGING_MYSQL_DATABASE
 Value: crypto_data_staging
@@ -38,13 +38,13 @@ Value: 7haza+3rSXxNQ/wtDTZUNnJn8raylbMG
 ### Production Database
 ```
 Name: PROD_MYSQL_ROOT_PASSWORD
-Value: Hmzqqor/7Kni3lomGrBAVUVTXa+hVzuzBhD2Oj+XTLk=
+Value: 99Rules!
 
 Name: PROD_MYSQL_USER
-Value: crypto_user
+Value: news_collector
 
 Name: PROD_MYSQL_PASSWORD
-Value: yZy8WNIW51om49FnPu2fePDhCTILGh7q4VnMEFM1FhQ=
+Value: 99Rules!
 
 Name: PROD_MYSQL_DATABASE
 Value: crypto_data_production
