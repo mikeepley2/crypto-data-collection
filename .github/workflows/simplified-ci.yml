@@ -1,10 +1,13 @@
-name: 🚀 Simplified CI Pipeline
+name: 🚀 Simplified CI Pipeline (DISABLED)
 
+# DISABLED: Use complete-ci-cd.yml instead
+# This workflow is kept for reference but not triggered
 on:
-  push:
-    branches: [ main, dev ]
-  pull_request:
-    branches: [ main, dev ]
+  workflow_dispatch:  # Manual trigger only
+  # push:
+  #   branches: [ main, dev ]
+  # pull_request:
+  #   branches: [ main, dev ]
 
 jobs:
   # Lightweight syntax and import validation

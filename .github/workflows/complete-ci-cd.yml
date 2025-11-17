@@ -1,5 +1,6 @@
-name: 🚀 Complete CI/CD Pipeline with Database Integration
+name: 🚀 Primary CI/CD Pipeline
 
+# Primary workflow - handles all CI/CD operations
 on:
   push:
     branches: [ main, dev ]

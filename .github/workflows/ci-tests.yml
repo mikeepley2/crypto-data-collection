@@ -1,10 +1,11 @@
-name: 🧪 Continuous Integration - Test Suite
+name: 🧪 Continuous Integration - Test Suite (DISABLED)
 
+# DISABLED: Use complete-ci-cd.yml instead
 on:
   push:
-    branches: [ main, dev, feature/* ]
+    branches: [ main, feature/* ]  # Removed 'dev' to avoid conflicts
   pull_request:
-    branches: [ main, dev ]
+    branches: [ main ]  # Removed 'dev' to avoid conflicts
   workflow_dispatch:
 
 env:
