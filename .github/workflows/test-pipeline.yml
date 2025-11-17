@@ -86,12 +86,11 @@ jobs:
         MYSQL_USER: test_user
         MYSQL_PASSWORD: test_password
         MYSQL_DATABASE: crypto_prices_test
-      run: |
-        python -m pytest tests/test_pytest_comprehensive_integration.py -v --tb=short
-      env:
         COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
         FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         GUARDIAN_API_KEY: ${{ secrets.GUARDIAN_API_KEY }}
+      run: |
+        python -m pytest tests/test_pytest_comprehensive_integration.py -v --tb=short
         
     - name: 📊 Upload integration test results
       uses: actions/upload-artifact@v4
@@ -145,12 +144,11 @@ jobs:
         MYSQL_USER: test_user
         MYSQL_PASSWORD: test_password
         MYSQL_DATABASE: crypto_prices_test
-      run: |
-        python -m pytest tests/ -v --tb=short
-      env:
         COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
         FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         GUARDIAN_API_KEY: ${{ secrets.GUARDIAN_API_KEY }}
+      run: |
+        python -m pytest tests/ -v --tb=short
         
     - name: 📊 Upload comprehensive test results
       uses: actions/upload-artifact@v4
