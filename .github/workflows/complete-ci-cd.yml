@@ -82,13 +82,45 @@ jobs:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
         
-    - name: 🏗️ Build Container Image
+    - name: 🏗️ Build Container Images
       run: |
         # Build lightweight testing image for CI/CD (default)
         docker build --target testing -t ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest .
         docker build --target testing -t ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-${{ github.sha }} .
         
-        # Also tag as latest for backward compatibility
+        # Build 9 production services from official SERVICE_INVENTORY.md
+        
+        # Core Services (Template Compliant)
+        docker build --target news-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-news-collector:latest .
+        docker build --target news-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-news-collector:${{ github.sha }} .
+        
+        docker build --target onchain-collector-v2 -t ${{ secrets.DOCKER_USERNAME }}/crypto-onchain-collector-v2:latest .
+        docker build --target onchain-collector-v2 -t ${{ secrets.DOCKER_USERNAME }}/crypto-onchain-collector-v2:${{ github.sha }} .
+        
+        docker build --target macro-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-macro-collector:latest .
+        docker build --target macro-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-macro-collector:${{ github.sha }} .
+        
+        # Market & Technical Services
+        docker build --target ml-market-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-ml-market-collector:latest .
+        docker build --target ml-market-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-ml-market-collector:${{ github.sha }} .
+        
+        docker build --target price-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-price-collector:latest .
+        docker build --target price-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-price-collector:${{ github.sha }} .
+        
+        docker build --target technical-analysis-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-technical-analysis-collector:latest .
+        docker build --target technical-analysis-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-technical-analysis-collector:${{ github.sha }} .
+        
+        # Specialized Services
+        docker build --target sentiment-analyzer -t ${{ secrets.DOCKER_USERNAME }}/crypto-sentiment-analyzer:latest .
+        docker build --target sentiment-analyzer -t ${{ secrets.DOCKER_USERNAME }}/crypto-sentiment-analyzer:${{ github.sha }} .
+        
+        docker build --target data-validator -t ${{ secrets.DOCKER_USERNAME }}/crypto-data-validator:latest .
+        docker build --target data-validator -t ${{ secrets.DOCKER_USERNAME }}/crypto-data-validator:${{ github.sha }} .
+        
+        docker build --target gap-detector -t ${{ secrets.DOCKER_USERNAME }}/crypto-gap-detector:latest .
+        docker build --target gap-detector -t ${{ secrets.DOCKER_USERNAME }}/crypto-gap-detector:${{ github.sha }} .
+        
+        # Backward compatibility tags
         docker tag ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:latest
         docker tag ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-${{ github.sha }} ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:${{ github.sha }}
         
@@ -98,7 +130,39 @@ jobs:
         docker push ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest
         docker push ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-${{ github.sha }}
         
-        # Push latest tags for compatibility
+        # Push 9 production service images
+        
+        # Core Services
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-news-collector:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-news-collector:${{ github.sha }}
+        
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-onchain-collector-v2:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-onchain-collector-v2:${{ github.sha }}
+        
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-macro-collector:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-macro-collector:${{ github.sha }}
+        
+        # Market & Technical Services
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-ml-market-collector:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-ml-market-collector:${{ github.sha }}
+        
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-price-collector:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-price-collector:${{ github.sha }}
+        
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-technical-analysis-collector:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-technical-analysis-collector:${{ github.sha }}
+        
+        # Specialized Services
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-sentiment-analyzer:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-sentiment-analyzer:${{ github.sha }}
+        
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-data-validator:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-data-validator:${{ github.sha }}
+        
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-gap-detector:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-gap-detector:${{ github.sha }}
+        
+        # Push compatibility tags
         docker push ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:latest
         docker push ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:${{ github.sha }}
         
@@ -281,8 +345,11 @@ jobs:
         echo "| 🗄️ Database Integration | ${{ needs.database-integration.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 🎯 Available Resources:" >> $GITHUB_STEP_SUMMARY
-        echo "- **Container Images**: \`megabob70/crypto-data-collection:latest\`" >> $GITHUB_STEP_SUMMARY
-        echo "- **Tagged Build**: \`megabob70/crypto-data-collection:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Container Images**: 9 production microservices + testing image" >> $GITHUB_STEP_SUMMARY
+        echo "- **Service Registry**: See \`docs/SERVICE_INVENTORY.md\` for complete service documentation" >> $GITHUB_STEP_SUMMARY
+        echo "- **Core Services**: news-collector, onchain-collector-v2, macro-collector" >> $GITHUB_STEP_SUMMARY
+        echo "- **Market Services**: ml-market-collector, price-collector, technical-analysis-collector" >> $GITHUB_STEP_SUMMARY
+        echo "- **Specialized Services**: sentiment-analyzer, data-validator, gap-detector" >> $GITHUB_STEP_SUMMARY
         echo "- **Database Testing**: ${{ needs.database-integration.result != 'skipped' && 'Enabled' || 'Available (add secrets to enable)' }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 🏆 Enterprise Features Active:" >> $GITHUB_STEP_SUMMARY

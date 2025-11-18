@@ -30,8 +30,7 @@ spec:
     spec:
       containers:
       - name: enhanced-crypto-prices
-        image: ${IMAGE_TAG}
-        target: price-collector
+        image: megabob70/crypto-price-collector:${IMAGE_TAG:-latest}
         ports:
         - containerPort: 8000
           name: http
@@ -116,8 +115,7 @@ spec:
     spec:
       containers:
       - name: crypto-news-collector
-        image: ${IMAGE_TAG}
-        target: news-collector
+        image: megabob70/crypto-news-collector:${IMAGE_TAG:-latest}
         ports:
         - containerPort: 8001
           name: http
@@ -195,8 +193,7 @@ spec:
     spec:
       containers:
       - name: simple-api-gateway
-        image: ${IMAGE_TAG}
-        target: production
+        image: megabob70/crypto-api-gateway:${IMAGE_TAG:-latest}
         ports:
         - containerPort: 8000
           name: http
