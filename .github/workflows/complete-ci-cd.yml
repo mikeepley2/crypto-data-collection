@@ -150,14 +150,14 @@ jobs:
           # Show test summary
           echo "📊 Test Environment Summary:"
           python -c "
-from shared.smart_model_manager import SmartModelManager
-try:
-    manager = SmartModelManager()
-    print(f'Environment: {manager.environment.value}')
-    print(f'Config: {manager.config}')
-except Exception as e:
-    print(f'Model manager test: {e}')
-" || echo "Model manager not available"
+          from shared.smart_model_manager import SmartModelManager
+          try:
+              manager = SmartModelManager()
+              print(f'Environment: {manager.environment.value}')
+              print(f'Config: {manager.config}')
+          except Exception as e:
+              print(f'Model manager test: {e}')
+          " || echo "Model manager not available"
           
         else
           echo "No tests found - skipping test execution"
