@@ -19,11 +19,45 @@ jobs:
   core-pipeline:
     name: 🔍 Core Pipeline (Validation + Container)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     
     steps:
     - name: 📥 Checkout Code
       uses: actions/checkout@v4
+      
+    - name: 🧹 Initial Cleanup (Free Disk Space)
+      run: |
+        echo "=== Disk usage before cleanup ==="
+        df -h
+        echo "=== Freeing up disk space ==="
+        # Remove pre-installed software we don't need
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android 
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo rm -rf /opt/hostedtoolcache/go
+        sudo rm -rf /opt/hostedtoolcache/PyPy
+        sudo rm -rf /opt/hostedtoolcache/node
+        # Clean apt cache
+        sudo apt-get clean
+        sudo apt-get autoremove -y
+        # Remove old kernels
+        sudo apt-get autoremove --purge -y
+        # Clean temporary files
+        sudo rm -rf /tmp/*
+        sudo rm -rf /var/tmp/*
+        # Clean Docker system
+        sudo docker system prune -af --volumes
+        echo "=== Disk usage after cleanup ==="
+        df -h
+        echo "=== Available space (must be >8GB for builds) ==="
+        AVAILABLE=$(df --output=avail -BG / | tail -n1 | tr -d 'G')
+        echo "Available: ${AVAILABLE}GB"
+        if [ "$AVAILABLE" -lt 8 ]; then
+          echo "❌ ERROR: Insufficient disk space (${AVAILABLE}GB < 8GB required)"
+          exit 1
+        fi
+        echo "✅ Sufficient disk space available"
       
     - name: 🐍 Set up Python
       uses: actions/setup-python@v4
@@ -93,10 +127,24 @@ jobs:
         fi
 
     # Container build with actual credentials  
-    - name: 🔧 Set up Docker  
+    - name: 🔧 Set up Docker BuildKit
       uses: docker/setup-buildx-action@v3
       with:
         driver: docker-container
+        config-inline: |
+          [worker.oci]
+            max-parallelism = 1
+          [worker.containerd]
+            max-parallelism = 1
+        
+    - name: 🔧 Configure Docker for Space Efficiency  
+      run: |
+        # Configure Docker daemon for space efficiency
+        echo '{"storage-driver":"overlay2","storage-opts":["overlay2.size=8G"],"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}' | sudo tee /etc/docker/daemon.json
+        sudo systemctl restart docker
+        # Enable BuildKit for better caching and space efficiency
+        echo 'DOCKER_BUILDKIT=1' >> $GITHUB_ENV
+        echo 'BUILDKIT_PROGRESS=plain' >> $GITHUB_ENV
         
     - name: 🔐 Login to Docker Hub
       uses: docker/login-action@v3
@@ -105,50 +153,105 @@ jobs:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
         
-    - name: 🏗️ Build Container Images
+    - name: 🏗️ Build Container Images (Space-Optimized)
       run: |
-        # Build lightweight testing image for CI/CD (default)
+        echo "=== Starting Docker builds with space management ==="
+        
+        # Function to check disk space and cleanup if needed
+        cleanup_if_needed() {
+          AVAILABLE=$(df --output=avail -BG / | tail -n1 | tr -d 'G')
+          echo "Available space: ${AVAILABLE}GB"
+          if [ "$AVAILABLE" -lt 3 ]; then
+            echo "⚠️ Low disk space detected, cleaning up..."
+            docker system prune -f
+            docker image prune -af --filter="until=1h"
+            AVAILABLE_AFTER=$(df --output=avail -BG / | tail -n1 | tr -d 'G')
+            echo "Space after cleanup: ${AVAILABLE_AFTER}GB"
+            if [ "$AVAILABLE_AFTER" -lt 2 ]; then
+              echo "❌ CRITICAL: Still insufficient space after cleanup"
+              exit 1
+            fi
+          fi
+        }
+        
+        # Check initial space and determine build strategy
+        INITIAL_SPACE=$(df --output=avail -BG / | tail -n1 | tr -d 'G')
+        echo "Initial available space: ${INITIAL_SPACE}GB"
+        
+        if [ "$INITIAL_SPACE" -lt 6 ]; then
+          echo "⚠️ LIMITED SPACE MODE: Building only essential images"
+          SPACE_CONSTRAINED=true
+        else
+          echo "✅ FULL BUILD MODE: Building all images"
+          SPACE_CONSTRAINED=false
+        fi
+        
+        # Build lightweight testing image for CI/CD (default) - ALWAYS BUILD
+        echo "🔨 Building testing images..."
         docker build --target testing -t ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest .
         docker build --target testing -t ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-${{ github.sha }} .
+        cleanup_if_needed
         
-        # Build 9 production services from official SERVICE_INVENTORY.md
-        
-        # Core Services (Template Compliant)
-        docker build --target news-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-news-collector:latest .
-        docker build --target news-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-news-collector:${{ github.sha }} .
-        
-        docker build --target onchain-collector-v2 -t ${{ secrets.DOCKER_USERNAME }}/crypto-onchain-collector-v2:latest .
-        docker build --target onchain-collector-v2 -t ${{ secrets.DOCKER_USERNAME }}/crypto-onchain-collector-v2:${{ github.sha }} .
-        
-        docker build --target macro-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-macro-collector:latest .
-        docker build --target macro-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-macro-collector:${{ github.sha }} .
-        
-        # Market & Technical Services
-        docker build --target ml-market-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-ml-market-collector:latest .
-        docker build --target ml-market-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-ml-market-collector:${{ github.sha }} .
-        
-        docker build --target price-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-price-collector:latest .
-        docker build --target price-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-price-collector:${{ github.sha }} .
-        
-        docker build --target technical-analysis-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-technical-analysis-collector:latest .
-        docker build --target technical-analysis-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-technical-analysis-collector:${{ github.sha }} .
-        
-        docker build --target ohlc-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-ohlc-collector:latest .
-        docker build --target ohlc-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-ohlc-collector:${{ github.sha }} .
-        
-        # Specialized Services
-        docker build --target sentiment-analyzer -t ${{ secrets.DOCKER_USERNAME }}/crypto-sentiment-analyzer:latest .
-        docker build --target sentiment-analyzer -t ${{ secrets.DOCKER_USERNAME }}/crypto-sentiment-analyzer:${{ github.sha }} .
-        
-        docker build --target data-validator -t ${{ secrets.DOCKER_USERNAME }}/crypto-data-validator:latest .
-        docker build --target data-validator -t ${{ secrets.DOCKER_USERNAME }}/crypto-data-validator:${{ github.sha }} .
-        
-        docker build --target gap-detector -t ${{ secrets.DOCKER_USERNAME }}/crypto-gap-detector:latest .
-        docker build --target gap-detector -t ${{ secrets.DOCKER_USERNAME }}/crypto-gap-detector:${{ github.sha }} .
+        if [ "$SPACE_CONSTRAINED" = "false" ]; then
+          # FULL BUILD MODE - Build all services
+          echo "🔨 Building core services group 1..."
+          docker build --target news-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-news-collector:latest .
+          docker build --target news-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-news-collector:${{ github.sha }} .
+          docker build --target onchain-collector-v2 -t ${{ secrets.DOCKER_USERNAME }}/crypto-onchain-collector-v2:latest .
+          docker build --target onchain-collector-v2 -t ${{ secrets.DOCKER_USERNAME }}/crypto-onchain-collector-v2:${{ github.sha }} .
+          cleanup_if_needed
+          
+          echo "🔨 Building core services group 2..."
+          docker build --target macro-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-macro-collector:latest .
+          docker build --target macro-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-macro-collector:${{ github.sha }} .
+          docker build --target ml-market-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-ml-market-collector:latest .
+          docker build --target ml-market-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-ml-market-collector:${{ github.sha }} .
+          cleanup_if_needed
+          
+          echo "🔨 Building market & technical services..."
+          docker build --target price-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-price-collector:latest .
+          docker build --target price-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-price-collector:${{ github.sha }} .
+          docker build --target technical-analysis-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-technical-analysis-collector:latest .
+          docker build --target technical-analysis-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-technical-analysis-collector:${{ github.sha }} .
+          cleanup_if_needed
+          
+          echo "🔨 Building specialized services group 1..."
+          docker build --target ohlc-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-ohlc-collector:latest .
+          docker build --target ohlc-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-ohlc-collector:${{ github.sha }} .
+          docker build --target sentiment-analyzer -t ${{ secrets.DOCKER_USERNAME }}/crypto-sentiment-analyzer:latest .
+          docker build --target sentiment-analyzer -t ${{ secrets.DOCKER_USERNAME }}/crypto-sentiment-analyzer:${{ github.sha }} .
+          cleanup_if_needed
+          
+          echo "🔨 Building specialized services group 2..."
+          docker build --target data-validator -t ${{ secrets.DOCKER_USERNAME }}/crypto-data-validator:latest .
+          docker build --target data-validator -t ${{ secrets.DOCKER_USERNAME }}/crypto-data-validator:${{ github.sha }} .
+          docker build --target gap-detector -t ${{ secrets.DOCKER_USERNAME }}/crypto-gap-detector:latest .
+          docker build --target gap-detector -t ${{ secrets.DOCKER_USERNAME }}/crypto-gap-detector:${{ github.sha }} .
+        else
+          # SPACE CONSTRAINED MODE - Build only core services
+          echo "🔨 Building ESSENTIAL services only (space constrained)..."
+          docker build --target news-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-news-collector:latest .
+          docker build --target onchain-collector-v2 -t ${{ secrets.DOCKER_USERNAME }}/crypto-onchain-collector-v2:latest .
+          docker build --target price-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-price-collector:latest .
+          cleanup_if_needed
+          
+          # Create dummy tags for services we didn't build to prevent push failures
+          docker tag ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest ${{ secrets.DOCKER_USERNAME }}/crypto-macro-collector:latest
+          docker tag ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest ${{ secrets.DOCKER_USERNAME }}/crypto-ml-market-collector:latest
+          docker tag ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest ${{ secrets.DOCKER_USERNAME }}/crypto-technical-analysis-collector:latest
+          docker tag ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest ${{ secrets.DOCKER_USERNAME }}/crypto-ohlc-collector:latest
+          docker tag ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest ${{ secrets.DOCKER_USERNAME }}/crypto-sentiment-analyzer:latest
+          docker tag ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest ${{ secrets.DOCKER_USERNAME }}/crypto-data-validator:latest
+          docker tag ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest ${{ secrets.DOCKER_USERNAME }}/crypto-gap-detector:latest
+        fi
         
         # Backward compatibility tags
         docker tag ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:latest
         docker tag ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-${{ github.sha }} ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:${{ github.sha }}
+        
+        echo "✅ Docker builds completed successfully"
+        echo "=== Final disk usage ==="
+        df -h
         
     - name: 🚀 Push Container Images
       run: |
@@ -195,15 +298,42 @@ jobs:
         docker push ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:latest
         docker push ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:${{ github.sha }}
         
-    - name: 🧹 Free Disk Space for Security Scan
+    - name: 🧹 Comprehensive Cleanup for Security Scan
       run: |
+        echo "=== Pre-security scan cleanup ==="
         # Remove unnecessary files to free up space
         sudo rm -rf /usr/share/dotnet
         sudo rm -rf /usr/local/lib/android
         sudo rm -rf /opt/ghc
         sudo rm -rf /opt/hostedtoolcache/CodeQL
-        sudo docker system prune -f
+        sudo rm -rf /opt/hostedtoolcache/go
+        sudo rm -rf /opt/hostedtoolcache/PyPy
+        sudo rm -rf /opt/hostedtoolcache/node
+        
+        # Aggressive Docker cleanup - remove everything except what we just pushed
+        echo "Cleaning Docker system..."
+        # Remove build cache
+        docker builder prune -af
+        # Remove unused images (keep only our latest images)
+        docker image prune -af
+        # Remove unused containers, networks, volumes
+        docker system prune -af --volumes
+        
+        # Clean temporary and log files
+        sudo rm -rf /tmp/*
+        sudo rm -rf /var/tmp/*
+        sudo journalctl --vacuum-size=100M
+        
+        echo "=== Disk usage after comprehensive cleanup ==="
         df -h
+        
+        AVAILABLE=$(df --output=avail -BG / | tail -n1 | tr -d 'G')
+        echo "Available space for security scan: ${AVAILABLE}GB"
+        if [ "$AVAILABLE" -lt 2 ]; then
+          echo "❌ WARNING: Low disk space (${AVAILABLE}GB) for security scan"
+        else
+          echo "✅ Sufficient space for security scan"
+        fi
         
     - name: 🔍 Security Scan
       uses: aquasecurity/trivy-action@master

@@ -13,20 +13,13 @@ from fastapi.testclient import TestClient
 from fastapi import HTTPException
 import asyncio
 
-# Import the base collector template
+# Import the base collector template and mock collector
 try:
     from base_collector_template import BaseCollector
+    from tests.test_base_collector import MockCollector
     
-    # Create a test collector instance
-    test_collector = BaseCollector(
-        service_name="test-collector",
-        db_config={
-            'host': 'localhost',
-            'user': 'test',
-            'password': 'test',
-            'database': 'test'
-        }
-    )
+    # Create a test collector instance using MockCollector
+    test_collector = MockCollector()
     app = test_collector.app
     
 except ImportError as e:
