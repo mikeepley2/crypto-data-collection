@@ -28,6 +28,8 @@ jobs:
         python -m pip install --upgrade pip setuptools wheel
         # Install core testing dependencies
         pip install flake8 black bandit pytest requests flask
+        # Install critical web framework dependencies first
+        pip install httpx fastapi starlette uvicorn pydantic
         # Install database connectors
         pip install mysql-connector-python redis
         # Install project requirements if available
@@ -38,10 +40,10 @@ jobs:
           echo "requirements.txt not found, installing fallback packages"
           pip install requests aiohttp mysql-connector-python pymongo redis flask pytest
         fi
-        # Install test requirements with error handling
+        # Install test requirements - fail fast if critical dependencies missing
         if [ -f "requirements-test.txt" ]; then
           echo "Installing requirements-test.txt..."
-          pip install -r requirements-test.txt || echo "Some test dependencies failed to install - continuing with available packages"
+          pip install -r requirements-test.txt
         fi
         
     - name: 🎨 Code Formatting Check
@@ -179,6 +181,8 @@ jobs:
         python -m pip install --upgrade pip setuptools wheel
         # Install core dependencies
         pip install pytest pytest-cov mysql-connector-python redis requests flask
+        # Install critical web framework dependencies first
+        pip install httpx fastapi starlette uvicorn pydantic
         # Install Redis client for service health checks
         sudo apt-get update
         sudo apt-get install -y redis-tools mysql-client
@@ -190,10 +194,10 @@ jobs:
           echo "requirements.txt not found, installing fallback packages"
           pip install requests aiohttp mysql-connector-python pymongo redis flask pytest
         fi
-        # Install test requirements with error handling  
+        # Install test requirements - fail fast if critical dependencies missing
         if [ -f "requirements-test.txt" ]; then
           echo "Installing requirements-test.txt..."
-          pip install -r requirements-test.txt || echo "Some test dependencies failed to install - continuing with available packages"
+          pip install -r requirements-test.txt
         fi
         
     - name: 🔄 Wait for Services
