@@ -192,7 +192,8 @@ CMD ["python", "services/ohlc-collection/enhanced_ohlc_collector.py"]
 # 8. Sentiment Analysis Service (with ML models)
 FROM base AS sentiment-analyzer
 COPY shared/ ./shared/
-COPY services/sentiment-analysis/ ./services/sentiment-analysis/
+COPY services/news-collection/ ./services/news-collection/
+COPY services/enhanced_sentiment_ml_analysis.py ./services/
 COPY *.py ./
 
 # Copy ML models for sentiment analysis
