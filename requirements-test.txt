@@ -2,7 +2,7 @@
 # For comprehensive crypto data collection testing
 
 # Core Testing Framework
-pytest==7.4.3
+pytest==7.2.2              # Compatible with all test plugins
 pytest-asyncio==0.21.1
 pytest-cov==4.1.0
 pytest-xdist==3.3.1        # Parallel test execution
@@ -58,7 +58,7 @@ coverage[toml]==7.3.2       # Code coverage measurement
 coverage-badge==1.1.0       # Coverage badges
 
 # API Testing Utilities
-tavern==1.24.0              # API testing framework
+tavern==2.17.0              # API testing framework (latest stable)
 locust==2.17.0              # Load testing
 
 # Development and Debugging
@@ -127,9 +127,6 @@ hypothesis==6.88.4          # Property-based testing
 allure-pytest==2.13.2       # Allure test reporting
 pytest-clarity==1.0.1       # Clear assertion error messages
 pytest-sugar==0.9.7         # Better test output formatting
-
-# Load and Stress Testing
-locust==2.17.0              # Load testing framework
 
 # CI/CD Testing Support
 pytest-github-actions-annotate-failures==0.2.0

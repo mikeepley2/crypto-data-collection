@@ -40,10 +40,11 @@ jobs:
           echo "requirements.txt not found, installing fallback packages"
           pip install requests aiohttp mysql-connector-python pymongo redis flask pytest
         fi
-        # Install test requirements - fail fast if critical dependencies missing
+        # Install test requirements with enhanced dependency resolution
         if [ -f "requirements-test.txt" ]; then
           echo "Installing requirements-test.txt..."
-          pip install -r requirements-test.txt
+          pip install --upgrade pip setuptools wheel
+          pip install --use-pep517 --no-build-isolation -r requirements-test.txt
         fi
         
     - name: 🎨 Code Formatting Check
@@ -264,10 +265,11 @@ jobs:
           echo "requirements.txt not found, installing fallback packages"
           pip install requests aiohttp mysql-connector-python pymongo redis flask pytest
         fi
-        # Install test requirements - fail fast if critical dependencies missing
+        # Install test requirements with enhanced dependency resolution  
         if [ -f "requirements-test.txt" ]; then
           echo "Installing requirements-test.txt..."
-          pip install -r requirements-test.txt
+          pip install --upgrade pip setuptools wheel
+          pip install --use-pep517 --no-build-isolation -r requirements-test.txt
         fi
         
     - name: 🔄 Wait for Services
