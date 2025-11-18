@@ -27,6 +27,10 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# Configure logging for tests first
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Try to use centralized database configuration
 try:
     from shared.database_config import db_config, get_db_connection, get_redis_connection
@@ -35,10 +39,6 @@ try:
 except ImportError:
     CENTRALIZED_CONFIG_AVAILABLE = False
     logger.warning("⚠️ Centralized config not available, using local config")
-
-# Configure logging for tests
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Test configuration with environment variable support and centralized config fallback
 if CENTRALIZED_CONFIG_AVAILABLE:
