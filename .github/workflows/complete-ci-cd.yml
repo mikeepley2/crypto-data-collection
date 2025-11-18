@@ -179,6 +179,9 @@ jobs:
         python -m pip install --upgrade pip setuptools wheel
         # Install core dependencies
         pip install pytest pytest-cov mysql-connector-python redis requests flask
+        # Install Redis client for service health checks
+        sudo apt-get update
+        sudo apt-get install -y redis-tools mysql-client
         # Install project requirements if available
         if [ -f "requirements.txt" ]; then
           echo "Installing requirements.txt..."
@@ -195,9 +198,32 @@ jobs:
         
     - name: 🔄 Wait for Services
       run: |
+        echo "Waiting for services to be ready..."
         sleep 10
-        mysqladmin ping -h 127.0.0.1 -u ${{ secrets.STAGING_MYSQL_USER || 'news_collector' }} -p${{ secrets.STAGING_MYSQL_PASSWORD || '99Rules!' }}
-        redis-cli -h 127.0.0.1 ping
+        
+        # Wait for MySQL to be ready (with timeout)
+        echo "Testing MySQL connection..."
+        for i in {1..30}; do
+          if mysqladmin ping -h 127.0.0.1 -u ${{ secrets.STAGING_MYSQL_USER || 'news_collector' }} -p${{ secrets.STAGING_MYSQL_PASSWORD || '99Rules!' }} --silent; then
+            echo "MySQL is ready!"
+            break
+          fi
+          echo "MySQL not ready, waiting... (attempt $i/30)"
+          sleep 2
+        done
+        
+        # Wait for Redis to be ready (with timeout)
+        echo "Testing Redis connection..."
+        for i in {1..30}; do
+          if redis-cli -h 127.0.0.1 -p 6379 ping >/dev/null 2>&1; then
+            echo "Redis is ready!"
+            break
+          fi
+          echo "Redis not ready, waiting... (attempt $i/30)"
+          sleep 2
+        done
+        
+        echo "All services are ready!"
         
     - name: 🗄️ Database Integration Tests
       env:
