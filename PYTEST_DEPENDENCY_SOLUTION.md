@@ -8,7 +8,9 @@ Complex pytest plugin ecosystem has conflicting version requirements that pip re
 1. **pytest-env 1.1.0** requires `pytest>=7.4.2`
 2. **tavern 2.x** requires `pytest<7.3` 
 3. **pytest-trio 0.8.0** requires `pytest>=7.2.0`
-4. **Python 3.12** environment compounds compatibility issues
+4. **pdbpp + fancycompleter** incompatible versions causing `LazyVersion` errors
+5. **allure-pytest** plugin loading conflicts with other packages
+6. **Python 3.12** environment compounds compatibility issues
 
 ## ✅ **Solutions Implemented**
 
@@ -29,6 +31,8 @@ Complex pytest plugin ecosystem has conflicting version requirements that pip re
 - 🔄 **Try-fallback approach**: Attempts full requirements, falls back to minimal
 - 📦 **Improved pip flags**: `--use-pep517 --no-build-isolation` for better resolution
 - 🛡️ **Resilient testing**: Ensures tests always run even with dependency conflicts
+- 🔧 **Plugin conflict protection**: Uses `-p no:allure -p no:pdbpp` flags to disable problematic plugins
+- 📊 **Graceful fallback**: Multiple pytest execution strategies with increasing simplicity
 
 ## 📊 **Testing Strategy**
 
@@ -45,6 +49,8 @@ Complex pytest plugin ecosystem has conflicting version requirements that pip re
 - **API Testing**: Use `requests-mock` instead of `tavern`
 - **Environment Variables**: Use `python-dotenv` instead of `pytest-env`
 - **Async Testing**: Use `pytest-asyncio` instead of `pytest-trio`
+- **Debugging**: Use `ipdb` instead of `pdbpp` to avoid fancycompleter conflicts
+- **Test Reporting**: Use `pytest-html` instead of `allure-pytest` for simpler reports
 
 ## 🎯 **Impact on CI/CD**
 

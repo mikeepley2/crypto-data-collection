@@ -197,7 +197,12 @@ COPY *.py ./
 
 # Copy ML models for sentiment analysis
 RUN mkdir -p models/finbert models/cryptobert
-COPY archive/models/finbert/ ./models/finbert/ 2>/dev/null || echo "FinBERT model not found - will download at runtime"
+# Try to copy models if they exist, otherwise skip gracefully
+RUN if [ -d "archive/models/finbert" ]; then \
+      cp -r archive/models/finbert/* ./models/finbert/ || true; \
+    else \
+      echo "FinBERT model not found - will download at runtime"; \
+    fi
 
 RUN groupadd -r appuser && useradd -r -g appuser appuser && \
     chown -R appuser:appuser /app
@@ -298,4 +303,4 @@ CMD ["python", "-c", "print('Production Environment Ready with ML Models'); impo
 # ===========================================
 # DEFAULT TARGET (Testing for CI/CD)
 # ===========================================
-FROM testing as default
+FROM testing AS default
