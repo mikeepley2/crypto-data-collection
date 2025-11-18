@@ -1,0 +1,223 @@
+# K3s Production Services
+# ClusterIP services for internal communication between microservices
+
+---
+# 1. News Collector Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: news-collector-service
+  namespace: crypto-core-production
+  labels:
+    app: news-collector
+    service-tier: core
+spec:
+  selector:
+    app: news-collector
+  ports:
+  - port: 8001
+    targetPort: 8001
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 2. Sentiment Analyzer Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: sentiment-analyzer-service
+  namespace: crypto-core-production
+  labels:
+    app: sentiment-analyzer
+    service-tier: core
+spec:
+  selector:
+    app: sentiment-analyzer
+  ports:
+  - port: 8002
+    targetPort: 8002
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 3. Technical Analysis Collector Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: technical-analysis-collector-service
+  namespace: crypto-core-production
+  labels:
+    app: technical-analysis-collector
+    service-tier: core
+spec:
+  selector:
+    app: technical-analysis-collector
+  ports:
+  - port: 8003
+    targetPort: 8003
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 4. Macro Economic Collector Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: macro-economic-collector-service
+  namespace: crypto-core-production
+  labels:
+    app: macro-economic-collector
+    service-tier: core
+spec:
+  selector:
+    app: macro-economic-collector
+  ports:
+  - port: 8004
+    targetPort: 8004
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 5. On-chain Data Collector Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: onchain-data-collector-service
+  namespace: crypto-core-production
+  labels:
+    app: onchain-data-collector
+    service-tier: core
+spec:
+  selector:
+    app: onchain-data-collector
+  ports:
+  - port: 8005
+    targetPort: 8005
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 6. Social Sentiment Collector Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: social-sentiment-collector-service
+  namespace: crypto-core-production
+  labels:
+    app: social-sentiment-collector
+    service-tier: core
+spec:
+  selector:
+    app: social-sentiment-collector
+  ports:
+  - port: 8006
+    targetPort: 8006
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 7. Enhanced OHLC Collector Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-ohlc-collector-service
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-ohlc-collector
+    service-tier: market
+spec:
+  selector:
+    app: enhanced-ohlc-collector
+  ports:
+  - port: 8007
+    targetPort: 8007
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 8. Price Collector Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: price-collector-service
+  namespace: crypto-core-production
+  labels:
+    app: price-collector
+    service-tier: market
+spec:
+  selector:
+    app: price-collector
+  ports:
+  - port: 8008
+    targetPort: 8008
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 9. ML Pipeline Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-pipeline-service
+  namespace: crypto-core-production
+  labels:
+    app: ml-pipeline
+    service-tier: analytics
+spec:
+  selector:
+    app: ml-pipeline
+  ports:
+  - port: 8009
+    targetPort: 8009
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 10. Portfolio Optimization Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: portfolio-optimization-service
+  namespace: crypto-core-production
+  labels:
+    app: portfolio-optimization
+    service-tier: analytics
+spec:
+  selector:
+    app: portfolio-optimization
+  ports:
+  - port: 8010
+    targetPort: 8010
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# External API Gateway Service (NodePort for external access)
+apiVersion: v1
+kind: Service
+metadata:
+  name: crypto-api-gateway
+  namespace: crypto-core-production
+  labels:
+    app: crypto-api-gateway
+    service-tier: gateway
+spec:
+  selector:
+    app: news-collector  # Use news-collector as main entry point for now
+  ports:
+  - port: 8000
+    targetPort: 8001
+    nodePort: 30080
+    protocol: TCP
+    name: http
+  type: NodePort

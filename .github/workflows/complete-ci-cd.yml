@@ -1,11 +1,18 @@
-name: 🚀 Primary CI/CD Pipeline
+name: 🚀 Complete CI/CD Pipeline (KIND + K3s)
 
-# Primary workflow - handles all CI/CD operations
+# Hybrid workflow - KIND for testing, K3s for production deployment
 on:
   push:
     branches: [ main, dev ]
   pull_request:
     branches: [ main, dev ]
+  workflow_dispatch:
+    inputs:
+      deploy_to_production:
+        description: 'Deploy to K3s production cluster'
+        required: false
+        default: 'false'
+        type: boolean
 
 jobs:
   # Fast validation and container build
@@ -366,3 +373,192 @@ jobs:
         echo "- ✅ Optimized security vulnerability scanning" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Database integration testing ready" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Production-ready deployment pipeline" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Hybrid deployment (KIND testing + K3s production)" >> $GITHUB_STEP_SUMMARY
+
+  # K3s Production Deployment (only on main branch or manual trigger)
+  k3s-production-deployment:
+    name: 🚀 K3s Production Deployment
+    runs-on: ubuntu-latest
+    needs: [core-pipeline, database-integration]
+    if: |
+      (github.ref == 'refs/heads/main' && github.event_name == 'push') || 
+      (github.event_name == 'workflow_dispatch' && inputs.deploy_to_production == 'true')
+    environment: production
+    timeout-minutes: 15
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: 🔑 Setup Production Secrets
+      run: |
+        echo "Setting up K3s production deployment secrets..."
+        # Secrets are configured in GitHub environment 'production'
+        
+    - name: 🏗️ Setup Kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+        
+    - name: 🔧 Configure K3s Access
+      run: |
+        echo "Configuring K3s cluster access..."
+        # Setup kubeconfig from secrets
+        mkdir -p ~/.kube
+        echo "${{ secrets.K3S_KUBECONFIG }}" | base64 -d > ~/.kube/config
+        chmod 600 ~/.kube/config
+        
+        # Test cluster connectivity
+        echo "Testing K3s cluster connectivity..."
+        kubectl cluster-info
+        kubectl get nodes
+        
+    - name: 🎯 Update Production Secrets
+      run: |
+        echo "Updating production secrets in K3s..."
+        
+        # Update ConfigMap with production values
+        kubectl create configmap crypto-core-config \
+          --from-literal=ENVIRONMENT="production" \
+          --from-literal=LOG_LEVEL="INFO" \
+          --from-literal=MYSQL_HOST="mysql-service.crypto-infrastructure.svc.cluster.local" \
+          --from-literal=REDIS_HOST="redis-service.crypto-infrastructure.svc.cluster.local" \
+          --from-literal=NEWS_COLLECTION_INTERVAL="300" \
+          --from-literal=SENTIMENT_PROCESSING_INTERVAL="600" \
+          --from-literal=TECHNICAL_CALCULATION_INTERVAL="900" \
+          --from-literal=BACKFILL_ENABLED="true" \
+          --namespace crypto-core-production \
+          --dry-run=client -o yaml | kubectl apply -f -
+          
+        # Update secrets with real production values
+        kubectl create secret generic crypto-core-secrets \
+          --from-literal=mysql-user="${{ secrets.MYSQL_USER }}" \
+          --from-literal=mysql-password="${{ secrets.MYSQL_PASSWORD }}" \
+          --from-literal=redis-password="${{ secrets.REDIS_PASSWORD }}" \
+          --from-literal=coingecko-api-key="${{ secrets.COINGECKO_API_KEY }}" \
+          --from-literal=newsapi-key="${{ secrets.NEWSAPI_KEY }}" \
+          --namespace crypto-core-production \
+          --dry-run=client -o yaml | kubectl apply -f -
+          
+    - name: 🚀 Deploy to K3s Production
+      run: |
+        echo "🚀 Deploying crypto data collection services to K3s..."
+        
+        # Apply namespace and configuration
+        kubectl apply -f k8s/k3s-production/namespace.yaml
+        kubectl apply -f k8s/k3s-production/config.yaml
+        
+        # Deploy all services  
+        kubectl apply -f k8s/k3s-production/services-deployment.yaml
+        kubectl apply -f k8s/k3s-production/services.yaml
+        
+        echo "✅ Deployment manifests applied to K3s cluster"
+        
+    - name: ⏳ Wait for Rollout
+      run: |
+        echo "Waiting for all deployments to be ready..."
+        
+        # List of deployments to wait for
+        deployments=(
+          "news-collector"
+          "sentiment-analyzer" 
+          "technical-analysis-collector"
+          "macro-economic-collector"
+          "onchain-data-collector"
+          "social-sentiment-collector"
+          "enhanced-ohlc-collector"
+          "price-collector"
+          "ml-pipeline"
+          "portfolio-optimization"
+        )
+        
+        # Wait for each deployment
+        for deployment in "${deployments[@]}"; do
+          echo "⏳ Waiting for $deployment..."
+          kubectl rollout status deployment/$deployment \
+            --namespace crypto-core-production \
+            --timeout=300s
+        done
+        
+        echo "✅ All deployments ready!"
+        
+    - name: 🔍 Verify Deployment
+      run: |
+        echo "Verifying K3s production deployment..."
+        
+        echo "📊 Cluster Status:"
+        kubectl get nodes -o wide
+        
+        echo "📦 Pod Status:"
+        kubectl get pods -n crypto-core-production -o wide
+        
+        echo "🌐 Service Status:"
+        kubectl get services -n crypto-core-production
+        
+        echo "📈 Resource Usage:"
+        kubectl top nodes 2>/dev/null || echo "Metrics server not available"
+        kubectl top pods -n crypto-core-production 2>/dev/null || echo "Pod metrics not available"
+        
+    - name: 🎯 Production Health Check
+      run: |
+        echo "Running production health checks..."
+        
+        # Test service endpoints via port-forward
+        services=(
+          "news-collector-service:8001"
+          "price-collector-service:8008"
+          "ml-pipeline-service:8009"
+        )
+        
+        for service in "${services[@]}"; do
+          service_name=$(echo $service | cut -d: -f1)
+          service_port=$(echo $service | cut -d: -f2)
+          
+          echo "🔍 Testing $service_name health..."
+          
+          # Port forward in background
+          kubectl port-forward -n crypto-core-production \
+            svc/$service_name $service_port:$service_port &
+          pf_pid=$!
+          
+          # Wait for port forward to establish
+          sleep 5
+          
+          # Test health endpoint
+          if curl -sf http://localhost:$service_port/health; then
+            echo "✅ $service_name health check passed"
+          else
+            echo "⚠️  $service_name health check failed (may still be starting)"
+          fi
+          
+          # Clean up port forward
+          kill $pf_pid 2>/dev/null || true
+          sleep 2
+        done
+        
+    - name: 📋 Deployment Summary
+      run: |
+        echo "## 🚀 K3s Production Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### ✅ Successfully Deployed Services:" >> $GITHUB_STEP_SUMMARY
+        echo "- 🗞️  News Collector (Port 8001)" >> $GITHUB_STEP_SUMMARY
+        echo "- 🧠 Sentiment Analyzer (Port 8002)" >> $GITHUB_STEP_SUMMARY  
+        echo "- 📊 Technical Analysis (Port 8003)" >> $GITHUB_STEP_SUMMARY
+        echo "- 🌍 Macro Economics (Port 8004)" >> $GITHUB_STEP_SUMMARY
+        echo "- ⛓️  On-chain Data (Port 8005)" >> $GITHUB_STEP_SUMMARY
+        echo "- 💬 Social Sentiment (Port 8006)" >> $GITHUB_STEP_SUMMARY
+        echo "- 📈 OHLC Data (Port 8007)" >> $GITHUB_STEP_SUMMARY
+        echo "- 💰 Price Collection (Port 8008)" >> $GITHUB_STEP_SUMMARY
+        echo "- 🤖 ML Pipeline (Port 8009)" >> $GITHUB_STEP_SUMMARY
+        echo "- 📊 Portfolio Optimization (Port 8010)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🌐 Access Information:" >> $GITHUB_STEP_SUMMARY
+        echo "- **API Gateway**: http://\`<node-ip>\`:30080" >> $GITHUB_STEP_SUMMARY
+        echo "- **Internal Services**: Use kubectl port-forward for access" >> $GITHUB_STEP_SUMMARY
+        echo "- **Namespace**: crypto-core-production" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📊 Deployment Architecture:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Testing Environment**: KIND (GitHub Actions)" >> $GITHUB_STEP_SUMMARY  
+        echo "- **Production Environment**: K3s Multi-Node Cluster" >> $GITHUB_STEP_SUMMARY
+        echo "- **Container Registry**: Docker Hub (megabob70/*)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Service Mesh**: Kubernetes-native service discovery" >> $GITHUB_STEP_SUMMARY

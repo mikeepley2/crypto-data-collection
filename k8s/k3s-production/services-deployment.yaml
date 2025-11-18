@@ -1,0 +1,536 @@
+# K3s Production Services Deployment
+# Complete deployment for all 10 crypto data collection microservices
+
+---
+# 1. Enhanced News Collector
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: news-collector
+  namespace: crypto-core-production
+  labels:
+    app: news-collector
+    service-tier: core
+    version: v1
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: news-collector
+  template:
+    metadata:
+      labels:
+        app: news-collector
+        service-tier: core
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8001"
+        prometheus.io/path: "/metrics"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - news-collector
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: news-collector
+        image: megabob70/crypto-news-collector:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8001
+          name: http
+          protocol: TCP
+        env:
+        - name: SERVICE_NAME
+          value: "news-collector"
+        - name: PORT
+          value: "8001"
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+
+---
+# 2. Sentiment Analyzer
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sentiment-analyzer
+  namespace: crypto-core-production
+  labels:
+    app: sentiment-analyzer
+    service-tier: core
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: sentiment-analyzer
+  template:
+    metadata:
+      labels:
+        app: sentiment-analyzer
+        service-tier: core
+        version: v1
+    spec:
+      containers:
+      - name: sentiment-analyzer
+        image: megabob70/crypto-sentiment-analyzer:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8002
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "sentiment-analyzer"
+        - name: PORT
+          value: "8002"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+---
+# 3. Technical Analysis Collector
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: technical-analysis-collector
+  namespace: crypto-core-production
+  labels:
+    app: technical-analysis-collector
+    service-tier: core
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: technical-analysis-collector
+  template:
+    metadata:
+      labels:
+        app: technical-analysis-collector
+        service-tier: core
+        version: v1
+    spec:
+      containers:
+      - name: technical-analysis-collector
+        image: megabob70/crypto-technical-analysis-collector:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8003
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "technical-analysis-collector"
+        - name: PORT
+          value: "8003"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+---
+# 4. Macro Economic Collector
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: macro-economic-collector
+  namespace: crypto-core-production
+  labels:
+    app: macro-economic-collector
+    service-tier: core
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: macro-economic-collector
+  template:
+    metadata:
+      labels:
+        app: macro-economic-collector
+        service-tier: core
+        version: v1
+    spec:
+      containers:
+      - name: macro-economic-collector
+        image: megabob70/crypto-macro-economic-collector:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8004
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "macro-economic-collector"
+        - name: PORT
+          value: "8004"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+
+---
+# 5. On-chain Data Collector
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: onchain-data-collector
+  namespace: crypto-core-production
+  labels:
+    app: onchain-data-collector
+    service-tier: core
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: onchain-data-collector
+  template:
+    metadata:
+      labels:
+        app: onchain-data-collector
+        service-tier: core
+        version: v1
+    spec:
+      containers:
+      - name: onchain-data-collector
+        image: megabob70/crypto-onchain-data-collector:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8005
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "onchain-data-collector"
+        - name: PORT
+          value: "8005"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+---
+# 6. Social Sentiment Collector
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: social-sentiment-collector
+  namespace: crypto-core-production
+  labels:
+    app: social-sentiment-collector
+    service-tier: core
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: social-sentiment-collector
+  template:
+    metadata:
+      labels:
+        app: social-sentiment-collector
+        service-tier: core
+        version: v1
+    spec:
+      containers:
+      - name: social-sentiment-collector
+        image: megabob70/crypto-social-sentiment-collector:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8006
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "social-sentiment-collector"
+        - name: PORT
+          value: "8006"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+
+---
+# 7. Enhanced OHLC Collector
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-ohlc-collector
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-ohlc-collector
+    service-tier: market
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: enhanced-ohlc-collector
+  template:
+    metadata:
+      labels:
+        app: enhanced-ohlc-collector
+        service-tier: market
+        version: v1
+    spec:
+      containers:
+      - name: enhanced-ohlc-collector
+        image: megabob70/crypto-enhanced-ohlc-collector:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8007
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "enhanced-ohlc-collector"
+        - name: PORT
+          value: "8007"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+
+---
+# 8. Price Collector
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: price-collector
+  namespace: crypto-core-production
+  labels:
+    app: price-collector
+    service-tier: market
+    version: v1
+spec:
+  replicas: 3  # Higher replica count for real-time price data
+  selector:
+    matchLabels:
+      app: price-collector
+  template:
+    metadata:
+      labels:
+        app: price-collector
+        service-tier: market
+        version: v1
+    spec:
+      containers:
+      - name: price-collector
+        image: megabob70/crypto-price-collector:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8008
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "price-collector"
+        - name: PORT
+          value: "8008"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+
+---
+# 9. ML Pipeline
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-pipeline
+  namespace: crypto-core-production
+  labels:
+    app: ml-pipeline
+    service-tier: analytics
+    version: v1
+spec:
+  replicas: 1  # ML pipeline typically single instance
+  selector:
+    matchLabels:
+      app: ml-pipeline
+  template:
+    metadata:
+      labels:
+        app: ml-pipeline
+        service-tier: analytics
+        version: v1
+    spec:
+      containers:
+      - name: ml-pipeline
+        image: megabob70/crypto-ml-pipeline:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8009
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "ml-pipeline"
+        - name: PORT
+          value: "8009"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+
+---
+# 10. Portfolio Optimization
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-optimization
+  namespace: crypto-core-production
+  labels:
+    app: portfolio-optimization
+    service-tier: analytics
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portfolio-optimization
+  template:
+    metadata:
+      labels:
+        app: portfolio-optimization
+        service-tier: analytics
+        version: v1
+    spec:
+      containers:
+      - name: portfolio-optimization
+        image: megabob70/crypto-portfolio-optimization:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8010
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "portfolio-optimization"
+        - name: PORT
+          value: "8010"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"

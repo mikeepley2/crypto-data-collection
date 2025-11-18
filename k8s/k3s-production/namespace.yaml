@@ -1,0 +1,32 @@
+# K3s Production Namespaces
+# This file creates the namespace structure for K3s production deployment
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: crypto-core-production
+  labels:
+    name: crypto-core-production
+    environment: production
+    deployment-target: k3s
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: crypto-infrastructure
+  labels:
+    name: crypto-infrastructure
+    environment: production
+    deployment-target: k3s
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: crypto-monitoring
+  labels:
+    name: crypto-monitoring
+    environment: production
+    deployment-target: k3s
