@@ -8,7 +8,7 @@
 # ===========================================
 # BASE IMAGE WITH COMMON DEPENDENCIES
 # ===========================================
-FROM python:3.11-slim as base
+FROM python:3.11-slim AS base
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -30,7 +30,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # ===========================================
 # TESTING IMAGE (Lightweight, no ML models)
 # ===========================================
-FROM base as testing
+FROM base AS testing
 
 # Install additional testing dependencies
 RUN pip install --no-cache-dir pytest flake8 black bandit pytest-cov
@@ -64,7 +64,7 @@ CMD ["python", "-c", "print('Testing Environment Ready'); import time; time.slee
 # ===========================================
 
 # 1. Enhanced News Collector (Template Compliant)
-FROM base as news-collector
+FROM base AS news-collector
 COPY shared/ ./shared/
 COPY services/enhanced_news_collector.py ./services/
 COPY *.py ./
@@ -82,7 +82,7 @@ EXPOSE 8001
 CMD ["python", "services/enhanced_news_collector.py"]
 
 # 2. Enhanced Onchain Collector V2 (Latest Production)
-FROM base as onchain-collector-v2
+FROM base AS onchain-collector-v2
 COPY shared/ ./shared/
 COPY services/onchain-collection/ ./services/onchain-collection/
 COPY *.py ./
@@ -100,7 +100,7 @@ EXPOSE 8004
 CMD ["python", "services/onchain-collection/enhanced_onchain_collector_v2.py"]
 
 # 3. Enhanced Macro Collector V2 (Template Compliant)
-FROM base as macro-collector
+FROM base AS macro-collector
 COPY shared/ ./shared/
 COPY services/macro-collection/ ./services/macro-collection/
 COPY *.py ./
@@ -118,7 +118,7 @@ EXPOSE 8002
 CMD ["python", "services/macro-collection/enhanced_macro_collector_v2.py"]
 
 # 4. ML Market Collector
-FROM base as ml-market-collector
+FROM base AS ml-market-collector
 COPY shared/ ./shared/
 COPY services/market-collection/ ./services/market-collection/
 COPY *.py ./
@@ -136,7 +136,7 @@ EXPOSE 8005
 CMD ["python", "services/market-collection/ml_market_collector.py"]
 
 # 5. Enhanced Price Collector
-FROM base as price-collector
+FROM base AS price-collector
 COPY shared/ ./shared/
 COPY services/price-collection/ ./services/price-collection/
 COPY *.py ./
@@ -154,9 +154,9 @@ EXPOSE 8006
 CMD ["python", "services/price-collection/enhanced_price_collector.py"]
 
 # 6. Technical Analysis Collector
-FROM base as technical-analysis-collector
+FROM base AS technical-analysis-collector
 COPY shared/ ./shared/
-COPY services/technical-analysis/ ./services/technical-analysis/
+COPY services/technical-collection/ ./services/technical-collection/
 COPY *.py ./
 
 RUN groupadd -r appuser && useradd -r -g appuser appuser && \
@@ -169,10 +169,10 @@ ENV ENVIRONMENT=production \
 
 USER appuser
 EXPOSE 8007
-CMD ["python", "services/technical-analysis/technical_analysis_collector.py"]
+CMD ["python", "services/technical-collection/enhanced_technical_indicators_collector.py"]
 
 # 7. OHLC Collection Collector
-FROM base as ohlc-collector
+FROM base AS ohlc-collector
 COPY shared/ ./shared/
 COPY services/ohlc-collection/ ./services/ohlc-collection/
 COPY *.py ./
@@ -190,7 +190,7 @@ EXPOSE 8011
 CMD ["python", "services/ohlc-collection/enhanced_ohlc_collector.py"]
 
 # 8. Sentiment Analysis Service (with ML models)
-FROM base as sentiment-analyzer
+FROM base AS sentiment-analyzer
 COPY shared/ ./shared/
 COPY services/sentiment-analysis/ ./services/sentiment-analysis/
 COPY *.py ./
@@ -210,12 +210,12 @@ ENV ENVIRONMENT=production \
 
 USER appuser
 EXPOSE 8008
-CMD ["python", "services/sentiment-analysis/enhanced_sentiment_analyzer.py"]
+CMD ["python", "services/enhanced_sentiment_ml_analysis.py"]
 
 # 9. Data Validation Service
-FROM base as data-validator
+FROM base AS data-validator
 COPY shared/ ./shared/
-COPY services/validation/ ./services/validation/
+COPY services/placeholder-manager/ ./services/placeholder-manager/
 COPY *.py ./
 
 RUN groupadd -r appuser && useradd -r -g appuser appuser && \
@@ -228,12 +228,12 @@ ENV ENVIRONMENT=production \
 
 USER appuser
 EXPOSE 8009
-CMD ["python", "services/validation/data_validation_service.py"]
+CMD ["python", "services/placeholder-manager/placeholder_manager.py"]
 
 # 10. Gap Detection Service
-FROM base as gap-detector
+FROM base AS gap-detector
 COPY shared/ ./shared/
-COPY services/gap-detection/ ./services/gap-detection/
+COPY services/enhanced_technical_calculator.py ./services/
 COPY *.py ./
 
 RUN groupadd -r appuser && useradd -r -g appuser appuser && \
@@ -246,12 +246,12 @@ ENV ENVIRONMENT=production \
 
 USER appuser
 EXPOSE 8010
-CMD ["python", "services/gap-detection/gap_detection_service.py"]
+CMD ["python", "services/enhanced_technical_calculator.py"]
 
 # ===========================================
 # PRODUCTION IMAGE (With ML models)
 # ===========================================
-FROM base as production
+FROM base AS production
 
 # Copy application files first
 COPY *.py ./
