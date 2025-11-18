@@ -171,7 +171,25 @@ USER appuser
 EXPOSE 8007
 CMD ["python", "services/technical-analysis/technical_analysis_collector.py"]
 
-# 7. Sentiment Analysis Service (with ML models)
+# 7. OHLC Collection Collector
+FROM base as ohlc-collector
+COPY shared/ ./shared/
+COPY services/ohlc-collection/ ./services/ohlc-collection/
+COPY *.py ./
+
+RUN groupadd -r appuser && useradd -r -g appuser appuser && \
+    chown -R appuser:appuser /app
+
+ENV ENVIRONMENT=production \
+    LOG_LEVEL=INFO \
+    PYTHONPATH=/app \
+    SERVICE_NAME=ohlc-collector
+
+USER appuser
+EXPOSE 8011
+CMD ["python", "services/ohlc-collection/enhanced_ohlc_collector.py"]
+
+# 8. Sentiment Analysis Service (with ML models)
 FROM base as sentiment-analyzer
 COPY shared/ ./shared/
 COPY services/sentiment-analysis/ ./services/sentiment-analysis/
@@ -194,7 +212,7 @@ USER appuser
 EXPOSE 8008
 CMD ["python", "services/sentiment-analysis/enhanced_sentiment_analyzer.py"]
 
-# 8. Data Validation Service
+# 9. Data Validation Service
 FROM base as data-validator
 COPY shared/ ./shared/
 COPY services/validation/ ./services/validation/
@@ -212,7 +230,7 @@ USER appuser
 EXPOSE 8009
 CMD ["python", "services/validation/data_validation_service.py"]
 
-# 9. Gap Detection Service
+# 10. Gap Detection Service
 FROM base as gap-detector
 COPY shared/ ./shared/
 COPY services/gap-detection/ ./services/gap-detection/

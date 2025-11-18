@@ -110,6 +110,9 @@ jobs:
         docker build --target technical-analysis-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-technical-analysis-collector:latest .
         docker build --target technical-analysis-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-technical-analysis-collector:${{ github.sha }} .
         
+        docker build --target ohlc-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-ohlc-collector:latest .
+        docker build --target ohlc-collector -t ${{ secrets.DOCKER_USERNAME }}/crypto-ohlc-collector:${{ github.sha }} .
+        
         # Specialized Services
         docker build --target sentiment-analyzer -t ${{ secrets.DOCKER_USERNAME }}/crypto-sentiment-analyzer:latest .
         docker build --target sentiment-analyzer -t ${{ secrets.DOCKER_USERNAME }}/crypto-sentiment-analyzer:${{ github.sha }} .
@@ -151,6 +154,9 @@ jobs:
         
         docker push ${{ secrets.DOCKER_USERNAME }}/crypto-technical-analysis-collector:latest
         docker push ${{ secrets.DOCKER_USERNAME }}/crypto-technical-analysis-collector:${{ github.sha }}
+        
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-ohlc-collector:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-ohlc-collector:${{ github.sha }}
         
         # Specialized Services
         docker push ${{ secrets.DOCKER_USERNAME }}/crypto-sentiment-analyzer:latest
@@ -345,10 +351,10 @@ jobs:
         echo "| 🗄️ Database Integration | ${{ needs.database-integration.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 🎯 Available Resources:" >> $GITHUB_STEP_SUMMARY
-        echo "- **Container Images**: 9 production microservices + testing image" >> $GITHUB_STEP_SUMMARY
+        echo "- **Container Images**: 10 production microservices + testing image" >> $GITHUB_STEP_SUMMARY
         echo "- **Service Registry**: See \`docs/SERVICE_INVENTORY.md\` for complete service documentation" >> $GITHUB_STEP_SUMMARY
         echo "- **Core Services**: news-collector, onchain-collector-v2, macro-collector" >> $GITHUB_STEP_SUMMARY
-        echo "- **Market Services**: ml-market-collector, price-collector, technical-analysis-collector" >> $GITHUB_STEP_SUMMARY
+        echo "- **Market Services**: ml-market-collector, price-collector, technical-analysis-collector, ohlc-collector" >> $GITHUB_STEP_SUMMARY
         echo "- **Specialized Services**: sentiment-analyzer, data-validator, gap-detector" >> $GITHUB_STEP_SUMMARY
         echo "- **Database Testing**: ${{ needs.database-integration.result != 'skipped' && 'Enabled' || 'Available (add secrets to enable)' }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY

@@ -2,7 +2,7 @@
 
 > **Last Updated**: November 18, 2025  
 > **Status**: Production Ready - Template Compliant Services Only  
-> **Total Services**: 9 Core Microservices  
+> **Total Services**: 10 Core Microservices  
 
 ## 🎯 **OFFICIAL SERVICE REGISTRY**
 
@@ -81,11 +81,21 @@ This document maintains the **definitive list** of all production-ready services
 - **Target Table**: `technical_indicators`
 - **Deployment**: `technical-analysis-collector:8007`
 
+### 7. **OHLC Collection Collector**
+- **Service Path**: `services/ohlc-collection/enhanced_ohlc_collector.py`
+- **Container Port**: 8011
+- **Purpose**: Open-High-Low-Close candlestick data collection
+- **Features**: Multi-timeframe OHLC data, volume analysis, technical chart data
+- **Data Sources**: CoinGecko Premium API
+- **Target Table**: `ohlc_data`
+- **Health Endpoints**: `/health`, `/status`, `/metrics`, `/ohlc-features`
+- **Deployment**: `ohlc-collector:8011`
+
 ---
 
 ## 🧠 **SPECIALIZED SERVICES**
 
-### 7. **Sentiment Analysis Service**
+### 8. **Sentiment Analysis Service**
 - **Service Path**: `services/sentiment-analysis/enhanced_sentiment_analyzer.py`
 - **Container Port**: 8008
 - **Purpose**: Advanced sentiment analysis with multiple AI models
@@ -94,7 +104,7 @@ This document maintains the **definitive list** of all production-ready services
 - **Target Table**: `sentiment_aggregation`
 - **Deployment**: `sentiment-analyzer:8008`
 
-### 8. **Data Validation Service**
+### 9. **Data Validation Service**
 - **Service Path**: `services/validation/data_validation_service.py`
 - **Container Port**: 8009
 - **Purpose**: Data quality validation and integrity checking
@@ -103,7 +113,7 @@ This document maintains the **definitive list** of all production-ready services
 - **Target Table**: `service_monitoring`
 - **Deployment**: `data-validator:8009`
 
-### 9. **Gap Detection Service**
+### 10. **Gap Detection Service**
 - **Service Path**: `services/gap-detection/gap_detection_service.py`
 - **Container Port**: 8010
 - **Purpose**: Missing data detection and backfill coordination
@@ -192,8 +202,9 @@ strategy:
 | **Onchain V2** | ✅ Ready | ✅ Production | 🟢 Healthy | 8004 | `megabob70/crypto-onchain-collector-v2` |
 | **Macro V2** | ✅ Ready | ✅ Compliant | 🟢 Healthy | 8002 | `megabob70/crypto-macro-collector` |
 | **ML Market** | ✅ Ready | 🟡 Partial | 🟡 Good | 8005 | `megabob70/crypto-ml-market-collector` |
-| **Price Collector** | ✅ Ready | 🟡 Partial | 🟡 Good | 8006 | `megabob70/crypto-price-collector` |
+| **Enhanced Price** | ✅ Ready | 🟡 Partial | 🟡 Good | 8006 | `megabob70/crypto-price-collector` |
 | **Technical Analysis** | ✅ Ready | 🟡 Partial | 🟡 Good | 8007 | `megabob70/crypto-technical-analysis-collector` |
+| **OHLC Collector** | ✅ Ready | 🟡 Partial | 🟡 Good | 8011 | `megabob70/crypto-ohlc-collector` |
 | **Sentiment Analyzer** | ✅ Ready | 🟡 Partial | 🟡 Good | 8008 | `megabob70/crypto-sentiment-analyzer` |
 | **Data Validator** | ✅ Ready | 🟡 Partial | 🟡 Good | 8009 | `megabob70/crypto-data-validator` |
 | **Gap Detector** | ✅ Ready | 🟡 Partial | 🟡 Good | 8010 | `megabob70/crypto-gap-detector` |
