@@ -2,7 +2,7 @@
 # For comprehensive crypto data collection testing
 
 # Core Testing Framework
-pytest==7.2.2              # Compatible with all test plugins
+pytest==7.4.3              # Use latest stable for compatibility
 pytest-asyncio==0.21.1
 pytest-cov==4.1.0
 pytest-xdist==3.3.1        # Parallel test execution
@@ -49,16 +49,17 @@ Faker==20.1.0               # Fake data generation
 freezegun==1.2.2            # Time mocking
 requests-mock==1.11.0       # HTTP response mocking (fixed from responses-mock)
 
-# Async Testing Support
-pytest-trio==0.8.0          # Trio async framework testing
-pytest-tornado==0.8.1       # Tornado async testing
+# Async Testing Support (removed problematic packages)
+# pytest-trio and pytest-tornado removed due to version conflicts
+# Use pytest-asyncio for async testing instead
 
 # Code Quality and Coverage
 coverage[toml]==7.3.2       # Code coverage measurement
 coverage-badge==1.1.0       # Coverage badges
 
-# API Testing Utilities
-tavern==2.17.0              # API testing framework (latest stable)
+# API Testing Utilities  
+# tavern temporarily removed due to pytest version conflicts
+# Use requests-mock and responses for API testing instead
 locust==2.17.0              # Load testing
 
 # Development and Debugging
@@ -68,7 +69,7 @@ icecream==2.1.3             # Debug printing
 
 # Configuration and Environment
 python-dotenv==1.0.0        # Environment variable management
-pytest-env==1.1.0           # Environment variable testing
+# pytest-env removed due to version conflicts - use python-dotenv instead
 
 # Logging and Monitoring
 structlog==23.2.0           # Structured logging

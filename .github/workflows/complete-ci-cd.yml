@@ -51,7 +51,12 @@ jobs:
         if [ -f "requirements-test.txt" ]; then
           echo "Installing requirements-test.txt..."
           pip install --upgrade pip setuptools wheel
-          pip install --use-pep517 --no-build-isolation -r requirements-test.txt
+          
+          # Try full requirements first, fallback to minimal on conflict
+          if ! pip install --use-pep517 --no-build-isolation -r requirements-test.txt; then
+            echo "⚠️ Full test requirements failed, using minimal fallback..."
+            pip install -r requirements-test-minimal.txt
+          fi
         fi
         
     - name: 🎨 Code Formatting Check
@@ -276,7 +281,12 @@ jobs:
         if [ -f "requirements-test.txt" ]; then
           echo "Installing requirements-test.txt..."
           pip install --upgrade pip setuptools wheel
-          pip install --use-pep517 --no-build-isolation -r requirements-test.txt
+          
+          # Try full requirements first, fallback to minimal on conflict
+          if ! pip install --use-pep517 --no-build-isolation -r requirements-test.txt; then
+            echo "⚠️ Full test requirements failed, using minimal fallback..."
+            pip install -r requirements-test-minimal.txt
+          fi
         fi
         
     - name: 🔄 Wait for Services

@@ -1,0 +1,41 @@
+# Testing Dependencies Fallback Strategy
+# Lightweight testing requirements for CI/CD when full requirements-test.txt has conflicts
+
+# Core Testing Framework (minimal viable set)
+pytest==7.4.3              # Use latest stable pytest
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+pytest-xdist==3.3.1
+
+# Essential Testing Tools
+requests==2.31.0
+aiohttp>=3.9.1
+httpx>=0.25.2
+responses>=0.24.1
+
+# Database Testing (minimal)
+mysql-connector-python==8.2.0
+redis==5.0.1
+SQLAlchemy==2.0.23
+
+# Container Testing
+docker==6.1.3
+testcontainers==3.7.1
+
+# Data Processing (lightweight)
+pandas>=2.1.4
+numpy>=1.26.0
+
+# Mock and Test Data
+factory-boy==3.3.0
+Faker==20.1.0
+requests-mock==1.11.0
+
+# Code Quality
+coverage[toml]==7.3.2
+
+# Load Testing
+locust==2.17.0
+
+# Environment Management
+python-dotenv==1.0.0
