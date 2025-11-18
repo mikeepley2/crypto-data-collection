@@ -1,16 +1,16 @@
 version: '3.8'
 
 services:
-  # Test Database - MySQL to match production
+  # Test Database - MySQL to match production and CI/CD
   test-mysql:
     image: mysql:8.0
     environment:
-      MYSQL_ROOT_PASSWORD: test_root_password
-      MYSQL_DATABASE: crypto_prices_test
-      MYSQL_USER: test_user
-      MYSQL_PASSWORD: test_password
+      MYSQL_ROOT_PASSWORD: 99Rules!  # Match CI/CD default
+      MYSQL_DATABASE: crypto_data_test  # Match CI/CD default
+      MYSQL_USER: news_collector  # Match CI/CD default
+      MYSQL_PASSWORD: 99Rules!  # Match CI/CD default
     ports:
-      - "3308:3306"  # Different port to avoid conflicts
+      - "3307:3306"  # Local development port to avoid conflicts
     volumes:
       - test_mysql_data:/var/lib/mysql
       - ./tests/fixtures/test-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
@@ -43,12 +43,12 @@ services:
       context: .
       dockerfile: tests/Dockerfile.test-runner
     environment:
-      # Test database configuration
+      # Test database configuration - matches CI/CD and test config
       - MYSQL_HOST=test-mysql
       - MYSQL_PORT=3306
-      - MYSQL_USER=test_user
-      - MYSQL_PASSWORD=test_password
-      - MYSQL_DATABASE=crypto_prices_test
+      - MYSQL_USER=news_collector
+      - MYSQL_PASSWORD=99Rules!
+      - MYSQL_DATABASE=crypto_data_test
       
       # Test Redis configuration
       - REDIS_HOST=test-redis
@@ -88,9 +88,13 @@ services:
         echo '⏳ Waiting for services to be ready...'
         sleep 15
         
+        # Run diagnostics first
+        echo '🔍 Running environment diagnostics...'
+        python tests/test_environment_diagnostics.py
+        
         # Verify database connectivity
         echo '🔍 Verifying test database connection...'
-        python -c 'import mysql.connector; conn=mysql.connector.connect(host=\"test-mysql\", port=3306, user=\"test_user\", password=\"test_password\", database=\"crypto_prices_test\"); print(\"✅ Test database connected:\", conn.connection_id); conn.close()'
+        python -c 'import mysql.connector; conn=mysql.connector.connect(host="test-mysql", port=3306, user="news_collector", password="99Rules!", database="crypto_data_test"); print("✅ Test database connected:", conn.connection_id); conn.close()'
         
         # Run comprehensive test suite
         echo '🚀 Running integration tests...'

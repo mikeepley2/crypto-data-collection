@@ -1,0 +1,61 @@
+# ML Models Persistent Storage for K3s Production
+# Provides shared storage for machine learning models across all services
+
+---
+# Persistent Volume for ML Models
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: ml-models-pv
+  labels:
+    app: ml-models
+    tier: storage
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadOnlyMany
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ml-models-storage
+  hostPath:
+    path: /var/lib/k3s-storage/ml-models
+    type: DirectoryOrCreate
+
+---
+# Persistent Volume Claim for ML Models
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ml-models-pvc
+  namespace: crypto-data-collection
+  labels:
+    app: ml-models
+    tier: storage
+spec:
+  accessModes:
+    - ReadOnlyMany
+    - ReadWriteOnce
+  storageClassName: ml-models-storage
+  resources:
+    requests:
+      storage: 10Gi
+  selector:
+    matchLabels:
+      app: ml-models
+
+---
+# Storage Class for ML Models
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: ml-models-storage
+  labels:
+    app: ml-models
+    tier: storage
+parameters:
+  type: hostPath
+provisioner: k8s.io/minikube-hostpath
+reclaimPolicy: Retain
+allowVolumeExpansion: true
+volumeBindingMode: Immediate

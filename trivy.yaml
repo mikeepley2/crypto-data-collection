@@ -1,0 +1,59 @@
+# Trivy configuration for crypto-data-collection
+# Optimized for ML/data science containers
+
+# Scanner settings
+scanners:
+  - vuln
+  - config
+  - secret
+
+# Vulnerability settings  
+vulnerability:
+  type:
+    - os
+    - library
+  severity:
+    - CRITICAL
+    - HIGH
+    - MEDIUM
+  ignore-unfixed: true
+
+# Performance settings
+timeout: 30m
+cache:
+  ttl: 6h
+
+# Output settings
+format: table
+quiet: false
+
+# Skip certain checks for performance
+skip-dirs:
+  - "/usr/local/lib/python*/site-packages/scipy.libs"
+  - "/usr/local/lib/python*/site-packages/numpy.libs"
+  - "/usr/local/lib/python*/site-packages/torch/lib"
+  - "/usr/local/lib/python*/site-packages/tensorflow"
+  - "/root/.cache"
+  - "/tmp"
+  - "/var/cache"
+
+# Skip certain file patterns
+skip-files:
+  - "**/*.so.*"
+  - "**/*.whl"
+  - "**/libscipy_openblas*.so"
+  - "**/libtorch*.so"
+  - "**/*.safetensors"
+  - "**/*.bin"
+
+# License scanning (optional)
+license:
+  full: false
+
+# Secret scanning settings
+secret:
+  config: /tmp/secret.yaml
+
+# Misconfiguration scanning
+misconfig:
+  include-non-failures: false

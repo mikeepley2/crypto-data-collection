@@ -361,12 +361,16 @@ jobs:
       uses: aquasecurity/trivy-action@master
       with:
         image-ref: '${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:latest'
+        config-file: 'trivy.yaml'
         format: 'table'
-        severity: 'CRITICAL,HIGH'
+        severity: 'CRITICAL,HIGH,MEDIUM'
         exit-code: '0'
         ignore-unfixed: true
         vuln-type: 'os,library'
-        scanners: 'vuln'
+        scanners: 'vuln,config,secret'
+        timeout: '30m'
+        skip-dirs: '/usr/local/lib/python*/site-packages/scipy.libs,/usr/local/lib/python*/site-packages/numpy.libs'
+        skip-files: '**/*.so.*,**/libscipy_openblas*.so'
       continue-on-error: true
         
     - name: 📊 Upload Results
@@ -455,34 +459,125 @@ jobs:
           python -c "import pytest; print(f'✅ pytest {pytest.__version__} ready')" || echo "⚠️ pytest issues detected"
         fi
         
-    - name: 🔄 Wait for Services
+    - name: 🔄 Wait for Services and Setup Test Environment
       run: |
-        echo "Waiting for services to be ready..."
-        sleep 10
+        echo "🚀 Setting up test environment..."
         
-        # Wait for MySQL to be ready (with timeout)
-        echo "Testing MySQL connection..."
-        for i in {1..30}; do
-          if mysqladmin ping -h 127.0.0.1 -u ${{ secrets.STAGING_MYSQL_USER || 'news_collector' }} -p${{ secrets.STAGING_MYSQL_PASSWORD || '99Rules!' }} --silent; then
-            echo "MySQL is ready!"
-            break
+        # Set test environment variables for pytest
+        export MYSQL_HOST=127.0.0.1
+        export MYSQL_PORT=3306
+        export MYSQL_USER=${{ secrets.STAGING_MYSQL_USER || 'news_collector' }}
+        export MYSQL_PASSWORD="${{ secrets.STAGING_MYSQL_PASSWORD || '99Rules!' }}"
+        export MYSQL_DATABASE=${{ secrets.STAGING_MYSQL_DATABASE || 'crypto_data_test' }}
+        export REDIS_HOST=127.0.0.1
+        export REDIS_PORT=6379
+        export ENVIRONMENT=test
+        export TESTING=true
+        
+        # Add to GitHub environment for subsequent steps
+        echo "MYSQL_HOST=127.0.0.1" >> $GITHUB_ENV
+        echo "MYSQL_PORT=3306" >> $GITHUB_ENV
+        echo "MYSQL_USER=${{ secrets.STAGING_MYSQL_USER || 'news_collector' }}" >> $GITHUB_ENV
+        echo "MYSQL_PASSWORD=${{ secrets.STAGING_MYSQL_PASSWORD || '99Rules!' }}" >> $GITHUB_ENV
+        echo "MYSQL_DATABASE=${{ secrets.STAGING_MYSQL_DATABASE || 'crypto_data_test' }}" >> $GITHUB_ENV
+        echo "REDIS_HOST=127.0.0.1" >> $GITHUB_ENV
+        echo "REDIS_PORT=6379" >> $GITHUB_ENV
+        echo "ENVIRONMENT=test" >> $GITHUB_ENV
+        echo "TESTING=true" >> $GITHUB_ENV
+        
+        echo "📊 Environment variables set:"
+        echo "- MySQL: ${MYSQL_HOST}:${MYSQL_PORT} (${MYSQL_DATABASE})"
+        echo "- Redis: ${REDIS_HOST}:${REDIS_PORT}"
+        
+        echo "⏳ Waiting for services to be ready..."
+        sleep 15  # Initial wait for services to start
+        
+        # Enhanced MySQL health check with detailed diagnostics
+        echo "🔍 Testing MySQL connection..."
+        MYSQL_READY=false
+        for i in {1..60}; do
+          # Test port connectivity first
+          if nc -z 127.0.0.1 3306 2>/dev/null; then
+            echo "✓ MySQL port 3306 is open"
+            
+            # Test MySQL authentication and access
+            if mysqladmin ping -h 127.0.0.1 -u "${MYSQL_USER}" -p"${MYSQL_PASSWORD}" --silent 2>/dev/null; then
+              echo "✅ MySQL is ready and accessible!"
+              
+              # Test database existence
+              if mysql -h 127.0.0.1 -u "${MYSQL_USER}" -p"${MYSQL_PASSWORD}" -e "USE ${MYSQL_DATABASE};" 2>/dev/null; then
+                echo "✅ Test database '${MYSQL_DATABASE}' is accessible"
+                MYSQL_READY=true
+                break
+              else
+                echo "⚠️ Database '${MYSQL_DATABASE}' not accessible, creating..."
+                mysql -h 127.0.0.1 -u "${MYSQL_USER}" -p"${MYSQL_PASSWORD}" -e "CREATE DATABASE IF NOT EXISTS ${MYSQL_DATABASE};" 2>/dev/null || true
+              fi
+            else
+              echo "❌ MySQL authentication failed (attempt $i/60)"
+            fi
+          else
+            echo "❌ MySQL port 3306 not accessible (attempt $i/60)"
           fi
-          echo "MySQL not ready, waiting... (attempt $i/30)"
+          
+          if [ $i -eq 60 ] && [ "$MYSQL_READY" = false ]; then
+            echo "🚨 MySQL failed to become ready after 60 attempts"
+            echo "📊 MySQL service logs:"
+            docker logs $(docker ps -q --filter "ancestor=mysql:8.0") 2>/dev/null || echo "Cannot retrieve MySQL logs"
+            exit 1
+          fi
+          
           sleep 2
         done
         
-        # Wait for Redis to be ready (with timeout)
-        echo "Testing Redis connection..."
+        # Enhanced Redis health check
+        echo "🔍 Testing Redis connection..."
+        REDIS_READY=false
         for i in {1..30}; do
-          if redis-cli -h 127.0.0.1 -p 6379 ping >/dev/null 2>&1; then
-            echo "Redis is ready!"
-            break
+          if nc -z 127.0.0.1 6379 2>/dev/null; then
+            echo "✓ Redis port 6379 is open"
+            
+            if redis-cli -h 127.0.0.1 -p 6379 ping 2>/dev/null | grep -q "PONG"; then
+              echo "✅ Redis is ready and responding!"
+              REDIS_READY=true
+              break
+            else
+              echo "❌ Redis not responding to ping (attempt $i/30)"
+            fi
+          else
+            echo "❌ Redis port 6379 not accessible (attempt $i/30)"
           fi
-          echo "Redis not ready, waiting... (attempt $i/30)"
-          sleep 2
+          
+          if [ $i -eq 30 ] && [ "$REDIS_READY" = false ]; then
+            echo "🚨 Redis failed to become ready after 30 attempts"
+            echo "📊 Redis service logs:"
+            docker logs $(docker ps -q --filter "ancestor=redis:7-alpine") 2>/dev/null || echo "Cannot retrieve Redis logs"
+            exit 1
+          fi
+          
+          sleep 1
         done
         
-        echo "All services are ready!"
+        echo "🎉 All services are ready and verified!"
+        echo "📊 Final service status:"
+        echo "- MySQL: Ready at ${MYSQL_HOST}:${MYSQL_PORT}"
+        echo "- Redis: Ready at ${REDIS_HOST}:${REDIS_PORT}"
+        
+    - name: 🔍 Test Environment Diagnostics
+      run: |
+        echo "🔍 Running comprehensive test environment diagnostics..."
+        python tests/test_environment_diagnostics.py
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Environment diagnostics passed"
+        else
+          echo "❌ Environment diagnostics failed"
+          echo "📊 Available Docker containers:"
+          docker ps -a
+          echo "📊 Network connectivity:"
+          netstat -tulpn | grep -E ':3306|:6379' || echo "No MySQL/Redis ports found"
+          exit 1
+        fi
         
     - name: 🗄️ Database Integration Tests
       env:

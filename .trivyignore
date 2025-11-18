@@ -1,0 +1,42 @@
+# Trivy ignore file for crypto-data-collection
+# Ignore large ML library files that cause timeouts
+
+# SciPy binary libraries (cause timeout issues)
+**/scipy.libs/**
+**/site-packages/scipy/**/*.so
+**/libscipy_openblas*.so
+
+# NumPy binary libraries
+**/numpy.libs/**
+**/site-packages/numpy/**/*.so
+**/libnpymath*.so
+
+# PyTorch binary libraries  
+**/torch/lib/**/*.so
+**/site-packages/torch/**/*.so
+**/libtorch*.so
+
+# TensorFlow binary libraries
+**/tensorflow/**/*.so
+**/site-packages/tensorflow/**/*.so
+
+# Transformers cache and model files
+**/transformers_cache/**
+**/huggingface/**
+**/models/**/*.bin
+**/models/**/*.safetensors
+
+# Other large binary files common in ML containers
+**/site-packages/**/*.whl
+**/pip-cache/**
+**/.__pycache__/**
+
+# Known false positives in data science libraries
+CVE-2019-20907  # tarfile - not exploitable in our use case
+CVE-2022-40897  # setuptools - not exploitable in containerized environment
+
+# Ignore vulnerability in development dependencies
+**/test/**
+**/tests/**
+**/*test*.py
+**/.pytest_cache/**

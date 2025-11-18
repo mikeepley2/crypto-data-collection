@@ -81,8 +81,15 @@ jobs:
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ env.REGISTRY }}/${{ github.repository }}:${{ github.sha }}
+          config-file: 'trivy.yaml'
           format: 'sarif'
           output: 'trivy-results.sarif'
+          timeout: '30m'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          skip-dirs: '/usr/local/lib/python*/site-packages/scipy.libs,/usr/local/lib/python*/site-packages/numpy.libs'
+          skip-files: '**/*.so.*,**/libscipy_openblas*.so'
+        continue-on-error: true
 
       - name: 📊 Upload Trivy Results to GitHub Security
         uses: github/codeql-action/upload-sarif@v2

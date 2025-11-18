@@ -1,0 +1,159 @@
+# ML Model Setup Job for K3s Production
+# Downloads and prepares machine learning models for the crypto data collection system
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ml-models-setup
+  namespace: crypto-data-collection
+  labels:
+    app: ml-models
+    tier: setup
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: ml-models
+        tier: setup
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: model-downloader
+        image: python:3.11-slim
+        command:
+          - /bin/bash
+          - -c
+          - |
+            set -e
+            echo "🚀 Starting ML model setup for K3s production..."
+            
+            # Install required packages
+            pip install --no-cache-dir transformers torch huggingface-hub requests
+            
+            # Create model directory structure
+            mkdir -p /models/sentiment
+            mkdir -p /models/cache
+            mkdir -p /models/logs
+            
+            # Download sentiment analysis models
+            echo "📦 Downloading sentiment analysis models..."
+            python3 << 'EOF'
+            import os
+            from transformers import AutoTokenizer, AutoModelForSequenceClassification
+            import torch
+            
+            # Set model directory
+            model_dir = "/models/sentiment"
+            cache_dir = "/models/cache"
+            
+            # Create directories
+            os.makedirs(model_dir, exist_ok=True)
+            os.makedirs(cache_dir, exist_ok=True)
+            
+            # Download models with error handling
+            models = [
+                "cardiffnlp/twitter-roberta-base-sentiment-latest",
+                "ProsusAI/finbert"
+            ]
+            
+            for model_name in models:
+                try:
+                    print(f"📦 Downloading {model_name}...")
+                    
+                    # Download tokenizer
+                    tokenizer = AutoTokenizer.from_pretrained(
+                        model_name,
+                        cache_dir=cache_dir
+                    )
+                    
+                    # Download model
+                    model = AutoModelForSequenceClassification.from_pretrained(
+                        model_name,
+                        cache_dir=cache_dir
+                    )
+                    
+                    # Save to persistent storage
+                    model_path = os.path.join(model_dir, model_name.replace('/', '_'))
+                    os.makedirs(model_path, exist_ok=True)
+                    
+                    tokenizer.save_pretrained(model_path)
+                    model.save_pretrained(model_path)
+                    
+                    print(f"✅ {model_name} downloaded successfully")
+                    
+                except Exception as e:
+                    print(f"❌ Error downloading {model_name}: {e}")
+                    continue
+            
+            # Create model manifest
+            import json
+            manifest = {
+                "version": "1.0",
+                "models": {
+                    "sentiment": {
+                        "twitter-roberta": {
+                            "path": "sentiment/cardiffnlp_twitter-roberta-base-sentiment-latest",
+                            "type": "sentiment-analysis",
+                            "source": "cardiffnlp/twitter-roberta-base-sentiment-latest"
+                        },
+                        "finbert": {
+                            "path": "sentiment/ProsusAI_finbert",
+                            "type": "financial-sentiment",
+                            "source": "ProsusAI/finbert"
+                        }
+                    }
+                },
+                "setup_timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+                "k3s_node": os.getenv("HOSTNAME", "unknown")
+            }
+            
+            with open("/models/manifest.json", "w") as f:
+                json.dump(manifest, f, indent=2)
+            
+            print("📋 Model manifest created")
+            print("🎉 ML model setup completed successfully!")
+            EOF
+            
+            # Set proper permissions
+            chmod -R 755 /models
+            
+            # Create completion marker
+            echo "$(date): ML models setup completed on node $(hostname)" > /models/setup_complete.txt
+            
+            # Display setup summary
+            echo "📊 Setup Summary:"
+            echo "- Models directory: /models"
+            echo "- Available models:"
+            ls -la /models/sentiment/ 2>/dev/null || echo "  No sentiment models found"
+            echo "- Manifest file:"
+            cat /models/manifest.json 2>/dev/null || echo "  No manifest found"
+            echo "- Total storage used:"
+            du -sh /models 2>/dev/null || echo "  Unable to calculate"
+            
+            echo "✅ ML model setup job completed successfully!"
+        
+        volumeMounts:
+        - name: ml-models
+          mountPath: /models
+        
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: TRANSFORMERS_CACHE
+          value: "/models/cache"
+        - name: HF_HOME
+          value: "/models/cache"
+      
+      volumes:
+      - name: ml-models
+        persistentVolumeClaim:
+          claimName: ml-models-pvc

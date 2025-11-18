@@ -27,55 +27,101 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# Try to use centralized database configuration
+try:
+    from shared.database_config import db_config, get_db_connection, get_redis_connection
+    CENTRALIZED_CONFIG_AVAILABLE = True
+    logger.info("✅ Using centralized database configuration")
+except ImportError:
+    CENTRALIZED_CONFIG_AVAILABLE = False
+    logger.warning("⚠️ Centralized config not available, using local config")
+
 # Configure logging for tests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Test configuration
-TEST_CONFIG = {
-    'mysql': {
-        'host': 'localhost',
-        'port': 3307,
-        'user': 'test_user',
-        'password': 'test_password',
-        'database': 'crypto_prices_test',
-        'charset': 'utf8mb4'
-    },
-    'redis': {
-        'host': 'localhost',
-        'port': 6380,
-        'db': 0
-    },
-    'api_timeouts': {
-        'coingecko': 10,
-        'fred': 15,
-        'guardian': 12
-    },
-    'rate_limits': {
-        'coingecko': 0.2,  # 5 requests per second for testing
-        'fred': 0.5,       # 2 requests per second for testing
-        'guardian': 0.3    # ~3 requests per second for testing
-    },
-    'endpoint_testing': {
-        'api_gateway_url': 'http://localhost:8000',
-        'collectors': {
-            'price': 'http://localhost:8001',
-            'news': 'http://localhost:8002', 
-            'sentiment': 'http://localhost:8003',
-            'technical': 'http://localhost:8004',
-            'macro': 'http://localhost:8005'
+# Test configuration with environment variable support and centralized config fallback
+if CENTRALIZED_CONFIG_AVAILABLE:
+    # Use centralized configuration
+    TEST_CONFIG = {
+        'mysql': db_config.get_mysql_config_dict(),
+        'redis': db_config.get_redis_config_dict(),
+        'api_timeouts': {
+            'coingecko': 10,
+            'fred': 15,
+            'guardian': 12
         },
-        'auth': {
-            'master_key': 'master-key',
-            'readonly_key': 'readonly-key',
-            'trading_key': 'trading-key'
+        'rate_limits': {
+            'coingecko': 0.2,  # 5 requests per second for testing
+            'fred': 0.5,       # 2 requests per second for testing
+            'guardian': 0.3    # ~3 requests per second for testing
         },
-        'timeouts': {
-            'default': 30,
-            'websocket': 10
+        'endpoint_testing': {
+            'api_gateway_url': 'http://localhost:8000',
+            'collectors': {
+                'price': 'http://localhost:8001',
+                'news': 'http://localhost:8002', 
+                'sentiment': 'http://localhost:8003',
+                'technical': 'http://localhost:8004',
+                'macro': 'http://localhost:8005'
+            },
+            'auth': {
+                'master_key': 'master-key',
+                'readonly_key': 'readonly-key',
+                'trading_key': 'trading-key'
+            },
+            'timeouts': {
+                'default': 30,
+                'websocket': 10
+            }
         }
     }
-}
+else:
+    # Fallback to local configuration
+    TEST_CONFIG = {
+        'mysql': {
+            'host': os.getenv('MYSQL_HOST', 'localhost'),
+            'port': int(os.getenv('MYSQL_PORT', '3306')),
+            'user': os.getenv('MYSQL_USER', 'news_collector'),
+            'password': os.getenv('MYSQL_PASSWORD', '99Rules!'),
+            'database': os.getenv('MYSQL_DATABASE', 'crypto_data_test'),
+            'charset': 'utf8mb4'
+        },
+        'redis': {
+            'host': os.getenv('REDIS_HOST', 'localhost'),
+            'port': int(os.getenv('REDIS_PORT', '6379')),
+            'db': 0
+        },
+        'api_timeouts': {
+            'coingecko': 10,
+            'fred': 15,
+            'guardian': 12
+        },
+        'rate_limits': {
+            'coingecko': 0.2,  # 5 requests per second for testing
+            'fred': 0.5,       # 2 requests per second for testing
+            'guardian': 0.3    # ~3 requests per second for testing
+        },
+        'endpoint_testing': {
+            'api_gateway_url': 'http://localhost:8000',
+            'collectors': {
+                'price': 'http://localhost:8001',
+                'news': 'http://localhost:8002', 
+                'sentiment': 'http://localhost:8003',
+                'technical': 'http://localhost:8004',
+                'macro': 'http://localhost:8005'
+            },
+            'auth': {
+                'master_key': 'master-key',
+                'readonly_key': 'readonly-key',
+                'trading_key': 'trading-key'
+            },
+            'timeouts': {
+                'default': 30,
+                'websocket': 10
+            }
+        }
+    }
 
 
 # Pytest Configuration
@@ -624,43 +670,136 @@ def pytest_ignore_collect(collection_path, config):
 
 @pytest.fixture(scope="session")
 def test_mysql_connection():
-    """MySQL database connection for test database"""
-    # Wait for MySQL to be ready
-    max_retries = 30
+    """MySQL database connection for test database with improved retry logic"""
+    # Enhanced retry logic with better error handling
+    max_retries = 60  # Increased retries for CI/CD environments
     retry_count = 0
+    connection = None
+    
+    logger.info(f"🔍 Attempting to connect to MySQL at {TEST_CONFIG['mysql']['host']}:{TEST_CONFIG['mysql']['port']}")
     
     while retry_count < max_retries:
         try:
+            # Test basic connectivity first
+            import socket
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(5)
+            result = sock.connect_ex((TEST_CONFIG['mysql']['host'], TEST_CONFIG['mysql']['port']))
+            sock.close()
+            
+            if result != 0:
+                raise Exception(f"Cannot reach MySQL port {TEST_CONFIG['mysql']['port']}")
+            
+            # Now try MySQL connection
             connection = mysql.connector.connect(**TEST_CONFIG['mysql'])
             connection.ping(reconnect=True)
+            
+            logger.info(f"✅ Successfully connected to MySQL on attempt {retry_count + 1}")
             yield connection
-            connection.close()
             break
-        except mysql.connector.Error as e:
+            
+        except Exception as e:
             retry_count += 1
+            logger.warning(f"❌ MySQL connection attempt {retry_count}/{max_retries} failed: {e}")
+            
             if retry_count >= max_retries:
-                raise Exception(f"Could not connect to test MySQL after {max_retries} attempts: {e}")
-            time.sleep(2)
+                # Provide detailed diagnostic information
+                error_msg = f"""
+                Could not connect to test MySQL after {max_retries} attempts.
+                
+                Configuration:
+                - Host: {TEST_CONFIG['mysql']['host']}
+                - Port: {TEST_CONFIG['mysql']['port']}
+                - User: {TEST_CONFIG['mysql']['user']}
+                - Database: {TEST_CONFIG['mysql']['database']}
+                
+                Last error: {e}
+                
+                Possible causes:
+                1. MySQL service not started in CI/CD
+                2. Port mapping mismatch 
+                3. Service health check not ready
+                4. Network connectivity issues
+                
+                Environment variables:
+                - MYSQL_HOST: {os.getenv('MYSQL_HOST', 'not set')}
+                - MYSQL_PORT: {os.getenv('MYSQL_PORT', 'not set')}
+                - MYSQL_USER: {os.getenv('MYSQL_USER', 'not set')}
+                - MYSQL_DATABASE: {os.getenv('MYSQL_DATABASE', 'not set')}
+                """
+                raise Exception(error_msg)
+            
+            # Exponential backoff with jitter
+            sleep_time = min(2 ** (retry_count // 5), 10) + (retry_count % 3)
+            time.sleep(sleep_time)
+    
+    # Cleanup
+    try:
+        if connection and connection.is_connected():
+            connection.close()
+    except Exception as e:
+        logger.warning(f"Error closing MySQL connection: {e}")
 
 @pytest.fixture(scope="session")
 def test_redis_connection():
-    """Redis connection for test cache"""
-    # Wait for Redis to be ready
-    max_retries = 15
+    """Redis connection for test cache with improved retry logic"""
+    # Enhanced retry logic similar to MySQL
+    max_retries = 30
     retry_count = 0
+    connection = None
+    
+    logger.info(f"🔍 Attempting to connect to Redis at {TEST_CONFIG['redis']['host']}:{TEST_CONFIG['redis']['port']}")
     
     while retry_count < max_retries:
         try:
+            # Test basic connectivity first
+            import socket
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(3)
+            result = sock.connect_ex((TEST_CONFIG['redis']['host'], TEST_CONFIG['redis']['port']))
+            sock.close()
+            
+            if result != 0:
+                raise Exception(f"Cannot reach Redis port {TEST_CONFIG['redis']['port']}")
+            
+            # Now try Redis connection
             connection = redis.Redis(**TEST_CONFIG['redis'])
             connection.ping()
+            
+            logger.info(f"✅ Successfully connected to Redis on attempt {retry_count + 1}")
             yield connection
-            connection.close()
             break
-        except redis.ConnectionError as e:
+            
+        except Exception as e:
             retry_count += 1
+            logger.warning(f"❌ Redis connection attempt {retry_count}/{max_retries} failed: {e}")
+            
             if retry_count >= max_retries:
-                raise Exception(f"Could not connect to test Redis after {max_retries} attempts: {e}")
-            time.sleep(1)
+                error_msg = f"""
+                Could not connect to test Redis after {max_retries} attempts.
+                
+                Configuration:
+                - Host: {TEST_CONFIG['redis']['host']}
+                - Port: {TEST_CONFIG['redis']['port']}
+                
+                Last error: {e}
+                
+                Environment variables:
+                - REDIS_HOST: {os.getenv('REDIS_HOST', 'not set')}
+                - REDIS_PORT: {os.getenv('REDIS_PORT', 'not set')}
+                """
+                raise Exception(error_msg)
+            
+            # Progressive backoff
+            sleep_time = min(1 + (retry_count // 5), 5)
+            time.sleep(sleep_time)
+    
+    # Cleanup
+    try:
+        if connection:
+            connection.close()
+    except Exception as e:
+        logger.warning(f"Error closing Redis connection: {e}")
 
 @pytest.fixture
 def clean_test_database(test_mysql_connection):
