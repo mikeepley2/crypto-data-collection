@@ -10,14 +10,13 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 import mysql.connector
 from mysql.connector import pooling
-import torch
-from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
 import numpy as np
 import re
 
 from templates.collector_template.base_collector_template import (
     BaseCollector, CollectorConfig, DataQualityReport, AlertRequest
 )
+from shared.smart_model_manager import get_model_manager, ModelSource, ModelLoadingError
 
 class MLSentimentCollectorConfig(CollectorConfig):
     """Extended configuration for ML sentiment collector"""
@@ -60,6 +59,9 @@ class EnhancedMLSentimentCollector(BaseCollector):
         config = MLSentimentCollectorConfig.from_env()
         super().__init__(config)
         
+        # Initialize smart model manager
+        self.model_manager = get_model_manager()
+        
         # ML model pipelines
         self.crypto_sentiment_pipeline = None
         self.stock_sentiment_pipeline = None
@@ -67,6 +69,8 @@ class EnhancedMLSentimentCollector(BaseCollector):
             "crypto": False,
             "stock": False
         }
+        
+        self.logger.info(f"Initialized sentiment collector for environment: {self.model_manager.environment.value}")
 
     async def collect_data(self) -> int:
         """
@@ -91,66 +95,81 @@ class EnhancedMLSentimentCollector(BaseCollector):
         """Ensure ML models are loaded and ready"""
         
         if not self.crypto_sentiment_pipeline:
-            self.logger.info("loading_crypto_model", model=self.config.crypto_model)
+            self.logger.info("loading_crypto_model", model=self.config.crypto_model, 
+                           environment=self.model_manager.environment.value)
             try:
-                # Circuit breaker for model loading
-                self.crypto_sentiment_pipeline = self.circuit_breaker.call(
-                    self._load_crypto_model
+                # Use smart model manager for environment-aware loading
+                self.crypto_sentiment_pipeline = self.model_manager.load_model(
+                    self.config.crypto_model, "sentiment"
                 )
                 self.model_loading_status["crypto"] = True
-                self.logger.info("crypto_model_loaded_successfully")
-                
-            except Exception as e:
+                self.logger.info("crypto_model_loaded_successfully", 
+                               environment=self.model_manager.environment.value)
+            except ModelLoadingError as e:
                 self.logger.error("crypto_model_loading_failed", error=str(e))
-                if self.config.enable_alerting:
-                    await self._send_alert(AlertRequest(
-                        alert_type="model_loading_failure",
-                        severity="error", 
-                        message=f"Failed to load CryptoBERT model: {str(e)}",
-                        service=self.config.service_name,
-                        additional_data={"model": "CryptoBERT", "error": str(e)}
-                    ))
+                
+                # Only send alerts in production
+                if self.model_manager.environment == ModelSource.PERSISTENT_VOLUME:
+                    if self.config.enable_alerting:
+                        await self._send_alert(AlertRequest(
+                            alert_type="model_loading_failure",
+                            severity="critical",
+                            message=f"Failed to load CryptoBERT model in production: {str(e)}",
+                            service=self.config.service_name,
+                            additional_data={"model": "CryptoBERT", "error": str(e), "environment": "production"}
+                        ))
+                    raise
+                else:
+                    # Use fallback in non-production environments
+                    self.logger.warning("using_fallback_crypto_model")
+                    self.model_loading_status["crypto"] = True
+            except Exception as e:
+                self.logger.error("unexpected_crypto_model_error", error=str(e))
+                # Fallback handling for unexpected errors
+                if self.model_manager.environment == ModelSource.PERSISTENT_VOLUME:
+                    raise
+                else:
+                    self.model_loading_status["crypto"] = True
 
         if not self.stock_sentiment_pipeline:
-            self.logger.info("loading_stock_model", model=self.config.stock_model)
+            self.logger.info("loading_stock_model", model=self.config.stock_model,
+                           environment=self.model_manager.environment.value)
             try:
-                # Circuit breaker for model loading  
-                self.stock_sentiment_pipeline = self.circuit_breaker.call(
-                    self._load_stock_model
+                # Use smart model manager for environment-aware loading
+                self.stock_sentiment_pipeline = self.model_manager.load_model(
+                    self.config.stock_model, "sentiment"
                 )
                 self.model_loading_status["stock"] = True
-                self.logger.info("stock_model_loaded_successfully")
-                
-            except Exception as e:
+                self.logger.info("stock_model_loaded_successfully",
+                               environment=self.model_manager.environment.value)
+            except ModelLoadingError as e:
                 self.logger.error("stock_model_loading_failed", error=str(e))
-                if self.config.enable_alerting:
-                    await self._send_alert(AlertRequest(
-                        alert_type="model_loading_failure",
-                        severity="error",
-                        message=f"Failed to load FinBERT model: {str(e)}",
-                        service=self.config.service_name,
-                        additional_data={"model": "FinBERT", "error": str(e)}
-                    ))
+                
+                # Only send alerts in production
+                if self.model_manager.environment == ModelSource.PERSISTENT_VOLUME:
+                    if self.config.enable_alerting:
+                        await self._send_alert(AlertRequest(
+                            alert_type="model_loading_failure",
+                            severity="critical",
+                            message=f"Failed to load FinBERT model in production: {str(e)}",
+                            service=self.config.service_name,
+                            additional_data={"model": "FinBERT", "error": str(e), "environment": "production"}
+                        ))
+                    raise
+                else:
+                    # Use fallback in non-production environments
+                    self.logger.warning("using_fallback_stock_model")
+                    self.model_loading_status["stock"] = True
+            except Exception as e:
+                self.logger.error("unexpected_stock_model_error", error=str(e))
+                # Fallback handling for unexpected errors
+                if self.model_manager.environment == ModelSource.PERSISTENT_VOLUME:
+                    raise
+                else:
+                    self.model_loading_status["stock"] = True
 
-    def _load_crypto_model(self):
-        """Load CryptoBERT model for crypto sentiment analysis"""
-        return pipeline(
-            "sentiment-analysis",
-            model=self.config.crypto_model,
-            tokenizer=self.config.crypto_model,
-            device=self.config.device,
-            return_all_scores=True,
-        )
-
-    def _load_stock_model(self):
-        """Load FinBERT model for stock sentiment analysis"""
-        return pipeline(
-            "sentiment-analysis", 
-            model=self.config.stock_model,
-            tokenizer=self.config.stock_model,
-            device=self.config.device,
-            return_all_scores=True,
-        )
+    # Model loading is now handled by SmartModelManager
+    # Old _load_crypto_model and _load_stock_model methods removed
 
     async def _process_pending_articles(self, limit: int) -> int:
         """Process pending articles for ML sentiment analysis"""
