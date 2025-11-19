@@ -104,25 +104,52 @@ class DatabaseConfig:
             # In CI environment, use existing database with test tables
             if os.getenv('CI') == 'true':
                 default_database = 'crypto_news'
+                # CI environment needs specific host override - force use of correct MySQL instance
+                ci_host = os.getenv('MYSQL_HOST')
+                if ci_host:
+                    default_host = ci_host
+                else:
+                    # Fallback to known working CI MySQL host
+                    default_host = '172.22.32.1'
             else:
                 default_database = 'crypto_data_test'
         else:
             default_database = 'crypto_prices'
         
-        config = {
-            'host': os.getenv('MYSQL_HOST') or os.getenv('DB_HOST', default_host),
-            'port': int(os.getenv('MYSQL_PORT') or os.getenv('DB_PORT', '3306')),
-            'user': os.getenv('MYSQL_USER') or os.getenv('DB_USER', 'news_collector'),
-            'password': os.getenv('MYSQL_PASSWORD') or os.getenv('DB_PASSWORD', '99Rules!'),
-            'database': os.getenv('MYSQL_DATABASE') or os.getenv('DB_NAME', default_database),
-            'connect_timeout': int(os.getenv('DB_CONNECTION_TIMEOUT', '30')),
-            'autocommit': True,
-            'charset': 'utf8mb4',
-            'use_unicode': True,
-            'pool_name': f'pool_{os.getpid()}_{self.environment}',
-            'pool_size': int(os.getenv('DB_POOL_SIZE', '10')),
-            'pool_reset_session': True,
-        }
+        # CI environment overrides for integration tests
+        if os.getenv('CI') == 'true' and is_testing:
+            # Force specific CI configuration to use existing database with test tables
+            config = {
+                'host': '172.22.32.1',  # Known working MySQL host in CI
+                'port': 3306,
+                'user': 'news_collector',
+                'password': '99Rules!',
+                'database': 'crypto_news',  # Database with test tables
+                'connect_timeout': int(os.getenv('DB_CONNECTION_TIMEOUT', '30')),
+                'autocommit': True,
+                'charset': 'utf8mb4',
+                'use_unicode': True,
+                'pool_name': f'pool_{os.getpid()}_{self.environment}',
+                'pool_size': int(os.getenv('DB_POOL_SIZE', '10')),
+                'pool_reset_session': True,
+            }
+            logger.info(f"🎯 CI Test Override: Using {config['host']}:{config['port']}/{config['database']}")
+        else:
+            # Standard configuration logic
+            config = {
+                'host': os.getenv('MYSQL_HOST') or os.getenv('DB_HOST', default_host),
+                'port': int(os.getenv('MYSQL_PORT') or os.getenv('DB_PORT', '3306')),
+                'user': os.getenv('MYSQL_USER') or os.getenv('DB_USER', 'news_collector'),
+                'password': os.getenv('MYSQL_PASSWORD') or os.getenv('DB_PASSWORD', '99Rules!'),
+                'database': os.getenv('MYSQL_DATABASE') or os.getenv('DB_NAME', default_database),
+                'connect_timeout': int(os.getenv('DB_CONNECTION_TIMEOUT', '30')),
+                'autocommit': True,
+                'charset': 'utf8mb4',
+                'use_unicode': True,
+                'pool_name': f'pool_{os.getpid()}_{self.environment}',
+                'pool_size': int(os.getenv('DB_POOL_SIZE', '10')),
+                'pool_reset_session': True,
+            }
         
         return config
         
