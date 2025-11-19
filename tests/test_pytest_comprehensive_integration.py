@@ -1530,8 +1530,8 @@ class TestDataFlowIntegration:
         # Get a recent record for analysis
         cursor.execute("""
             SELECT * FROM ml_features_materialized 
-            WHERE timestamp_iso >= DATE_SUB(NOW(), INTERVAL 6 HOURS)
-            AND current_price IS NOT NULL
+            WHERE timestamp >= DATE_SUB(NOW(), INTERVAL 6 HOUR)
+            AND target_price IS NOT NULL
             ORDER BY updated_at DESC 
             LIMIT 1
         """)
@@ -1563,7 +1563,7 @@ class TestDataFlowIntegration:
         cursor.execute("""
             SELECT DISTINCT symbol 
             FROM price_data_real 
-            WHERE timestamp_iso >= DATE_SUB(NOW(), INTERVAL 2 HOURS)
+            WHERE last_updated >= DATE_SUB(NOW(), INTERVAL 2 HOUR)
             ORDER BY symbol
             LIMIT 20
         """)

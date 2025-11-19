@@ -93,7 +93,14 @@ class DatabaseConfig:
         default_host = self._get_default_host()
         
         # Use test-specific settings if in test environment
-        default_database = 'crypto_data_test' if is_testing else 'crypto_prices'
+        if is_testing:
+            # In CI environment, use existing database with test tables
+            if os.getenv('CI') == 'true':
+                default_database = 'crypto_news'
+            else:
+                default_database = 'crypto_data_test'
+        else:
+            default_database = 'crypto_prices'
         
         config = {
             'host': os.getenv('MYSQL_HOST') or os.getenv('DB_HOST', default_host),
