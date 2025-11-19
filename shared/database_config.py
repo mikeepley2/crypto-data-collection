@@ -84,7 +84,14 @@ class DatabaseConfig:
         return (
             'test' in os.getenv('PYTEST_CURRENT_TEST', '').lower() or
             os.getenv('TESTING') == 'true' or
-            any('test' in arg.lower() for arg in sys.argv)
+            'pytest' in ' '.join(sys.argv).lower() or
+            any('test' in arg.lower() for arg in sys.argv) or
+            # Check if running from pytest process
+            any('pytest' in part for part in os.getenv('_', '').split('/')) or
+            # Check command line for pytest
+            'pytest' in os.getenv('PS1', '') or
+            # Check process name
+            'pytest' in str(sys.argv[0]).lower()
         )
         
     def _load_mysql_config(self) -> Dict[str, Any]:
