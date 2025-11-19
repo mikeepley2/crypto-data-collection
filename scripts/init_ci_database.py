@@ -104,81 +104,94 @@ def create_production_schema():
         cursor = connection.cursor()
         
         # Production schema from create_missing_tables.py - EXACT MATCH
+        # Updated to reflect actual database structure with correct field names
         table_schemas = {
-            'onchain_data': """
-            CREATE TABLE IF NOT EXISTS onchain_data (
-                id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                symbol VARCHAR(20) NOT NULL,
-                active_addresses INT,
-                transaction_count INT,
-                large_transaction_count INT,
-                whale_transaction_count INT,
-                network_utilization DECIMAL(5,2),
-                hash_rate DECIMAL(20,2),
-                difficulty DECIMAL(30,2),
-                total_supply DECIMAL(25,8),
-                circulating_supply DECIMAL(25,8),
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_symbol_timestamp (symbol, timestamp)
+            'crypto_assets': """
+            CREATE TABLE IF NOT EXISTS crypto_assets (
+                id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                symbol VARCHAR(16) NOT NULL UNIQUE,
+                name VARCHAR(64) NOT NULL,
+                aliases JSON DEFAULT NULL,
+                category VARCHAR(32) DEFAULT 'crypto',
+                is_active TINYINT(1) DEFAULT '1',
+                created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+                coingecko_id VARCHAR(150) DEFAULT NULL,
+                description TEXT,
+                market_cap_rank INT DEFAULT NULL,
+                coingecko_score DECIMAL(5,2) DEFAULT NULL,
+                homepage VARCHAR(255) DEFAULT NULL,
+                last_metadata_update TIMESTAMP NULL DEFAULT NULL,
+                coinbase_supported TINYINT(1) DEFAULT '1',
+                binance_us_supported TINYINT(1) DEFAULT '0',
+                kucoin_supported TINYINT(1) DEFAULT '0',
+                exchange_support_updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_crypto_assets_coinbase_supported (coinbase_supported)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """,
             
             'macro_indicators': """
             CREATE TABLE IF NOT EXISTS macro_indicators (
-                id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                indicator_name VARCHAR(100) NOT NULL,
-                indicator_value DECIMAL(15,4),
-                unit VARCHAR(50),
-                source VARCHAR(100),
-                frequency VARCHAR(20),
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_indicator_timestamp (indicator_name, timestamp)
+                id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                symbol VARCHAR(20) NOT NULL,
+                timestamp_iso DATETIME NOT NULL,
+                indicator_type VARCHAR(100) NOT NULL,
+                value DECIMAL(20,8) DEFAULT NULL,
+                metadata JSON DEFAULT NULL,
+                created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                calculation_method VARCHAR(255) DEFAULT NULL,
+                data_source VARCHAR(100) DEFAULT NULL,
+                quality_score DECIMAL(3,2) DEFAULT NULL,
+                confidence_interval DECIMAL(5,4) DEFAULT NULL,
+                seasonal_adjustment TINYINT(1) DEFAULT '0',
+                UNIQUE KEY unique_symbol_timestamp_indicator (symbol, timestamp_iso, indicator_type),
+                INDEX idx_macro_indicators_symbol_timestamp (symbol, timestamp_iso),
+                INDEX idx_macro_indicators_indicator_type (indicator_type),
+                INDEX idx_macro_indicators_timestamp (timestamp_iso)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """,
             
             'technical_indicators': """
             CREATE TABLE IF NOT EXISTS technical_indicators (
-                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
                 symbol VARCHAR(20) NOT NULL,
-                rsi_14 DECIMAL(5,2),
-                sma_20 DECIMAL(20,8),
-                sma_50 DECIMAL(20,8),
-                sma_200 DECIMAL(20,8),
-                ema_12 DECIMAL(20,8),
-                ema_26 DECIMAL(20,8),
-                macd DECIMAL(20,8),
-                macd_signal DECIMAL(20,8),
-                macd_histogram DECIMAL(20,8),
-                bollinger_upper DECIMAL(20,8),
-                bollinger_middle DECIMAL(20,8),
-                bollinger_lower DECIMAL(20,8),
-                stoch_k DECIMAL(5,2),
-                stoch_d DECIMAL(5,2),
-                williams_r DECIMAL(5,2),
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_symbol_timestamp (symbol, timestamp)
+                timestamp_iso DATETIME NOT NULL,
+                sma_20 DECIMAL(20,8) DEFAULT NULL,
+                sma_50 DECIMAL(20,8) DEFAULT NULL,
+                sma_200 DECIMAL(20,8) DEFAULT NULL,
+                ema_12 DECIMAL(20,8) DEFAULT NULL,
+                ema_26 DECIMAL(20,8) DEFAULT NULL,
+                macd DECIMAL(20,8) DEFAULT NULL,
+                macd_signal DECIMAL(20,8) DEFAULT NULL,
+                macd_histogram DECIMAL(20,8) DEFAULT NULL,
+                rsi DECIMAL(10,4) DEFAULT NULL,
+                bollinger_upper DECIMAL(20,8) DEFAULT NULL,
+                bollinger_middle DECIMAL(20,8) DEFAULT NULL,
+                bollinger_lower DECIMAL(20,8) DEFAULT NULL,
+                stoch_k DECIMAL(10,4) DEFAULT NULL,
+                stoch_d DECIMAL(10,4) DEFAULT NULL,
+                williams_r DECIMAL(10,4) DEFAULT NULL,
+                atr DECIMAL(20,8) DEFAULT NULL,
+                created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY unique_symbol_timestamp (symbol, timestamp_iso),
+                INDEX idx_symbol (symbol),
+                INDEX idx_timestamp (timestamp_iso)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """,
             
             'real_time_sentiment_signals': """
             CREATE TABLE IF NOT EXISTS real_time_sentiment_signals (
-                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                timestamp TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
                 symbol VARCHAR(20) NOT NULL,
-                sentiment_score DECIMAL(5,4),
-                sentiment_label VARCHAR(20),
-                confidence DECIMAL(5,4),
-                source VARCHAR(100),
-                signal_strength DECIMAL(5,4),
-                volume_weighted_sentiment DECIMAL(5,4),
-                social_mentions_count INT,
-                news_sentiment_score DECIMAL(5,4),
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                signal_type VARCHAR(50) NOT NULL,
+                sentiment_score DECIMAL(10,6) DEFAULT NULL,
+                confidence DECIMAL(10,6) DEFAULT NULL,
+                metadata JSON DEFAULT NULL,
+                signal_strength DECIMAL(10,6) DEFAULT NULL,
                 INDEX idx_symbol_timestamp (symbol, timestamp),
-                INDEX idx_source_timestamp (source, timestamp)
+                INDEX idx_signal_type (signal_type),
+                INDEX idx_timestamp (timestamp)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """,
             
