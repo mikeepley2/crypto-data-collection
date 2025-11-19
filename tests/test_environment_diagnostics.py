@@ -1,24 +1,110 @@
 #!/usr/bin/env python3
 """
-Test Environment Diagnostic Script
-
-This script validates that the test environment is properly configured
-and all required services are accessible before running tests.
+Environment Diagnostics Script
+Tests the CI environment setup and connectivity for integration tests.
 """
 
 import os
 import sys
-import time
 import socket
 import logging
-from pathlib import Path
+import time
 
-# Add project root to path
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+def test_environment_variables():
+    """Test required environment variables are set"""
+    logger.info("🔍 Testing environment variables...")
+    
+    required_vars = [
+        'MYSQL_HOST', 'MYSQL_PORT', 'MYSQL_USER', 
+        'MYSQL_PASSWORD', 'MYSQL_DATABASE'
+    ]
+    
+    optional_vars = ['REDIS_HOST', 'REDIS_PORT', 'ENVIRONMENT']
+    
+    logger.info("📊 Required environment variables:")
+    missing_vars = []
+    for var in required_vars:
+        value = os.getenv(var)
+        if value:
+            if 'PASSWORD' in var:
+                display_value = '***'
+            else:
+                display_value = value
+            logger.info(f"   ✅ {var}: {display_value}")
+        else:
+            logger.error(f"   ❌ {var}: Not set")
+            missing_vars.append(var)
+    
+    logger.info("📊 Optional environment variables:")
+    for var in optional_vars:
+        value = os.getenv(var, 'Not set')
+        logger.info(f"   📋 {var}: {value}")
+    
+    if missing_vars:
+        logger.error(f"❌ Missing required environment variables: {missing_vars}")
+        return False
+    else:
+        logger.info("✅ All required environment variables are set")
+        return True
+
+def test_network_connectivity():
+    """Test network connectivity to required services"""
+    logger.info("🌐 Testing network connectivity...")
+    
+    # Test MySQL connectivity
+    mysql_host = os.getenv('MYSQL_HOST', '127.0.0.1')
+    mysql_port = int(os.getenv('MYSQL_PORT', '3306'))
+    
+    logger.info(f"🔍 Testing MySQL connectivity to {mysql_host}:{mysql_port}")
+    
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(10)
+        result = sock.connect_ex((mysql_host, mysql_port))
+        sock.close()
+        
+        if result == 0:
+            logger.info("✅ MySQL network connectivity test passed")
+            mysql_ok = True
+        else:
+            logger.error(f"❌ MySQL network connectivity test failed: port {mysql_port} not accessible")
+            mysql_ok = False
+    except Exception as e:
+        logger.error(f"❌ MySQL network connectivity test failed: {e}")
+        mysql_ok = False
+    
+    # Test Redis connectivity (optional)
+    redis_host = os.getenv('REDIS_HOST', '127.0.0.1')
+    redis_port = int(os.getenv('REDIS_PORT', '6379'))
+    
+    logger.info(f"🔍 Testing Redis connectivity to {redis_host}:{redis_port}")
+    
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5)
+        result = sock.connect_ex((redis_host, redis_port))
+        sock.close()
+        
+        if result == 0:
+            logger.info("✅ Redis network connectivity test passed")
+            redis_ok = True
+        else:
+            logger.warning(f"⚠️ Redis network connectivity test failed: port {redis_port} not accessible")
+            redis_ok = False
+    except Exception as e:
+        logger.warning(f"⚠️ Redis network connectivity test failed: {e}")
+        redis_ok = False
+    
+    # MySQL is required, Redis is optional
+    if mysql_ok:
+        logger.info("✅ Network connectivity tests passed (required services)")
+        return True
+    else:
+        logger.error("❌ Network connectivity tests failed (required services unavailable)")
+        return False
 
 def test_port_connectivity(host: str, port: int, service_name: str) -> bool:
     """Test if a port is accessible"""

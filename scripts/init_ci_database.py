@@ -26,14 +26,19 @@ def wait_for_mysql(max_retries=30, retry_interval=2):
     """Wait for MySQL to be ready"""
     logger.info("🔄 Waiting for MySQL to be ready...")
     
+    # Get MySQL configuration from environment variables with CI defaults
+    mysql_host = os.environ.get('MYSQL_HOST', '127.0.0.1')
+    mysql_port = int(os.environ.get('MYSQL_PORT', '3306'))
+    mysql_root_password = os.environ.get('MYSQL_ROOT_PASSWORD', '99Rules!')
+    
     for attempt in range(max_retries):
         try:
-            # Try to connect using CI configuration
+            # Try to connect using CI configuration from environment
             connection = mysql.connector.connect(
-                host='127.0.0.1',
-                port=3306,
+                host=mysql_host,
+                port=mysql_port,
                 user='root',
-                password='root',
+                password=mysql_root_password,
                 connect_timeout=10,
                 autocommit=True
             )
@@ -60,28 +65,35 @@ def create_database_and_user():
     logger.info("🔧 Creating database and user...")
     
     try:
+        # Get MySQL configuration from environment variables with CI defaults
+        mysql_host = os.environ.get('MYSQL_HOST', '127.0.0.1')
+        mysql_port = int(os.environ.get('MYSQL_PORT', '3306'))
+        mysql_root_password = os.environ.get('MYSQL_ROOT_PASSWORD', '99Rules!')
+        mysql_user = os.environ.get('MYSQL_USER', 'news_collector')
+        mysql_password = os.environ.get('MYSQL_PASSWORD', '99Rules!')
+        database_name = os.environ.get('MYSQL_DATABASE', 'crypto_data_test')
+        
         # Connect as root to create database and user
         connection = mysql.connector.connect(
-            host='127.0.0.1',
-            port=3306,
+            host=mysql_host,
+            port=mysql_port,
             user='root',
-            password='root',
+            password=mysql_root_password,
             autocommit=True
         )
         cursor = connection.cursor()
         
         # Create database
-        database_name = "crypto_data_test"
         cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{database_name}`")
         logger.info(f"📊 Database '{database_name}' created/verified")
         
         # Create user and grant privileges
-        cursor.execute("CREATE USER IF NOT EXISTS 'news_collector'@'%' IDENTIFIED BY '99Rules!'")
-        cursor.execute(f"GRANT ALL PRIVILEGES ON `{database_name}`.* TO 'news_collector'@'%'")
-        cursor.execute("CREATE USER IF NOT EXISTS 'news_collector'@'localhost' IDENTIFIED BY '99Rules!'")
-        cursor.execute(f"GRANT ALL PRIVILEGES ON `{database_name}`.* TO 'news_collector'@'localhost'")
+        cursor.execute(f"CREATE USER IF NOT EXISTS '{mysql_user}'@'%' IDENTIFIED BY '{mysql_password}'")
+        cursor.execute(f"GRANT ALL PRIVILEGES ON `{database_name}`.* TO '{mysql_user}'@'%'")
+        cursor.execute(f"CREATE USER IF NOT EXISTS '{mysql_user}'@'localhost' IDENTIFIED BY '{mysql_password}'")
+        cursor.execute(f"GRANT ALL PRIVILEGES ON `{database_name}`.* TO '{mysql_user}'@'localhost'")
         cursor.execute("FLUSH PRIVILEGES")
-        logger.info("👤 User 'news_collector' created/verified with privileges")
+        logger.info(f"👤 User '{mysql_user}' created/verified with privileges")
         
         # Switch to test database
         cursor.execute(f"USE `{database_name}`")
@@ -129,25 +141,77 @@ def create_production_schema():
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """,
             
+            'price_data_real': """
+            CREATE TABLE IF NOT EXISTS price_data_real (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                symbol VARCHAR(20) NOT NULL,
+                coin_id VARCHAR(50),
+                name VARCHAR(100),
+                current_price DECIMAL(20,8) NOT NULL,
+                market_cap BIGINT,
+                volume_usd_24h BIGINT,
+                price_change_24h DECIMAL(10,4),
+                price_change_percentage_24h DECIMAL(10,4),
+                market_cap_change_24h BIGINT,
+                market_cap_change_percentage_24h DECIMAL(10,4),
+                circulating_supply DECIMAL(20,2),
+                total_supply DECIMAL(20,2),
+                max_supply DECIMAL(20,2),
+                ath DECIMAL(20,8),
+                ath_change_percentage DECIMAL(10,4),
+                atl DECIMAL(20,8),
+                atl_change_percentage DECIMAL(10,4),
+                timestamp BIGINT,
+                timestamp_iso TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_symbol_time (symbol, timestamp_iso),
+                INDEX idx_updated_at (updated_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """,
+            
+            'onchain_data': """
+            CREATE TABLE IF NOT EXISTS onchain_data (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                symbol VARCHAR(20) NOT NULL,
+                coin_id VARCHAR(50),
+                active_addresses BIGINT,
+                transaction_count BIGINT,
+                transaction_volume DECIMAL(20,8),
+                large_transaction_count BIGINT,
+                network_utilization DECIMAL(5,2),
+                hash_rate DECIMAL(20,8),
+                difficulty DECIMAL(25,8),
+                block_time DECIMAL(10,4),
+                fees_median DECIMAL(20,8),
+                fees_average DECIMAL(20,8),
+                timestamp_iso DATETIME NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY unique_symbol_timestamp (symbol, timestamp_iso),
+                INDEX idx_symbol (symbol),
+                INDEX idx_timestamp (timestamp_iso)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """,
+            
             'macro_indicators': """
             CREATE TABLE IF NOT EXISTS macro_indicators (
                 id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                symbol VARCHAR(20) NOT NULL,
-                timestamp_iso DATETIME NOT NULL,
-                indicator_type VARCHAR(100) NOT NULL,
+                indicator_name VARCHAR(200) NOT NULL,
+                fred_series_id VARCHAR(50),
+                indicator_date DATE NOT NULL,
                 value DECIMAL(20,8) DEFAULT NULL,
-                metadata JSON DEFAULT NULL,
+                unit VARCHAR(50),
+                frequency VARCHAR(20),
+                category VARCHAR(100),
+                data_source VARCHAR(50),
+                collected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                calculation_method VARCHAR(255) DEFAULT NULL,
-                data_source VARCHAR(100) DEFAULT NULL,
-                quality_score DECIMAL(3,2) DEFAULT NULL,
-                confidence_interval DECIMAL(5,4) DEFAULT NULL,
-                seasonal_adjustment TINYINT(1) DEFAULT '0',
-                UNIQUE KEY unique_symbol_timestamp_indicator (symbol, timestamp_iso, indicator_type),
-                INDEX idx_macro_indicators_symbol_timestamp (symbol, timestamp_iso),
-                INDEX idx_macro_indicators_indicator_type (indicator_type),
-                INDEX idx_macro_indicators_timestamp (timestamp_iso)
+                UNIQUE KEY unique_indicator_date (indicator_name, indicator_date),
+                INDEX idx_indicator_name (indicator_name),
+                INDEX idx_indicator_date (indicator_date),
+                INDEX idx_category (category)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """,
             
@@ -199,6 +263,14 @@ def create_production_schema():
             CREATE TABLE IF NOT EXISTS ml_features_materialized (
                 id BIGINT AUTO_INCREMENT PRIMARY KEY,
                 symbol VARCHAR(20) NOT NULL,
+                price_date DATE,
+                price_hour TINYINT,
+                timestamp_iso TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                current_price DECIMAL(20,8),
+                volume_24h DECIMAL(25,8),
+                hourly_volume DECIMAL(25,8),
+                market_cap BIGINT,
+                price_change_24h DECIMAL(10,4),
                 price_momentum_1h DECIMAL(10,6),
                 price_momentum_4h DECIMAL(10,6),
                 price_momentum_24h DECIMAL(10,6),
@@ -218,9 +290,8 @@ def create_production_schema():
                 volume_rank INT,
                 data_completeness_percentage DECIMAL(5,2),
                 feature_vector_hash VARCHAR(64),
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                INDEX idx_symbol_timestamp (symbol, timestamp),
+                INDEX idx_symbol_timestamp (symbol, timestamp_iso),
                 INDEX idx_updated_at (updated_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """,
@@ -238,49 +309,6 @@ def create_production_schema():
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE KEY unique_ohlc (symbol, timeframe, timestamp)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """,
-            
-            # Additional tables commonly used in tests
-            'crypto_assets': """
-            CREATE TABLE IF NOT EXISTS crypto_assets (
-                id VARCHAR(50) PRIMARY KEY,
-                symbol VARCHAR(20) NOT NULL UNIQUE,
-                name VARCHAR(100) NOT NULL,
-                market_cap_rank INT,
-                current_price DECIMAL(20,8),
-                market_cap BIGINT,
-                total_volume BIGINT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                INDEX idx_symbol (symbol),
-                INDEX idx_market_cap_rank (market_cap_rank)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """,
-            
-            'price_data_real': """
-            CREATE TABLE IF NOT EXISTS price_data_real (
-                id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                symbol VARCHAR(20) NOT NULL,
-                current_price DECIMAL(20,8) NOT NULL,
-                market_cap BIGINT,
-                total_volume BIGINT,
-                price_change_24h DECIMAL(10,4),
-                price_change_percentage_24h DECIMAL(10,4),
-                market_cap_change_24h BIGINT,
-                market_cap_change_percentage_24h DECIMAL(10,4),
-                circulating_supply DECIMAL(20,2),
-                total_supply DECIMAL(20,2),
-                max_supply DECIMAL(20,2),
-                ath DECIMAL(20,8),
-                ath_change_percentage DECIMAL(10,4),
-                atl DECIMAL(20,8),
-                atl_change_percentage DECIMAL(10,4),
-                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                INDEX idx_symbol_time (symbol, last_updated),
-                INDEX idx_updated_at (updated_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """,
             
@@ -346,52 +374,60 @@ def insert_sample_data():
         
         # Sample crypto assets
         cursor.execute("""
-            INSERT IGNORE INTO crypto_assets (id, symbol, name, market_cap_rank, current_price, market_cap, total_volume)
+            INSERT IGNORE INTO crypto_assets (symbol, name, market_cap_rank, current_price, market_cap, volume_usd_24h)
             VALUES 
-            ('bitcoin', 'BTC', 'Bitcoin', 1, 45000.00, 850000000000, 25000000000),
-            ('ethereum', 'ETH', 'Ethereum', 2, 3200.00, 380000000000, 15000000000),
-            ('cardano', 'ADA', 'Cardano', 8, 0.45, 15000000000, 500000000)
+            ('BTC', 'Bitcoin', 1, 45000.00, 850000000000, 25000000000),
+            ('ETH', 'Ethereum', 2, 3200.00, 380000000000, 15000000000),
+            ('ADA', 'Cardano', 8, 0.45, 15000000000, 500000000)
         """)
         
         # Sample price data
         cursor.execute("""
-            INSERT IGNORE INTO price_data_real (symbol, current_price, market_cap, total_volume, price_change_24h, price_change_percentage_24h)
+            INSERT IGNORE INTO price_data_real (symbol, coin_id, name, current_price, market_cap, volume_usd_24h, price_change_24h, price_change_percentage_24h)
             VALUES 
-            ('BTC', 45000.00, 850000000000, 25000000000, 500.00, 1.12),
-            ('ETH', 3200.00, 380000000000, 15000000000, 80.00, 2.56),
-            ('ADA', 0.45, 15000000000, 500000000, 0.02, 4.65)
+            ('BTC', 'bitcoin', 'Bitcoin', 45000.00, 850000000000, 25000000000, 500.00, 1.12),
+            ('ETH', 'ethereum', 'Ethereum', 3200.00, 380000000000, 15000000000, 80.00, 2.56),
+            ('ADA', 'cardano', 'Cardano', 0.45, 15000000000, 500000000, 0.02, 4.65)
         """)
         
         # Sample onchain data
         cursor.execute("""
-            INSERT IGNORE INTO onchain_data (symbol, active_addresses, transaction_count, large_transaction_count, network_utilization, hash_rate)
+            INSERT IGNORE INTO onchain_data (symbol, coin_id, active_addresses, transaction_count, transaction_volume, timestamp_iso)
             VALUES 
-            ('BTC', 850000, 250000, 1200, 65.5, 180000000.0),
-            ('ETH', 650000, 1200000, 2500, 78.2, 750000000.0)
+            ('BTC', 'bitcoin', 850000, 250000, 125000000000.00, NOW()),
+            ('ETH', 'ethereum', 650000, 1200000, 85000000000.00, NOW())
         """)
         
         # Sample technical indicators
         cursor.execute("""
-            INSERT IGNORE INTO technical_indicators (symbol, rsi_14, sma_20, sma_50, macd, macd_signal, bollinger_upper, bollinger_middle, bollinger_lower)
+            INSERT IGNORE INTO technical_indicators (symbol, rsi, sma_20, macd, timestamp_iso)
             VALUES 
-            ('BTC', 65.5, 44500.0, 43000.0, 120.5, 115.0, 46000.0, 45000.0, 44000.0),
-            ('ETH', 58.3, 3150.0, 3050.0, 85.2, 82.1, 3300.0, 3200.0, 3100.0)
+            ('BTC', 65.5, 44500.0, 120.5, NOW()),
+            ('ETH', 58.3, 3150.0, 85.2, NOW())
         """)
         
         # Sample sentiment data
         cursor.execute("""
-            INSERT IGNORE INTO real_time_sentiment_signals (symbol, sentiment_score, sentiment_label, confidence, source, signal_strength)
+            INSERT IGNORE INTO real_time_sentiment_signals (symbol, sentiment_score, signal_type, confidence, signal_strength)
             VALUES 
-            ('BTC', 0.75, 'positive', 0.85, 'twitter_analysis', 0.8),
-            ('ETH', 0.65, 'positive', 0.78, 'reddit_analysis', 0.7)
+            ('BTC', 0.75, 'bullish', 0.85, 0.8),
+            ('ETH', 0.65, 'bullish', 0.78, 0.7)
+        """)
+        
+        # Sample macro indicators
+        cursor.execute("""
+            INSERT IGNORE INTO macro_indicators (indicator_name, fred_series_id, indicator_date, value, unit, frequency, category, data_source)
+            VALUES 
+            ('GDP_GROWTH', 'GDPC1', CURDATE(), 2.1, 'percentage', 'quarterly', 'economic', 'FRED'),
+            ('INFLATION_RATE', 'CPIAUCSL', CURDATE(), 3.2, 'percentage', 'monthly', 'economic', 'FRED')
         """)
         
         # Sample ML features
         cursor.execute("""
-            INSERT IGNORE INTO ml_features_materialized (symbol, price_momentum_24h, volatility_24h, sentiment_composite, data_completeness_percentage)
+            INSERT IGNORE INTO ml_features_materialized (symbol, price_date, price_hour, current_price, volume_24h, price_change_24h, timestamp_iso)
             VALUES 
-            ('BTC', 0.25, 0.18, 0.75, 95.0),
-            ('ETH', 0.18, 0.22, 0.65, 92.0)
+            ('BTC', CURDATE(), HOUR(NOW()), 45000.00, 25000000000, 1.12, NOW()),
+            ('ETH', CURDATE(), HOUR(NOW()), 3200.00, 15000000000, 2.56, NOW())
         """)
         
         connection.commit()
