@@ -144,14 +144,15 @@ class TestPriceCollectionService:
         cursor.execute("DESCRIBE price_data_real")
         columns = [row[0] for row in cursor.fetchall()]
         
-        required_columns = ['symbol', 'price', 'market_cap', 'total_volume', 'timestamp']
+        # Updated to match actual production database fields
+        required_columns = ['symbol', 'current_price', 'market_cap', 'volume_usd_24h', 'timestamp_iso']
         for col in required_columns:
             assert col in columns, f"Missing required column: {col}"
         
-        # Test data insertion
+        # Test data insertion using actual field names
         cursor.execute("""
-            INSERT INTO price_data_real (symbol, price, market_cap, total_volume, timestamp) 
-            VALUES ('BTC', 45000.00, 850000000000, 25000000000, NOW())
+            INSERT INTO price_data_real (symbol, coin_id, name, current_price, market_cap, volume_usd_24h, timestamp, timestamp_iso) 
+            VALUES ('BTC', 'bitcoin', 'Bitcoin', 45000.00, 850000000000, 25000000000, UNIX_TIMESTAMP(), NOW())
         """)
         
         # Verify insertion
@@ -265,14 +266,15 @@ class TestOnchainCollectionService:
         cursor.execute("DESCRIBE onchain_data")
         columns = [row[0] for row in cursor.fetchall()]
         
-        required_columns = ['symbol', 'total_value_locked', 'active_addresses', 'transaction_count', 'timestamp']
+        # Updated to match actual production database fields
+        required_columns = ['symbol', 'active_addresses', 'transaction_count', 'transaction_volume', 'timestamp_iso']
         for col in required_columns:
             assert col in columns, f"Missing required column: {col}"
         
-        # Test data insertion
+        # Test data insertion using actual field names
         cursor.execute("""
-            INSERT INTO onchain_data (symbol, total_value_locked, active_addresses, transaction_count, timestamp) 
-            VALUES ('BTC', 125000000000.00, 850000, 320000, NOW())
+            INSERT INTO onchain_data (symbol, coin_id, active_addresses, transaction_count, transaction_volume, timestamp_iso) 
+            VALUES ('BTC', 'bitcoin', 850000, 320000, 125000000000.00, NOW())
         """)
         
         # Verify insertion
@@ -477,22 +479,22 @@ class TestSentimentAnalysisService:
         cursor.execute("DESCRIBE real_time_sentiment_signals")
         columns = [row[0] for row in cursor.fetchall()]
         
-        required_columns = ['symbol', 'sentiment_score', 'confidence', 'source', 'text_snippet', 'timestamp']
+        # Updated to match actual production database fields
+        required_columns = ['symbol', 'sentiment_score', 'signal_type', 'timestamp']
         for col in required_columns:
             assert col in columns, f"Missing required column: {col}"
         
-        # Test sentiment data insertion
+        # Test sentiment data insertion using actual field names
         cursor.execute("""
-            INSERT INTO real_time_sentiment_signals (symbol, sentiment_score, confidence, source, text_snippet, timestamp) 
-            VALUES ('BTC', 0.75, 0.85, 'twitter', 'Bitcoin looking strong today!', NOW())
+            INSERT INTO real_time_sentiment_signals (symbol, sentiment_score, signal_type, timestamp) 
+            VALUES ('BTC', 0.75, 'bullish', NOW())
         """)
         
         # Verify insertion and validate sentiment score range
-        cursor.execute("SELECT sentiment_score, confidence FROM real_time_sentiment_signals WHERE symbol = 'BTC'")
-        score, confidence = cursor.fetchone()
+        cursor.execute("SELECT sentiment_score FROM real_time_sentiment_signals WHERE symbol = 'BTC'")
+        score = cursor.fetchone()[0]
         
         assert -1.0 <= score <= 1.0, f"Sentiment score out of range: {score}"
-        assert 0.0 <= confidence <= 1.0, f"Confidence out of range: {confidence}"
 
 
 class TestTechnicalIndicatorsService:
@@ -559,30 +561,21 @@ class TestTechnicalIndicatorsService:
         cursor.execute("DESCRIBE technical_indicators")
         columns = [row[0] for row in cursor.fetchall()]
         
-        required_columns = ['symbol', 'indicator_type', 'value', 'period', 'timestamp']
+        # Updated to match actual production database fields
+        required_columns = ['symbol', 'rsi', 'sma_20', 'macd', 'timestamp_iso']
         for col in required_columns:
             assert col in columns, f"Missing required column: {col}"
         
-        # Test various indicator types
-        indicators = [
-            ('BTC', 'SMA', 44500.00, 20),
-            ('BTC', 'EMA', 44750.00, 20), 
-            ('BTC', 'RSI', 65.5, 14),
-            ('ETH', 'MACD', 125.50, 12),
-            ('ETH', 'BOLLINGER_UPPER', 3250.00, 20),
-            ('ETH', 'BOLLINGER_LOWER', 3050.00, 20)
-        ]
-        
-        for symbol, indicator_type, value, period in indicators:
-            cursor.execute("""
-                INSERT INTO technical_indicators (symbol, indicator_type, value, period, timestamp) 
-                VALUES (%s, %s, %s, %s, NOW())
-            """, (symbol, indicator_type, value, period))
+        # Test technical indicators insertion using actual field names
+        cursor.execute("""
+            INSERT INTO technical_indicators (symbol, rsi, sma_20, macd, timestamp_iso) 
+            VALUES ('BTC', 65.5, 44500.00, 125.50, NOW())
+        """)
         
         # Verify insertion
-        cursor.execute("SELECT COUNT(DISTINCT indicator_type) FROM technical_indicators")
+        cursor.execute("SELECT COUNT(*) FROM technical_indicators WHERE symbol = 'BTC'")
         indicator_count = cursor.fetchone()[0]
-        assert indicator_count >= 3, f"Expected at least 3 indicator types, got {indicator_count}"
+        assert indicator_count >= 1, f"Expected at least 1 technical indicator record, got {indicator_count}"
 
 
 class TestMacroEconomicService:
@@ -644,28 +637,21 @@ class TestMacroEconomicService:
         cursor.execute("DESCRIBE macro_indicators")
         columns = [row[0] for row in cursor.fetchall()]
         
-        required_columns = ['indicator', 'value', 'unit', 'frequency', 'timestamp']
+        # Updated to match actual production database fields
+        required_columns = ['indicator_name', 'value', 'unit', 'frequency']
         for col in required_columns:
             assert col in columns, f"Missing required column: {col}"
         
-        # Test macro economic indicators
-        indicators = [
-            ('GDP_GROWTH', 2.1, 'percentage', 'quarterly'),
-            ('INFLATION_RATE', 3.2, 'percentage', 'monthly'),
-            ('UNEMPLOYMENT_RATE', 3.8, 'percentage', 'monthly'),
-            ('FEDERAL_FUNDS_RATE', 5.25, 'percentage', 'daily')
-        ]
-        
-        for indicator, value, unit, frequency in indicators:
-            cursor.execute("""
-                INSERT INTO macro_indicators (indicator, value, unit, frequency, timestamp) 
-                VALUES (%s, %s, %s, %s, NOW())
-            """, (indicator, value, unit, frequency))
+        # Test macro economic indicators using actual field names
+        cursor.execute("""
+            INSERT INTO macro_indicators (indicator_name, fred_series_id, indicator_date, value, unit, frequency, category, data_source) 
+            VALUES ('GDP_GROWTH', 'GDPC1', NOW(), 2.1, 'percentage', 'quarterly', 'economic', 'FRED')
+        """)
         
         # Verify insertion
-        cursor.execute("SELECT COUNT(*) FROM macro_indicators WHERE unit = 'percentage'")
+        cursor.execute("SELECT COUNT(*) FROM macro_indicators WHERE indicator_name = 'GDP_GROWTH'")
         count = cursor.fetchone()[0]
-        assert count >= 4, f"Expected at least 4 percentage-based indicators, got {count}"
+        assert count >= 1, f"Expected at least 1 macro indicator record, got {count}"
 
 
 class TestMLFeaturesService:
@@ -731,39 +717,24 @@ class TestMLFeaturesService:
         cursor.execute("DESCRIBE ml_features_materialized")
         columns = [row[0] for row in cursor.fetchall()]
         
-        required_columns = ['symbol', 'feature_set', 'price_features', 'technical_features', 'sentiment_features']
+        # Updated to match actual production database fields
+        required_columns = ['symbol', 'timestamp_iso', 'current_price', 'volume_24h', 'price_change_24h']
         for col in required_columns:
             assert col in columns, f"Missing required column: {col}"
         
-        # Test ML features insertion with JSON data
-        sample_features = {
-            "price_change_24h": 2.5,
-            "volume_change_24h": -5.2,
-            "market_cap_rank": 1
-        }
-        
+        # Test ML features insertion using actual field names
         cursor.execute("""
             INSERT INTO ml_features_materialized 
-            (symbol, feature_set, price_features, technical_features, sentiment_features, timestamp) 
-            VALUES (%s, %s, %s, %s, %s, NOW())
-        """, (
-            'BTC',
-            json.dumps(sample_features),
-            json.dumps({"sma_20": 44500, "rsi_14": 65.5}),
-            json.dumps({"ema_20": 44750, "macd": 125.5}),
-            json.dumps({"avg_sentiment": 0.65, "sentiment_count": 15})
-        ))
+            (symbol, price_date, price_hour, timestamp_iso, current_price, volume_24h, market_cap, price_change_24h) 
+            VALUES ('BTC', CURDATE(), HOUR(NOW()), NOW(), 45000.00, 25000000000, 850000000000, 2.5)
+        """)
         
-        # Verify JSON data storage and retrieval
-        cursor.execute("SELECT feature_set, price_features FROM ml_features_materialized WHERE symbol = 'BTC'")
-        feature_set_json, price_features_json = cursor.fetchone()
+        # Verify data insertion
+        cursor.execute("SELECT current_price, price_change_24h FROM ml_features_materialized WHERE symbol = 'BTC'")
+        price, change = cursor.fetchone()
         
-        feature_set = json.loads(feature_set_json)
-        price_features = json.loads(price_features_json)
-        
-        assert 'price_change_24h' in feature_set
-        assert 'sma_20' in price_features
-        assert feature_set['market_cap_rank'] == 1
+        assert price == 45000.00
+        assert change == 2.5
 
 
 class TestComprehensiveDatabaseSchema:
