@@ -29,33 +29,53 @@ def wait_for_mysql(max_retries=30, retry_interval=2):
     # Get MySQL configuration from environment variables with CI defaults
     mysql_host = os.environ.get('MYSQL_HOST', '127.0.0.1')
     mysql_port = int(os.environ.get('MYSQL_PORT', '3306'))
+    mysql_user = os.environ.get('MYSQL_USER', 'news_collector')
+    mysql_password = os.environ.get('MYSQL_PASSWORD', '99Rules!')
+    mysql_database = os.environ.get('MYSQL_DATABASE', 'crypto_data_test')
     mysql_root_password = os.environ.get('MYSQL_ROOT_PASSWORD', '99Rules!')
     
+    # Try both root and configured user for initial connection
+    connection_configs = [
+        # First try the configured user (GitHub Actions setup)
+        {
+            'host': mysql_host,
+            'port': mysql_port,
+            'user': mysql_user,
+            'password': mysql_password,
+            'connect_timeout': 10,
+            'autocommit': True
+        },
+        # Fallback to root if configured user isn't ready yet
+        {
+            'host': mysql_host,
+            'port': mysql_port,
+            'user': 'root',
+            'password': mysql_root_password,
+            'connect_timeout': 10,
+            'autocommit': True
+        }
+    ]
+    
     for attempt in range(max_retries):
-        try:
-            # Try to connect using CI configuration from environment
-            connection = mysql.connector.connect(
-                host=mysql_host,
-                port=mysql_port,
-                user='root',
-                password=mysql_root_password,
-                connect_timeout=10,
-                autocommit=True
-            )
-            
-            cursor = connection.cursor()
-            cursor.execute("SELECT 1")
-            cursor.fetchone()
-            cursor.close()
-            connection.close()
-            
-            logger.info("✅ MySQL is ready!")
-            return True
-            
-        except Exception as e:
-            logger.info(f"⏳ Attempt {attempt + 1}/{max_retries}: MySQL not ready yet ({e})")
-            if attempt < max_retries - 1:
-                time.sleep(retry_interval)
+        for config_idx, config in enumerate(connection_configs):
+            try:
+                connection = mysql.connector.connect(**config)
+                cursor = connection.cursor()
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+                cursor.close()
+                connection.close()
+                
+                logger.info(f"✅ MySQL is ready! (connected as {config['user']})")
+                return True
+                
+            except mysql.connector.Error as e:
+                # Only log on the last config attempt for this retry
+                if config_idx == len(connection_configs) - 1:
+                    logger.info(f"⏳ Attempt {attempt + 1}/{max_retries}: MySQL not ready yet ({e})")
+                continue
+        
+        time.sleep(retry_interval)
     
     logger.error("❌ MySQL failed to become ready")
     return False
@@ -73,30 +93,74 @@ def create_database_and_user():
         mysql_password = os.environ.get('MYSQL_PASSWORD', '99Rules!')
         database_name = os.environ.get('MYSQL_DATABASE', 'crypto_data_test')
         
-        # Connect as root to create database and user
-        connection = mysql.connector.connect(
-            host=mysql_host,
-            port=mysql_port,
-            user='root',
-            password=mysql_root_password,
-            autocommit=True
-        )
+        # Try connecting as root first, fallback to configured user
+        connection = None
+        cursor = None
+        connected_as_root = False
+        
+        try:
+            # Try root connection first
+            connection = mysql.connector.connect(
+                host=mysql_host,
+                port=mysql_port,
+                user='root',
+                password=mysql_root_password,
+                autocommit=True
+            )
+            connected_as_root = True
+            logger.info(f"✅ Connected as root for database setup")
+            
+        except mysql.connector.Error as e:
+            # Root connection failed, try the configured user (GitHub Actions pre-setup scenario)
+            logger.warning(f"⚠️ Root connection failed ({e}), trying configured user...")
+            try:
+                connection = mysql.connector.connect(
+                    host=mysql_host,
+                    port=mysql_port,
+                    user=mysql_user,
+                    password=mysql_password,
+                    autocommit=True
+                )
+                logger.info(f"✅ Connected as {mysql_user} for database setup")
+                
+            except mysql.connector.Error as e2:
+                logger.error(f"❌ Both root and user connections failed")
+                logger.error(f"   Root error: {e}")
+                logger.error(f"   User error: {e2}")
+                return False
+        
         cursor = connection.cursor()
         
         # Create database
         cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{database_name}`")
         logger.info(f"📊 Database '{database_name}' created/verified")
         
-        # Create user and grant privileges
-        cursor.execute(f"CREATE USER IF NOT EXISTS '{mysql_user}'@'%' IDENTIFIED BY '{mysql_password}'")
-        cursor.execute(f"GRANT ALL PRIVILEGES ON `{database_name}`.* TO '{mysql_user}'@'%'")
-        cursor.execute(f"CREATE USER IF NOT EXISTS '{mysql_user}'@'localhost' IDENTIFIED BY '{mysql_password}'")
-        cursor.execute(f"GRANT ALL PRIVILEGES ON `{database_name}`.* TO '{mysql_user}'@'localhost'")
-        cursor.execute("FLUSH PRIVILEGES")
-        logger.info(f"👤 User '{mysql_user}' created/verified with privileges")
+        # Only try to create user if we're connected as root
+        if connected_as_root:
+            try:
+                # Create user and grant privileges (only when connected as root)
+                cursor.execute(f"CREATE USER IF NOT EXISTS '{mysql_user}'@'%' IDENTIFIED BY '{mysql_password}'")
+                cursor.execute(f"GRANT ALL PRIVILEGES ON `{database_name}`.* TO '{mysql_user}'@'%'")
+                cursor.execute(f"CREATE USER IF NOT EXISTS '{mysql_user}'@'localhost' IDENTIFIED BY '{mysql_password}'")
+                cursor.execute(f"GRANT ALL PRIVILEGES ON `{database_name}`.* TO '{mysql_user}'@'localhost'")
+                cursor.execute("FLUSH PRIVILEGES")
+                logger.info(f"👤 User '{mysql_user}' created/verified with privileges")
+            except mysql.connector.Error as user_error:
+                logger.warning(f"⚠️ User creation failed (user might already exist): {user_error}")
+        else:
+            logger.info(f"⚠️ Connected as {mysql_user}, assuming user already exists")
         
         # Switch to test database
         cursor.execute(f"USE `{database_name}`")
+        
+        cursor.close()
+        connection.close()
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Database and user creation failed: {e}")
+        return False
         
         cursor.close()
         connection.close()
@@ -374,11 +438,11 @@ def insert_sample_data():
         
         # Sample crypto assets
         cursor.execute("""
-            INSERT IGNORE INTO crypto_assets (symbol, name, market_cap_rank, current_price, market_cap, volume_usd_24h)
+            INSERT IGNORE INTO crypto_assets (symbol, name, category, is_active, coingecko_id)
             VALUES 
-            ('BTC', 'Bitcoin', 1, 45000.00, 850000000000, 25000000000),
-            ('ETH', 'Ethereum', 2, 3200.00, 380000000000, 15000000000),
-            ('ADA', 'Cardano', 8, 0.45, 15000000000, 500000000)
+            ('BTC', 'Bitcoin', 'crypto', 1, 'bitcoin'),
+            ('ETH', 'Ethereum', 'crypto', 1, 'ethereum'),
+            ('ADA', 'Cardano', 'crypto', 1, 'cardano')
         """)
         
         # Sample price data
