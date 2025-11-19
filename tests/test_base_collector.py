@@ -21,35 +21,68 @@ from contextlib import asynccontextmanager
 # Import the base collector and components
 from base_collector_template import (
     BaseCollector, CollectorConfig, HealthResponse, ReadinessResponse, 
-    DataQualityReport, PerformanceMetrics, CircuitBreaker, RateLimiter
+    DataQualityReport, PerformanceMetrics, CircuitBreaker, RateLimiter, LogLevel
 )
 
-class MockCollectorConfig(CollectorConfig):
-    """Mock configuration for testing"""
-    
-    def __init__(self):
-        super().__init__(
-            service_name="test-collector",
-            service_version="1.0.0-test",
-            mysql_host="localhost",
-            mysql_port=3306,
-            mysql_user="test_user",
-            mysql_password="test_password",
-            mysql_database="test_db",
-            collection_interval=60,
-            enable_rate_limiting=True,
-            enable_circuit_breaker=True,
-            enable_data_validation=True,
-            enable_alerting=True,
-            enable_performance_monitoring=True
-        )
+def create_mock_config():
+    """Create mock configuration for testing"""
+    return CollectorConfig(
+        # Database configuration
+        mysql_host="localhost",
+        mysql_port=3306,
+        mysql_user="test_user",
+        mysql_password="test_password",
+        mysql_database="test_db",
+        
+        # Collection configuration
+        collection_interval=60,
+        backfill_batch_size=100,
+        max_retry_attempts=3,
+        api_timeout=30,
+        api_rate_limit=60,
+        
+        # Date configuration
+        collector_beginning_date="2023-01-01",
+        backfill_lookback_days=30,
+        
+        # Logging configuration
+        log_level=LogLevel.INFO,
+        log_format="json",
+        enable_audit_logging=True,
+        
+        # Service configuration
+        service_name="test-collector",
+        service_version="1.0.0-test",
+        health_check_interval=30,
+        
+        # Rate limiting and circuit breaker
+        enable_rate_limiting=True,
+        api_rate_limit_per_minute=60,
+        circuit_breaker_failure_threshold=5,
+        circuit_breaker_timeout=60,
+        
+        # Data validation and quality
+        enable_data_validation=True,
+        enable_duplicate_detection=True,
+        data_retention_days=90,
+        
+        # Performance and optimization
+        connection_pool_size=10,
+        query_timeout=30,
+        batch_commit_size=100,
+        
+        # Alerting and notifications
+        enable_alerting=True,
+        alert_webhook_url=None,
+        alert_error_threshold=5
+    )
 
 class MockCollector(BaseCollector):
     """Mock collector implementation for testing"""
     
     def __init__(self, config: CollectorConfig = None):
         if config is None:
-            config = MockCollectorConfig()
+            config = create_mock_config()
         super().__init__(config)
         self.collected_data = []
         self.backfilled_data = []
@@ -121,7 +154,7 @@ class BaseCollectorTestCase:
     @pytest.fixture
     def mock_config(self):
         """Provide mock configuration"""
-        return MockCollectorConfig()
+        return create_mock_config()
     
     @pytest.fixture
     def mock_collector(self, mock_config):
@@ -527,24 +560,14 @@ class PerformanceTestCase:
 # Test configuration utilities
 def create_test_config(**overrides) -> CollectorConfig:
     """Create test configuration with overrides"""
-    defaults = {
-        'service_name': 'test-collector',
-        'service_version': '1.0.0-test',
-        'mysql_host': 'localhost',
-        'mysql_port': 3306,
-        'mysql_user': 'test',
-        'mysql_password': 'test',
-        'mysql_database': 'test_db',
-        'collection_interval': 60,
-        'enable_rate_limiting': True,
-        'enable_circuit_breaker': True,
-        'enable_data_validation': True,
-        'enable_alerting': False,  # Disable by default in tests
-        'enable_performance_monitoring': True
-    }
+    defaults = create_mock_config()
     
-    config_dict = {**defaults, **overrides}
-    return CollectorConfig(**config_dict)
+    # Convert to dict, apply overrides, and create new config
+    for key, value in overrides.items():
+        if hasattr(defaults, key):
+            setattr(defaults, key, value)
+    
+    return defaults
 
 # Test data factories
 class TestDataFactory:

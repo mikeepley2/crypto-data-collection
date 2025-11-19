@@ -118,13 +118,13 @@ class DatabaseConfig:
         
         # CI environment overrides for integration tests
         if os.getenv('CI') == 'true' and is_testing:
-            # Force specific CI configuration to use existing database with test tables
+            # CI configuration uses containerized MySQL service
             config = {
-                'host': '172.22.32.1',  # Known working MySQL host in CI
+                'host': '127.0.0.1',  # Containerized MySQL service in GitHub Actions
                 'port': 3306,
-                'user': 'news_collector',
-                'password': '99Rules!',
-                'database': 'crypto_news',  # Database with test tables
+                'user': os.getenv('MYSQL_USER', 'news_collector'),
+                'password': os.getenv('MYSQL_PASSWORD', '99Rules!'),
+                'database': os.getenv('MYSQL_DATABASE', 'crypto_data_test'),  # Test database from container
                 'connect_timeout': int(os.getenv('DB_CONNECTION_TIMEOUT', '30')),
                 'autocommit': True,
                 'charset': 'utf8mb4',
@@ -133,7 +133,7 @@ class DatabaseConfig:
                 'pool_size': int(os.getenv('DB_POOL_SIZE', '10')),
                 'pool_reset_session': True,
             }
-            logger.info(f"🎯 CI Test Override: Using {config['host']}:{config['port']}/{config['database']}")
+            logger.info(f"🎯 CI Test Override: Using containerized MySQL {config['host']}:{config['port']}/{config['database']}")
         else:
             # Standard configuration logic
             config = {

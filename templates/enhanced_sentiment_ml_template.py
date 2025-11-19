@@ -15,7 +15,7 @@ from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassifica
 import numpy as np
 import re
 
-from templates.collector_template.base_collector_template import (
+from base_collector_template import (
     BaseCollector, CollectorConfig, DataQualityReport, AlertRequest
 )
 

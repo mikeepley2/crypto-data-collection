@@ -12,7 +12,7 @@ import mysql.connector
 import json
 from decimal import Decimal
 
-from templates.collector_template.base_collector_template import (
+from base_collector_template import (
     BaseCollector, CollectorConfig, DataQualityReport, AlertRequest
 )
 

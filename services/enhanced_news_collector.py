@@ -14,7 +14,7 @@ from typing import Dict, Any, List, Optional, Set
 import mysql.connector
 import time
 
-from templates.collector_template.base_collector_template import (
+from base_collector_template import (
     BaseCollector, CollectorConfig, DataQualityReport, AlertRequest
 )
 

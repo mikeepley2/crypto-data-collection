@@ -53,3 +53,7 @@ docker>=6.1.0
 # Async utilities
 asyncio
 asyncpg>=0.29.0
+
+# Scheduling and WebSocket support
+schedule>=1.2.0
+websockets>=12.0
