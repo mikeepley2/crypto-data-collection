@@ -94,7 +94,7 @@ jobs:
           
           # Additional cleanup for plugin conflicts
           echo "Checking for pytest plugin conflicts..."
-          python -c "import pytest; print(f'✅ pytest {pytest.__version__} ready')" || echo "⚠️ pytest issues detected"
+          python -c "import pytest; print('✅ pytest', pytest.__version__, 'ready')" || echo "⚠️ pytest issues detected"
         fi
         
     - name: 🎨 Code Formatting Check
@@ -153,10 +153,10 @@ jobs:
 from shared.smart_model_manager import SmartModelManager
 try:
     manager = SmartModelManager()
-    print(f'Environment: {manager.environment.value}')
-    print(f'Config: {manager.config}')
+    print('Environment:', manager.environment.value)
+    print('Config:', manager.config)
 except Exception as e:
-    print(f'Model manager test: {e}')
+    print('Model manager test:', e)
 " || echo "Model manager not available"
           
         else
@@ -456,7 +456,7 @@ except Exception as e:
           
           # Additional cleanup for plugin conflicts
           echo "Checking for pytest plugin conflicts..."
-          python -c "import pytest; print(f'✅ pytest {pytest.__version__} ready')" || echo "⚠️ pytest issues detected"
+          python -c "import pytest; print('✅ pytest', pytest.__version__, 'ready')" || echo "⚠️ pytest issues detected"
         fi
         
     - name: 🔄 Wait for Services and Setup Test Environment
