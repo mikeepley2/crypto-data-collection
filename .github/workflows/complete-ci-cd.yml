@@ -149,15 +149,9 @@ jobs:
           
           # Show test summary
           echo "📊 Test Environment Summary:"
-          python -c "
-from shared.smart_model_manager import SmartModelManager
-try:
-    manager = SmartModelManager()
-    print('Environment:', manager.environment.value)
-    print('Config:', manager.config)
-except Exception as e:
-    print('Model manager test:', e)
-" || echo "Model manager not available"
+          echo "Environment: CI/CD"
+          echo "Python path: $(which python3)"
+          echo "Working directory: $(pwd)"
           
         else
           echo "No tests found - skipping test execution"
