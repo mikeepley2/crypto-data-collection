@@ -34,10 +34,12 @@ Updated all workflow files with:
 - name: 🔍 Security Scan
   uses: aquasecurity/trivy-action@master
   with:
-    config-file: 'trivy.yaml'
+    image-ref: 'image-name:tag'
+    trivy-config: 'trivy.yaml'
+    format: 'table'
+    severity: 'CRITICAL,HIGH,MEDIUM'
+    scanners: 'vuln,misconfig,secret'
     timeout: '30m'
-    skip-dirs: '/usr/local/lib/python*/site-packages/scipy.libs'
-    skip-files: '**/*.so.*,**/libscipy_openblas*.so'
     continue-on-error: true
 ```
 

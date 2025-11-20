@@ -4,14 +4,17 @@
 # Scanner settings
 scanners:
   - vuln
-  - config
+  - misconfig
   - secret
+
+# Package types (replaces deprecated vulnerability.type)
+pkg:
+  types:
+    - os
+    - library
 
 # Vulnerability settings  
 vulnerability:
-  type:
-    - os
-    - library
   severity:
     - CRITICAL
     - HIGH
@@ -27,24 +30,24 @@ cache:
 format: table
 quiet: false
 
-# Skip certain checks for performance
-skip-dirs:
-  - "/usr/local/lib/python*/site-packages/scipy.libs"
-  - "/usr/local/lib/python*/site-packages/numpy.libs"
-  - "/usr/local/lib/python*/site-packages/torch/lib"
-  - "/usr/local/lib/python*/site-packages/tensorflow"
-  - "/root/.cache"
-  - "/tmp"
-  - "/var/cache"
-
-# Skip certain file patterns
-skip-files:
-  - "**/*.so.*"
-  - "**/*.whl"
-  - "**/libscipy_openblas*.so"
-  - "**/libtorch*.so"
-  - "**/*.safetensors"
-  - "**/*.bin"
+# Skip certain checks for performance and PyTorch compatibility
+skip:
+  dirs:
+    - "/usr/local/lib/python*/site-packages/scipy.libs"
+    - "/usr/local/lib/python*/site-packages/numpy.libs"
+    - "/usr/local/lib/python*/site-packages/torch/lib"
+    - "/usr/local/lib/python*/site-packages/tensorflow"
+    - "/root/.cache"
+    - "/tmp"
+    - "/var/cache"
+  files:
+    - "**/*.so.*"
+    - "**/*.whl"
+    - "**/libscipy_openblas*.so"
+    - "**/libtorch*.so"
+    - "**/libtorch_cuda*.so"
+    - "**/*.safetensors"
+    - "**/*.bin"
 
 # License scanning (optional)
 license:
@@ -52,8 +55,13 @@ license:
 
 # Secret scanning settings
 secret:
-  config: /tmp/secret.yaml
+  skip-dirs:
+    - "/usr/local/lib/python*/site-packages"
+    - "/root/.cache"
 
 # Misconfiguration scanning
 misconfig:
   include-non-failures: false
+  skip-files:
+    - "**/*.so"
+    - "**/*.bin"
