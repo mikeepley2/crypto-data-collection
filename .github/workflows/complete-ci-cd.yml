@@ -686,6 +686,7 @@ jobs:
     needs: [core-pipeline, database-integration]
     if: |
       (github.ref == 'refs/heads/main' && github.event_name == 'push') || 
+      (github.ref == 'refs/heads/dev' && github.event_name == 'push') ||
       (github.event_name == 'workflow_dispatch' && inputs.deploy_to_production == 'true')
     environment: k3s-production
     timeout-minutes: 20
