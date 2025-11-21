@@ -13,11 +13,20 @@ from pathlib import Path
 # Add paths for collector imports
 PROJECT_ROOT = Path(__file__).parent
 sys.path.extend([
+    # Top-level services
+    str(PROJECT_ROOT / 'services'),
+    
+    # Subdirectory services
     str(PROJECT_ROOT / 'services' / 'price-collection'),
     str(PROJECT_ROOT / 'services' / 'news-collection'),
     str(PROJECT_ROOT / 'services' / 'onchain-collection'),
     str(PROJECT_ROOT / 'services' / 'technical-collection'),
     str(PROJECT_ROOT / 'services' / 'macro-collection'),
+    str(PROJECT_ROOT / 'services' / 'derivatives-collection'),
+    str(PROJECT_ROOT / 'services' / 'market-collection'),
+    str(PROJECT_ROOT / 'services' / 'ohlc-collection'),
+    
+    # Shared and root
     str(PROJECT_ROOT / 'shared'),
     str(PROJECT_ROOT)
 ])
@@ -26,11 +35,21 @@ sys.path.extend([
 def test_collector_imports():
     """Test that all core collectors can be imported"""
     collectors = [
+        # Top-level collectors
+        ('News Collector (top-level)', 'enhanced_news_collector'),
+        ('Sentiment ML Analysis', 'enhanced_sentiment_ml_analysis'),
+        ('Technical Calculator', 'enhanced_technical_calculator'),
+        ('Materialized Updater', 'enhanced_materialized_updater_template'),
+        
+        # Subdirectory collectors
         ('Price Collector', 'enhanced_crypto_prices_service'),
-        ('News Collector', 'enhanced_crypto_news_collector'),
+        ('News Collector (subdir)', 'enhanced_crypto_news_collector'),
         ('Onchain Collector', 'enhanced_onchain_collector'),
-        ('Technical Collector', 'enhanced_technical_indicators_collector'),
-        ('Macro Collector', 'enhanced_macro_collector_v2'),
+        ('Technical Indicators Collector', 'enhanced_technical_indicators_collector'),
+        ('Macro Collector V2', 'enhanced_macro_collector_v2'),
+        ('Derivatives Collector', 'enhanced_crypto_derivatives_collector'),
+        ('ML Market Collector', 'ml_market_collector'),
+        ('OHLC Collector', 'enhanced_ohlc_collector'),
     ]
     
     results = []
@@ -149,14 +168,14 @@ def main():
     print(f"Database Connectivity: {'✅ PASS' if connectivity_passed else '⚠️ OPTIONAL'}")
     
     # Determine overall success
-    critical_passed = imports_passed >= 3 and config_passed  # Need at least 3 collectors + config
+    critical_passed = imports_passed >= 8 and config_passed  # Need at least 8 of 12 collectors + config
     
     if critical_passed:
         print("\n🎉 VALIDATION PASSED: Core collectors are functional!")
         sys.exit(0)
     else:
-        print(f"\n❌ VALIDATION FAILED: Need at least 3 working collectors and config")
-        print(f"   Got: {imports_passed} collectors, config={'working' if config_passed else 'failed'}")
+        print(f"\n❌ VALIDATION FAILED: Need at least 8 of 12 working collectors and config")
+        print(f"   Got: {imports_passed}/{total_collectors} collectors, config={'working' if config_passed else 'failed'}")
         sys.exit(1)
 
 

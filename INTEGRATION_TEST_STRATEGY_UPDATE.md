@@ -48,7 +48,7 @@ This file tests the **actual system architecture**:
 
 1. **Run New Tests**: Execute `test_real_data_collectors_integration.py`
 2. **Update CI Pipeline**: Include new test file in workflow
-3. **Validate Collectors**: Ensure all 13+ collector scripts work
+4. **Validate Collectors**: Ensure 9+ of 12 collector scripts work (75% minimum)
 4. **Add Data Collection Tests**: Test actual data gathering (with mocks)
 
 ## Architecture Understanding ✅

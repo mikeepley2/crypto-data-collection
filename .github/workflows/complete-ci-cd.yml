@@ -629,8 +629,14 @@ sys.path.extend(['./services/price-collection', './services/news-collection', '.
 
 collectors = [
     ('Price Collector', 'enhanced_crypto_prices_service'),
-    ('News Collector', 'enhanced_crypto_news_collector'), 
-    ('Onchain Collector', 'enhanced_onchain_collector')
+    ('News Collector (subdir)', 'enhanced_crypto_news_collector'), 
+    ('Onchain Collector', 'enhanced_onchain_collector'),
+    ('Technical Indicators Collector', 'enhanced_technical_indicators_collector'),
+    ('Macro Collector V2', 'enhanced_macro_collector_v2'),
+    ('Derivatives Collector', 'enhanced_crypto_derivatives_collector'),
+    ('ML Market Collector', 'ml_market_collector'),
+    ('OHLC Collector', 'enhanced_ohlc_collector'),
+    ('Materialized Updater', 'enhanced_materialized_updater_template'),
 ]
 
 passed = 0
@@ -643,7 +649,7 @@ for name, module in collectors:
         print(f'❌ {name}: Import failed - {e}')
 
 print(f'🎯 Collector validation: {passed}/{len(collectors)} collectors working')
-exit(0 if passed >= 2 else 1)  # Require at least 2 working collectors
+exit(0 if passed >= 6 else 1)  # Require at least 6 of 9+ working collectors
 "
         fi
         

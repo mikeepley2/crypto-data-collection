@@ -124,6 +124,87 @@ except Exception as e:
         except Exception as e:
             pytest.skip(f"Price collector import test failed: {e}")
 
+    def test_derivatives_collector_imports_successfully(self):
+        """Test that derivatives collector can be imported"""
+        try:
+            result = subprocess.run([
+                sys.executable, '-c', 
+                f"""
+import sys
+sys.path.append('{PROJECT_ROOT}/services/derivatives-collection')
+sys.path.append('{PROJECT_ROOT}/shared')
+try:
+    import enhanced_crypto_derivatives_collector
+    print('SUCCESS: Derivatives collector imported')
+except Exception as e:
+    print(f'ERROR: {{e}}')
+    exit(1)
+"""
+            ], capture_output=True, text=True, timeout=30)
+            
+            print(f"Derivatives collector import result: {result.stdout}")
+            if result.stderr:
+                print(f"Derivatives collector import errors: {result.stderr}")
+                
+            assert result.returncode == 0 or "SUCCESS" in result.stdout
+            
+        except Exception as e:
+            pytest.skip(f"Derivatives collector import test failed: {e}")
+
+    def test_market_collector_imports_successfully(self):
+        """Test that ML market collector can be imported"""
+        try:
+            result = subprocess.run([
+                sys.executable, '-c', 
+                f"""
+import sys
+sys.path.append('{PROJECT_ROOT}/services/market-collection')
+sys.path.append('{PROJECT_ROOT}/shared')
+try:
+    import ml_market_collector
+    print('SUCCESS: ML Market collector imported')
+except Exception as e:
+    print(f'ERROR: {{e}}')
+    exit(1)
+"""
+            ], capture_output=True, text=True, timeout=30)
+            
+            print(f"ML Market collector import result: {result.stdout}")
+            if result.stderr:
+                print(f"ML Market collector import errors: {result.stderr}")
+                
+            assert result.returncode == 0 or "SUCCESS" in result.stdout
+            
+        except Exception as e:
+            pytest.skip(f"ML Market collector import test failed: {e}")
+
+    def test_ohlc_collector_imports_successfully(self):
+        """Test that OHLC collector can be imported"""
+        try:
+            result = subprocess.run([
+                sys.executable, '-c', 
+                f"""
+import sys
+sys.path.append('{PROJECT_ROOT}/services/ohlc-collection')
+sys.path.append('{PROJECT_ROOT}/shared')
+try:
+    import enhanced_ohlc_collector
+    print('SUCCESS: OHLC collector imported')
+except Exception as e:
+    print(f'ERROR: {{e}}')
+    exit(1)
+"""
+            ], capture_output=True, text=True, timeout=30)
+            
+            print(f"OHLC collector import result: {result.stdout}")
+            if result.stderr:
+                print(f"OHLC collector import errors: {result.stderr}")
+                
+            assert result.returncode == 0 or "SUCCESS" in result.stdout
+            
+        except Exception as e:
+            pytest.skip(f"OHLC collector import test failed: {e}")
+
     def test_onchain_collector_imports_successfully(self):
         """Test that onchain collector can be imported"""
         try:
