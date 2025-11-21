@@ -60,6 +60,7 @@ Add these secrets to the `k3s-production` environment (same values as repository
 - `DOCKER_USERNAME`
 - `DOCKER_PASSWORD`
 
+
 ## Step 3: Test Repository Configuration
 
 ### 🔧 Quick Validation
