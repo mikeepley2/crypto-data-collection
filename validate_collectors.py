@@ -168,13 +168,13 @@ def main():
     print(f"Database Connectivity: {'✅ PASS' if connectivity_passed else '⚠️ OPTIONAL'}")
     
     # Determine overall success
-    critical_passed = imports_passed >= 8 and config_passed  # Need at least 8 of 12 collectors + config
+    critical_passed = imports_passed >= 10 and config_passed  # Need at least 10 of 12 collectors + config
     
     if critical_passed:
         print("\n🎉 VALIDATION PASSED: Core collectors are functional!")
         sys.exit(0)
     else:
-        print(f"\n❌ VALIDATION FAILED: Need at least 8 of 12 working collectors and config")
+        print(f"\n❌ VALIDATION FAILED: Need at least 10 of 12 working collectors and config")
         print(f"   Got: {imports_passed}/{total_collectors} collectors, config={'working' if config_passed else 'failed'}")
         sys.exit(1)
 

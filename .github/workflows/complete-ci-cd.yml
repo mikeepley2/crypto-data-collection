@@ -68,7 +68,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip setuptools wheel
         # Install core testing dependencies
-        pip install flake8 black bandit pytest requests flask
+        pip install flake8 black bandit pytest requests flask structlog prometheus-client
         # Install critical web framework dependencies first
         pip install httpx fastapi starlette uvicorn pydantic
         # Install database connectors
@@ -79,7 +79,7 @@ jobs:
           pip install -r requirements.txt
         else
           echo "requirements.txt not found, installing fallback packages"
-          pip install requests aiohttp mysql-connector-python pymongo redis flask pytest
+          pip install requests aiohttp mysql-connector-python pymongo redis flask pytest prometheus-client structlog
         fi
         # Install test requirements with enhanced dependency resolution
         if [ -f "requirements-test.txt" ]; then
@@ -433,7 +433,7 @@ jobs:
           pip install -r requirements.txt
         else
           echo "requirements.txt not found, installing fallback packages"
-          pip install requests aiohttp mysql-connector-python pymongo redis flask pytest
+          pip install requests aiohttp mysql-connector-python pymongo redis flask pytest prometheus-client structlog
         fi
         # Install test requirements with enhanced dependency resolution  
         if [ -f "requirements-test.txt" ]; then
