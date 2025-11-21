@@ -1,0 +1,94 @@
+name: 🎯 Quick K3s Deploy
+
+# Simplified workflow for quick deployments using existing scripts
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Deployment action'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+        - deploy
+        - status
+        - health
+        - restart
+        - cleanup
+
+env:
+  K3S_NAMESPACE: crypto-core-production
+
+jobs:
+  quick-k3s-action:
+    name: 🚀 Quick K3s Action
+    runs-on: ubuntu-latest
+    environment: k3s-production
+    timeout-minutes: 15
+    
+    steps:
+    - name: 📥 Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: 🔧 Install Kubectl
+      run: |
+        curl -LO "https://dl.k8s.io/release/v1.28.0/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
+
+    - name: 🔐 Configure K3s Access
+      run: |
+        echo "Setting up K3s cluster access..."
+        mkdir -p ~/.kube
+        echo "${{ secrets.K3S_KUBECONFIG }}" | base64 -d > ~/.kube/config
+        chmod 600 ~/.kube/config
+        kubectl cluster-info
+
+    - name: 🎯 Execute K3s Action
+      run: |
+        echo "Executing action: ${{ inputs.action }}"
+        
+        # Make scripts executable
+        chmod +x scripts/deploy-to-k3s.sh
+        
+        # Run the specified action
+        case "${{ inputs.action }}" in
+          "deploy")
+            echo "🚀 Running full K3s deployment..."
+            ./scripts/deploy-to-k3s.sh deploy
+            ;;
+          "status")
+            echo "📊 Checking K3s deployment status..."
+            ./scripts/deploy-to-k3s.sh status
+            ;;
+          "health")
+            echo "🏥 Checking service health..."
+            ./scripts/deploy-to-k3s.sh health
+            ;;
+          "restart")
+            echo "🔄 Restarting all services..."
+            ./scripts/deploy-to-k3s.sh restart
+            ;;
+          "cleanup")
+            echo "🧹 Cleaning up deployment..."
+            ./scripts/deploy-to-k3s.sh cleanup
+            ;;
+          *)
+            echo "❌ Unknown action: ${{ inputs.action }}"
+            exit 1
+            ;;
+        esac
+
+    - name: 📊 Summary Report
+      if: always()
+      run: |
+        echo "## 🎯 Quick K3s Action Report" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Action Executed:** ${{ inputs.action }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Execution Time:** $(date '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+        echo "**Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Current Cluster Status:" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        kubectl get pods -n ${{ env.K3S_NAMESPACE }} 2>/dev/null || echo "Namespace not found or no pods" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY

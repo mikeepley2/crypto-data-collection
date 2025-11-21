@@ -1,32 +1,103 @@
-# K3s Production Namespaces
-# This file creates the namespace structure for K3s production deployment
+# K3s Production Namespaces and Configuration
+# Creates all required namespaces, resource quotas, and policies
 
 ---
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: crypto-core-production
-  labels:
-    name: crypto-core-production
-    environment: production
-    deployment-target: k3s
-
----
+# Infrastructure Namespace
 apiVersion: v1
 kind: Namespace
 metadata:
   name: crypto-infrastructure
   labels:
     name: crypto-infrastructure
+    tier: infrastructure
     environment: production
     deployment-target: k3s
 
 ---
+# Core Production Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: crypto-core-production
+  labels:
+    name: crypto-core-production
+    tier: production
+    environment: production
+    deployment-target: k3s
+
+---
+# Monitoring Namespace (for future use)
 apiVersion: v1
 kind: Namespace
 metadata:
   name: crypto-monitoring
   labels:
     name: crypto-monitoring
+    tier: monitoring
     environment: production
     deployment-target: k3s
+
+---
+# Default Network Policy (allow all for now, can be tightened later)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all
+  namespace: crypto-core-production
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - {}
+  egress:
+  - {}
+
+---
+# Resource Quotas for Production Namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: crypto-core-quota
+  namespace: crypto-core-production
+spec:
+  hard:
+    requests.cpu: "10"      # 10 CPU cores
+    requests.memory: 20Gi   # 20GB memory
+    limits.cpu: "20"        # 20 CPU cores max
+    limits.memory: 40Gi     # 40GB memory max
+    persistentvolumeclaims: "10"  # Max 10 PVCs
+    services: "20"          # Max 20 services
+    secrets: "10"           # Max 10 secrets
+    configmaps: "10"        # Max 10 configmaps
+
+---
+# Limit Range for Individual Pods
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: crypto-core-limits
+  namespace: crypto-core-production
+spec:
+  limits:
+  - type: Pod
+    max:
+      cpu: "4"
+      memory: 8Gi
+    min:
+      cpu: 100m
+      memory: 128Mi
+  - type: Container
+    default:
+      cpu: 500m
+      memory: 1Gi
+    defaultRequest:
+      cpu: 250m
+      memory: 512Mi
+    max:
+      cpu: "2"
+      memory: 4Gi
+    min:
+      cpu: 100m
+      memory: 128Mi

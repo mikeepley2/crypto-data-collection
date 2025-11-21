@@ -1,0 +1,286 @@
+# K3s Production Services
+# ClusterIP services for internal communication between all 12 microservices
+
+---
+# 1. Enhanced News Collector Service (Top-level)
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-news-collector-service
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-news-collector
+    service-tier: core
+spec:
+  selector:
+    app: enhanced-news-collector
+  ports:
+  - port: 8001
+    targetPort: 8001
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 2. Enhanced Sentiment ML Analysis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-sentiment-ml-analysis-service
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-sentiment-ml-analysis
+    service-tier: analytics
+spec:
+  selector:
+    app: enhanced-sentiment-ml-analysis
+  ports:
+  - port: 8002
+    targetPort: 8002
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 3. Enhanced Technical Calculator Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-technical-calculator-service
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-technical-calculator
+    service-tier: analytics
+spec:
+  selector:
+    app: enhanced-technical-calculator
+  ports:
+  - port: 8003
+    targetPort: 8003
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 4. Enhanced Materialized Updater Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-materialized-updater-service
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-materialized-updater
+    service-tier: data
+spec:
+  selector:
+    app: enhanced-materialized-updater
+  ports:
+  - port: 8004
+    targetPort: 8004
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 5. Enhanced Crypto Prices Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-crypto-prices-service
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-crypto-prices-service
+    service-tier: market
+spec:
+  selector:
+    app: enhanced-crypto-prices-service
+  ports:
+  - port: 8005
+    targetPort: 8005
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 6. Enhanced Crypto News Collector Service (Subdirectory)
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-crypto-news-collector-sub-service
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-crypto-news-collector-sub
+    service-tier: core
+spec:
+  selector:
+    app: enhanced-crypto-news-collector-sub
+  ports:
+  - port: 8006
+    targetPort: 8006
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 7. Enhanced Onchain Collector Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-onchain-collector-service
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-onchain-collector
+    service-tier: onchain
+spec:
+  selector:
+    app: enhanced-onchain-collector
+  ports:
+  - port: 8007
+    targetPort: 8007
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 8. Enhanced Technical Indicators Collector Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-technical-indicators-collector-service
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-technical-indicators-collector
+    service-tier: analytics
+spec:
+  selector:
+    app: enhanced-technical-indicators-collector
+  ports:
+  - port: 8008
+    targetPort: 8008
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 9. Enhanced Macro Collector V2 Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-macro-collector-v2-service
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-macro-collector-v2
+    service-tier: macro
+spec:
+  selector:
+    app: enhanced-macro-collector-v2
+  ports:
+  - port: 8009
+    targetPort: 8009
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 10. Enhanced Crypto Derivatives Collector Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-crypto-derivatives-collector-service
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-crypto-derivatives-collector
+    service-tier: market
+spec:
+  selector:
+    app: enhanced-crypto-derivatives-collector
+  ports:
+  - port: 8010
+    targetPort: 8010
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 11. ML Market Collector Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-market-collector-service
+  namespace: crypto-core-production
+  labels:
+    app: ml-market-collector
+    service-tier: analytics
+spec:
+  selector:
+    app: ml-market-collector
+  ports:
+  - port: 8011
+    targetPort: 8011
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 12. Enhanced OHLC Collector Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-ohlc-collector-service
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-ohlc-collector
+    service-tier: market
+spec:
+  selector:
+    app: enhanced-ohlc-collector
+  ports:
+  - port: 8012
+    targetPort: 8012
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# External API Gateway Service (NodePort for external access)
+apiVersion: v1
+kind: Service
+metadata:
+  name: crypto-api-gateway
+  namespace: crypto-core-production
+  labels:
+    app: crypto-api-gateway
+    service-tier: gateway
+spec:
+  selector:
+    app: enhanced-crypto-prices-service  # Use price service as main entry point
+  ports:
+  - port: 8080
+    targetPort: 8005
+    nodePort: 30080
+    protocol: TCP
+    name: http
+  type: NodePort
+
+---
+# Load Balancer for High Availability (if available)
+apiVersion: v1
+kind: Service
+metadata:
+  name: crypto-core-lb
+  namespace: crypto-core-production
+  labels:
+    app: crypto-core-lb
+    service-tier: gateway
+  annotations:
+    # For cloud providers with load balancer support
+    service.beta.kubernetes.io/external-traffic: OnlyLocal
+spec:
+  selector:
+    app: enhanced-crypto-prices-service
+  ports:
+  - port: 80
+    targetPort: 8005
+    protocol: TCP
+    name: http
+  type: LoadBalancer  # Will fallback to NodePort if LoadBalancer not available

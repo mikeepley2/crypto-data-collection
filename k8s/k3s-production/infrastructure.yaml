@@ -23,6 +23,13 @@ spec:
         app: mysql
         tier: database
     spec:
+      tolerations:
+      - key: "data-platform"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      nodeSelector:
+        kubernetes.io/hostname: "cryptoai-k8s-trading-engine-worker"
       containers:
       - name: mysql
         image: mysql:8.0
@@ -125,7 +132,7 @@ data:
     # Performance tuning for crypto data collection
     max_connections = 200
     innodb_buffer_pool_size = 1G
-    innodb_log_file_size = 256M
+    innodb_redo_log_capacity = 256M
     innodb_flush_log_at_trx_commit = 2
     innodb_file_per_table = 1
     
@@ -133,14 +140,10 @@ data:
     character-set-server = utf8mb4
     collation-server = utf8mb4_unicode_ci
     
-    # Query cache (MySQL 8.0 uses different caching)
-    query_cache_type = 0
-    query_cache_size = 0
-    
     # Binary logging for replication/backup
     log-bin = mysql-bin
     binlog_format = ROW
-    expire_logs_days = 7
+    binlog_expire_logs_seconds = 604800
     
     # Slow query log
     slow_query_log = 1
@@ -172,6 +175,13 @@ spec:
         app: redis
         tier: cache
     spec:
+      tolerations:
+      - key: "data-platform"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      nodeSelector:
+        kubernetes.io/hostname: "cryptoai-k8s-trading-engine-worker"
       containers:
       - name: redis
         image: redis:7-alpine

@@ -1,0 +1,42 @@
+FROM python:3.11-slim
+
+LABEL maintainer="crypto-data-collection"
+LABEL service="enhanced_news_collector"
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements and install Python dependencies
+COPY requirements*.txt ./
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir prometheus-client structlog mysql-connector-python
+
+# Copy shared modules first
+COPY shared/ ./shared/
+
+# Copy service-specific code
+COPY . ./
+
+# Copy the main collector module
+COPY *.py ./
+
+# Set Python path
+ENV PYTHONPATH="/app:/app/shared"
+
+# Expose port
+EXPOSE 8001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import enhanced_news_collector; print('OK')" || exit 1
+
+# Run the collector
+CMD ["python", "-m", "enhanced_news_collector"]

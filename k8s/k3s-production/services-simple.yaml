@@ -1,0 +1,83 @@
+# K3s Production Services - Simple Version
+# ClusterIP services for the simplified collector deployment
+
+---
+# 1. Enhanced News Collector Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-news-collector-service
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-news-collector
+    service-tier: core
+spec:
+  selector:
+    app: enhanced-news-collector
+  ports:
+  - port: 8001
+    targetPort: 8001
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 2. Enhanced Crypto Prices Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-crypto-prices-service
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-crypto-prices-service
+    service-tier: market
+spec:
+  selector:
+    app: enhanced-crypto-prices-service
+  ports:
+  - port: 8005
+    targetPort: 8005
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# 3. Enhanced Onchain Collector Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: enhanced-onchain-collector-service
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-onchain-collector
+    service-tier: onchain
+spec:
+  selector:
+    app: enhanced-onchain-collector
+  ports:
+  - port: 8007
+    targetPort: 8007
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+# External Access Service (NodePort)
+apiVersion: v1
+kind: Service
+metadata:
+  name: crypto-api-gateway
+  namespace: crypto-core-production
+  labels:
+    app: crypto-api-gateway
+    service-tier: gateway
+spec:
+  selector:
+    app: enhanced-crypto-prices-service
+  ports:
+  - port: 8080
+    targetPort: 8005
+    nodePort: 30080
+    protocol: TCP
+    name: http
+  type: NodePort

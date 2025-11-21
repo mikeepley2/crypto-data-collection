@@ -1,0 +1,612 @@
+# K3s Production Services Deployment
+# Complete deployment for all 12 crypto data collection microservices
+# Based on actual collectors from validate_collectors.py
+
+---
+# Namespace for production services
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: crypto-core-production
+  labels:
+    name: crypto-core-production
+
+---
+# 1. Enhanced News Collector (Top-level)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-news-collector
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-news-collector
+    service-tier: core
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-news-collector
+  template:
+    metadata:
+      labels:
+        app: enhanced-news-collector
+        service-tier: core
+        version: v1
+    spec:
+      containers:
+      - name: enhanced-news-collector
+        image: crypto-enhanced-news-collector:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8001
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "enhanced-news-collector"
+        - name: PORT
+          value: "8001"
+        - name: PYTHONPATH
+          value: "/app:/app/shared"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+
+---
+# 2. Enhanced Sentiment ML Analysis
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-sentiment-ml-analysis
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-sentiment-ml-analysis
+    service-tier: analytics
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-sentiment-ml-analysis
+  template:
+    metadata:
+      labels:
+        app: enhanced-sentiment-ml-analysis
+        service-tier: analytics
+        version: v1
+    spec:
+      containers:
+      - name: enhanced-sentiment-ml-analysis
+        image: crypto-enhanced-sentiment-ml:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8002
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "enhanced-sentiment-ml-analysis"
+        - name: PORT
+          value: "8002"
+        - name: PYTHONPATH
+          value: "/app:/app/shared"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+---
+# 3. Enhanced Technical Calculator
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-technical-calculator
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-technical-calculator
+    service-tier: analytics
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-technical-calculator
+  template:
+    metadata:
+      labels:
+        app: enhanced-technical-calculator
+        service-tier: analytics
+        version: v1
+    spec:
+      containers:
+      - name: enhanced-technical-calculator
+        image: crypto-enhanced-technical-calculator:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8003
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "enhanced-technical-calculator"
+        - name: PORT
+          value: "8003"
+        - name: PYTHONPATH
+          value: "/app:/app/shared"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+---
+# 4. Enhanced Materialized Updater
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-materialized-updater
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-materialized-updater
+    service-tier: data
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-materialized-updater
+  template:
+    metadata:
+      labels:
+        app: enhanced-materialized-updater
+        service-tier: data
+        version: v1
+    spec:
+      containers:
+      - name: enhanced-materialized-updater
+        image: crypto-enhanced-materialized-updater:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8004
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "enhanced-materialized-updater"
+        - name: PORT
+          value: "8004"
+        - name: PYTHONPATH
+          value: "/app:/app/shared"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+---
+# 5. Enhanced Crypto Prices Service (subdirectory)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-crypto-prices-service
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-crypto-prices-service
+    service-tier: market
+    version: v1
+spec:
+  replicas: 2  # High availability for real-time prices
+  selector:
+    matchLabels:
+      app: enhanced-crypto-prices-service
+  template:
+    metadata:
+      labels:
+        app: enhanced-crypto-prices-service
+        service-tier: market
+        version: v1
+    spec:
+      containers:
+      - name: enhanced-crypto-prices-service
+        image: crypto-enhanced-prices-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8005
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "enhanced-crypto-prices-service"
+        - name: PORT
+          value: "8005"
+        - name: PYTHONPATH
+          value: "/app:/app/shared:/app/services/price-collection"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+
+---
+# 6. Enhanced Crypto News Collector (subdirectory)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-crypto-news-collector-sub
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-crypto-news-collector-sub
+    service-tier: core
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-crypto-news-collector-sub
+  template:
+    metadata:
+      labels:
+        app: enhanced-crypto-news-collector-sub
+        service-tier: core
+        version: v1
+    spec:
+      containers:
+      - name: enhanced-crypto-news-collector-sub
+        image: crypto-enhanced-news-collector-sub:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8006
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "enhanced-crypto-news-collector-sub"
+        - name: PORT
+          value: "8006"
+        - name: PYTHONPATH
+          value: "/app:/app/shared:/app/services/news-collection"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+
+---
+# 7. Enhanced Onchain Collector
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-onchain-collector
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-onchain-collector
+    service-tier: onchain
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-onchain-collector
+  template:
+    metadata:
+      labels:
+        app: enhanced-onchain-collector
+        service-tier: onchain
+        version: v1
+    spec:
+      containers:
+      - name: enhanced-onchain-collector
+        image: crypto-enhanced-onchain-collector:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8007
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "enhanced-onchain-collector"
+        - name: PORT
+          value: "8007"
+        - name: PYTHONPATH
+          value: "/app:/app/shared:/app/services/onchain-collection"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+---
+# 8. Enhanced Technical Indicators Collector
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-technical-indicators-collector
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-technical-indicators-collector
+    service-tier: analytics
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-technical-indicators-collector
+  template:
+    metadata:
+      labels:
+        app: enhanced-technical-indicators-collector
+        service-tier: analytics
+        version: v1
+    spec:
+      containers:
+      - name: enhanced-technical-indicators-collector
+        image: crypto-enhanced-technical-indicators:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8008
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "enhanced-technical-indicators-collector"
+        - name: PORT
+          value: "8008"
+        - name: PYTHONPATH
+          value: "/app:/app/shared:/app/services/technical-collection"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+---
+# 9. Enhanced Macro Collector V2
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-macro-collector-v2
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-macro-collector-v2
+    service-tier: macro
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-macro-collector-v2
+  template:
+    metadata:
+      labels:
+        app: enhanced-macro-collector-v2
+        service-tier: macro
+        version: v1
+    spec:
+      containers:
+      - name: enhanced-macro-collector-v2
+        image: crypto-enhanced-macro-collector-v2:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8009
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "enhanced-macro-collector-v2"
+        - name: PORT
+          value: "8009"
+        - name: PYTHONPATH
+          value: "/app:/app/shared:/app/services/macro-collection"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+
+---
+# 10. Enhanced Crypto Derivatives Collector
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-crypto-derivatives-collector
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-crypto-derivatives-collector
+    service-tier: market
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-crypto-derivatives-collector
+  template:
+    metadata:
+      labels:
+        app: enhanced-crypto-derivatives-collector
+        service-tier: market
+        version: v1
+    spec:
+      containers:
+      - name: enhanced-crypto-derivatives-collector
+        image: crypto-enhanced-derivatives-collector:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8010
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "enhanced-crypto-derivatives-collector"
+        - name: PORT
+          value: "8010"
+        - name: PYTHONPATH
+          value: "/app:/app/shared:/app/services/derivatives-collection"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+---
+# 11. ML Market Collector
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-market-collector
+  namespace: crypto-core-production
+  labels:
+    app: ml-market-collector
+    service-tier: analytics
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ml-market-collector
+  template:
+    metadata:
+      labels:
+        app: ml-market-collector
+        service-tier: analytics
+        version: v1
+    spec:
+      containers:
+      - name: ml-market-collector
+        image: crypto-ml-market-collector:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8011
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "ml-market-collector"
+        - name: PORT
+          value: "8011"
+        - name: PYTHONPATH
+          value: "/app:/app/shared:/app/services/market-collection"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+---
+# 12. Enhanced OHLC Collector
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enhanced-ohlc-collector
+  namespace: crypto-core-production
+  labels:
+    app: enhanced-ohlc-collector
+    service-tier: market
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enhanced-ohlc-collector
+  template:
+    metadata:
+      labels:
+        app: enhanced-ohlc-collector
+        service-tier: market
+        version: v1
+    spec:
+      containers:
+      - name: enhanced-ohlc-collector
+        image: crypto-enhanced-ohlc-collector:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8012
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "enhanced-ohlc-collector"
+        - name: PORT
+          value: "8012"
+        - name: PYTHONPATH
+          value: "/app:/app/shared:/app/services/ohlc-collection"
+        envFrom:
+        - configMapRef:
+            name: crypto-core-config
+        - secretRef:
+            name: crypto-core-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
