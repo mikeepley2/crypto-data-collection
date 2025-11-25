@@ -45,7 +45,7 @@ jobs:
   # ==========================================
   pre-deployment-checks:
     name: 🔍 Pre-deployment Validation
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     if: github.event_name != 'workflow_dispatch' || inputs.skip_tests != true
     timeout-minutes: 20
     
@@ -140,7 +140,7 @@ jobs:
   # ==========================================
   build-and-push:
     name: 🏗️ Build & Push Docker Images
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: pre-deployment-checks
     if: needs.pre-deployment-checks.outputs.should-deploy == 'true' || github.event.inputs.force_rebuild == 'true'
     timeout-minutes: 45
@@ -349,7 +349,7 @@ jobs:
   # ==========================================
   deploy-k3s:
     name: 🚀 Deploy to K3s Production
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [pre-deployment-checks, build-and-push]
     if: needs.pre-deployment-checks.outputs.should-deploy == 'true'
     environment: k3s-production
@@ -552,7 +552,7 @@ jobs:
   # ==========================================
   post-deployment-monitoring:
     name: 🏥 Post-Deployment Health Check
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: deploy-k3s
     if: success()
     
@@ -623,7 +623,7 @@ jobs:
   # ==========================================
   deployment-complete:
     name: 📢 Deployment Complete
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [pre-deployment-checks, build-and-push, deploy-k3s, post-deployment-monitoring]
     if: always()
     

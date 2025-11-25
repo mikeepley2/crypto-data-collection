@@ -22,7 +22,7 @@ env:
 jobs:
   quick-k3s-action:
     name: 🚀 Quick K3s Action
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     environment: k3s-production
     timeout-minutes: 15
     

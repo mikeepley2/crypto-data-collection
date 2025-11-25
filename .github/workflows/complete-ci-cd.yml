@@ -18,7 +18,7 @@ jobs:
   # Fast validation and container build
   core-pipeline:
     name: 🔍 Core Pipeline (Validation + Container)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 45
     
     steps:
@@ -377,7 +377,7 @@ jobs:
   # Database integration testing with containerized MySQL
   database-integration:
     name: 🗄️ Database Integration Tests
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: core-pipeline
     if: github.event_name == 'push'
     timeout-minutes: 25
@@ -649,7 +649,7 @@ jobs:
   # Final summary
   pipeline-summary:
     name: 📋 Pipeline Summary
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [core-pipeline, database-integration]
     if: always()
     
@@ -682,7 +682,7 @@ jobs:
   # K3s Production Deployment (enhanced with improved automation)
   k3s-production-deployment:
     name: 🚀 K3s Production Deployment
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [core-pipeline, database-integration]
     if: |
       (github.ref == 'refs/heads/main' && github.event_name == 'push') || 
