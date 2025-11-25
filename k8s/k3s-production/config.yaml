@@ -14,8 +14,8 @@ data:
   DEBUG: "false"
   
   # Service Discovery (K3s internal DNS)
-  MYSQL_HOST: "mysql-service.crypto-infrastructure.svc.cluster.local"
-  REDIS_HOST: "redis-service.crypto-infrastructure.svc.cluster.local"
+  MYSQL_HOST: "host.k3d.internal"  # Host MySQL server (outside K3d)
+  REDIS_HOST: "host.k3d.internal"  # Host Redis server (outside K3d)
   
   # Database Configuration
   MYSQL_PORT: "3306"

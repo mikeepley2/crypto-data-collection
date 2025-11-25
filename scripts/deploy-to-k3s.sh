@@ -78,17 +78,9 @@ deploy_infrastructure() {
     print_status "Deploying configuration and secrets..."
     kubectl apply -f "$PROJECT_ROOT/$K3S_MANIFESTS_DIR/config.yaml"
     
-    print_status "Deploying database infrastructure (MySQL & Redis)..."
-    if [ -f "$PROJECT_ROOT/$K3S_MANIFESTS_DIR/infrastructure.yaml" ]; then
-        kubectl apply -f "$PROJECT_ROOT/$K3S_MANIFESTS_DIR/infrastructure.yaml"
-        
-        print_status "Waiting for database pods to be ready..."
-        kubectl wait --for=condition=ready pod -l app=mysql -n $INFRASTRUCTURE_NAMESPACE --timeout=300s || true
-        kubectl wait --for=condition=ready pod -l app=redis -n $INFRASTRUCTURE_NAMESPACE --timeout=300s || true
-    else
-        print_warning "infrastructure.yaml not found, skipping database deployment"
-        print_warning "You may need to set up MySQL and Redis manually"
-    fi
+    print_status "⏭️  Skipping database infrastructure deployment"
+    print_status "Using host MySQL and Redis (already running on server)"
+    print_status "Collectors will connect to host databases via environment variables"
     
     print_status "✅ Infrastructure deployment complete"
 }
