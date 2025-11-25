@@ -30,12 +30,6 @@ jobs:
     - name: 📥 Checkout Repository
       uses: actions/checkout@v4
 
-    - name: 🔧 Install Kubectl
-      run: |
-        curl -LO "https://dl.k8s.io/release/v1.28.0/bin/linux/amd64/kubectl"
-        chmod +x kubectl
-        sudo mv kubectl /usr/local/bin/
-
     - name: 🔐 Configure K3s Access
       run: |
         echo "Setting up K3s cluster access..."
