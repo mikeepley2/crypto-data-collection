@@ -1,0 +1,14 @@
+# Crypto Data Collection - ML Requirements
+# Machine Learning dependencies for sentiment analysis
+
+# Base requirements first
+-r requirements-base.txt
+
+# ML frameworks (large packages)
+scikit-learn>=1.3.0
+torch>=2.1.0
+transformers>=4.35.0
+
+# Additional ML utilities
+sentencepiece>=0.1.99
+tokenizers>=0.15.0

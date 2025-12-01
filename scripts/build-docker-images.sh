@@ -40,6 +40,7 @@ create_python_dockerfile() {
     local collector_path="$2"
     local port="$3"
     local dockerfile_path="$4"
+    local requirements_type="${5:-base}"  # base, ml, or financial
     
     cat > "$dockerfile_path" << EOF
 FROM python:3.11-slim
@@ -58,10 +59,9 @@ RUN apt-get update && apt-get install -y \\
 WORKDIR /app
 
 # Copy requirements and install Python dependencies
-COPY requirements*.txt ./
+COPY requirements-${requirements_type}.txt ./requirements.txt
 RUN pip install --no-cache-dir --upgrade pip && \\
-    pip install --no-cache-dir -r requirements.txt && \\
-    pip install --no-cache-dir prometheus-client structlog mysql-connector-python
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy shared modules first
 COPY shared/ ./shared/
@@ -123,64 +123,64 @@ build_all_collectors() {
     
     local build_errors=0
     
-    # 1. Enhanced News Collector (Top-level)
+    # 1. Enhanced News Collector (Top-level) - BASE
     print_status "Building Enhanced News Collector (Top-level)..."
-    create_python_dockerfile "enhanced_news_collector" "." "8001" "Dockerfile.enhanced-news-collector"
+    create_python_dockerfile "enhanced_news_collector" "." "8001" "Dockerfile.enhanced-news-collector" "base"
     build_docker_image "crypto-enhanced-news-collector" "Dockerfile.enhanced-news-collector" "." || ((build_errors++))
     
-    # 2. Enhanced Sentiment ML Analysis
+    # 2. Enhanced Sentiment ML Analysis - ML
     print_status "Building Enhanced Sentiment ML Analysis..."
-    create_python_dockerfile "enhanced_sentiment_ml_analysis" "." "8002" "Dockerfile.enhanced-sentiment-ml"
+    create_python_dockerfile "enhanced_sentiment_ml_analysis" "." "8002" "Dockerfile.enhanced-sentiment-ml" "ml"
     build_docker_image "crypto-enhanced-sentiment-ml" "Dockerfile.enhanced-sentiment-ml" "." || ((build_errors++))
     
-    # 3. Enhanced Technical Calculator
+    # 3. Enhanced Technical Calculator - FINANCIAL
     print_status "Building Enhanced Technical Calculator..."
-    create_python_dockerfile "enhanced_technical_calculator" "." "8003" "Dockerfile.enhanced-technical-calculator"
+    create_python_dockerfile "enhanced_technical_calculator" "." "8003" "Dockerfile.enhanced-technical-calculator" "financial"
     build_docker_image "crypto-enhanced-technical-calculator" "Dockerfile.enhanced-technical-calculator" "." || ((build_errors++))
     
-    # 4. Enhanced Materialized Updater
+    # 4. Enhanced Materialized Updater - BASE
     print_status "Building Enhanced Materialized Updater..."
-    create_python_dockerfile "enhanced_materialized_updater_template" "." "8004" "Dockerfile.enhanced-materialized-updater"
+    create_python_dockerfile "enhanced_materialized_updater_template" "." "8004" "Dockerfile.enhanced-materialized-updater" "base"
     build_docker_image "crypto-enhanced-materialized-updater" "Dockerfile.enhanced-materialized-updater" "." || ((build_errors++))
     
-    # 5. Enhanced Crypto Prices Service (subdirectory)
+    # 5. Enhanced Crypto Prices Service (subdirectory) - BASE
     print_status "Building Enhanced Crypto Prices Service..."
-    create_python_dockerfile "enhanced_crypto_prices_service" "services/price-collection" "8005" "Dockerfile.enhanced-prices-service"
+    create_python_dockerfile "enhanced_crypto_prices_service" "services/price-collection" "8005" "Dockerfile.enhanced-prices-service" "base"
     build_docker_image "crypto-enhanced-prices-service" "Dockerfile.enhanced-prices-service" "." || ((build_errors++))
     
-    # 6. Enhanced Crypto News Collector (subdirectory)
+    # 6. Enhanced Crypto News Collector (subdirectory) - BASE
     print_status "Building Enhanced Crypto News Collector (Subdirectory)..."
-    create_python_dockerfile "enhanced_crypto_news_collector" "services/news-collection" "8006" "Dockerfile.enhanced-news-collector-sub"
+    create_python_dockerfile "enhanced_crypto_news_collector" "services/news-collection" "8006" "Dockerfile.enhanced-news-collector-sub" "base"
     build_docker_image "crypto-enhanced-news-collector-sub" "Dockerfile.enhanced-news-collector-sub" "." || ((build_errors++))
     
-    # 7. Enhanced Onchain Collector
+    # 7. Enhanced Onchain Collector - BASE
     print_status "Building Enhanced Onchain Collector..."
-    create_python_dockerfile "enhanced_onchain_collector" "services/onchain-collection" "8007" "Dockerfile.enhanced-onchain-collector"
+    create_python_dockerfile "enhanced_onchain_collector" "services/onchain-collection" "8007" "Dockerfile.enhanced-onchain-collector" "base"
     build_docker_image "crypto-enhanced-onchain-collector" "Dockerfile.enhanced-onchain-collector" "." || ((build_errors++))
     
-    # 8. Enhanced Technical Indicators Collector
+    # 8. Enhanced Technical Indicators Collector - FINANCIAL
     print_status "Building Enhanced Technical Indicators Collector..."
-    create_python_dockerfile "enhanced_technical_indicators_collector" "services/technical-collection" "8008" "Dockerfile.enhanced-technical-indicators"
+    create_python_dockerfile "enhanced_technical_indicators_collector" "services/technical-collection" "8008" "Dockerfile.enhanced-technical-indicators" "financial"
     build_docker_image "crypto-enhanced-technical-indicators" "Dockerfile.enhanced-technical-indicators" "." || ((build_errors++))
     
-    # 9. Enhanced Macro Collector V2
+    # 9. Enhanced Macro Collector V2 - BASE
     print_status "Building Enhanced Macro Collector V2..."
-    create_python_dockerfile "enhanced_macro_collector_v2" "services/macro-collection" "8009" "Dockerfile.enhanced-macro-collector-v2"
+    create_python_dockerfile "enhanced_macro_collector_v2" "services/macro-collection" "8009" "Dockerfile.enhanced-macro-collector-v2" "base"
     build_docker_image "crypto-enhanced-macro-collector-v2" "Dockerfile.enhanced-macro-collector-v2" "." || ((build_errors++))
     
-    # 10. Enhanced Crypto Derivatives Collector
+    # 10. Enhanced Crypto Derivatives Collector - BASE
     print_status "Building Enhanced Crypto Derivatives Collector..."
-    create_python_dockerfile "enhanced_crypto_derivatives_collector" "services/derivatives-collection" "8010" "Dockerfile.enhanced-derivatives-collector"
+    create_python_dockerfile "enhanced_crypto_derivatives_collector" "services/derivatives-collection" "8010" "Dockerfile.enhanced-derivatives-collector" "base"
     build_docker_image "crypto-enhanced-derivatives-collector" "Dockerfile.enhanced-derivatives-collector" "." || ((build_errors++))
     
-    # 11. ML Market Collector
+    # 11. ML Market Collector - BASE
     print_status "Building ML Market Collector..."
-    create_python_dockerfile "ml_market_collector" "services/market-collection" "8011" "Dockerfile.ml-market-collector"
+    create_python_dockerfile "ml_market_collector" "services/market-collection" "8011" "Dockerfile.ml-market-collector" "base"
     build_docker_image "crypto-ml-market-collector" "Dockerfile.ml-market-collector" "." || ((build_errors++))
     
-    # 12. Enhanced OHLC Collector
+    # 12. Enhanced OHLC Collector - FINANCIAL
     print_status "Building Enhanced OHLC Collector..."
-    create_python_dockerfile "enhanced_ohlc_collector" "services/ohlc-collection" "8012" "Dockerfile.enhanced-ohlc-collector"
+    create_python_dockerfile "enhanced_ohlc_collector" "services/ohlc-collection" "8012" "Dockerfile.enhanced-ohlc-collector" "financial"
     build_docker_image "crypto-enhanced-ohlc-collector" "Dockerfile.enhanced-ohlc-collector" "." || ((build_errors++))
     
     # Summary
