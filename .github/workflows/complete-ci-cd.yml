@@ -18,7 +18,7 @@ jobs:
   # Fast validation and container build
   core-pipeline:
     name: 🔍 Core Pipeline (Validation + Container)
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     
     steps:
@@ -344,7 +344,7 @@ jobs:
   # Database integration testing with containerized MySQL
   database-integration:
     name: 🗄️ Database Integration Tests
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     needs: core-pipeline
     if: github.event_name == 'push'
     timeout-minutes: 25
@@ -616,7 +616,7 @@ jobs:
   # Final summary
   pipeline-summary:
     name: 📋 Pipeline Summary
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     needs: [core-pipeline, database-integration]
     if: always()
     
