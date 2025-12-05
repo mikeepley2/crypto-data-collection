@@ -35,6 +35,16 @@ This repository contains the **isolated data collection node** that was separate
 - **Clean Separation**: Clear boundaries between data collection and trading
 - **API-First Design**: Unified data access through well-defined APIs
 
+### **CI/CD Architecture**
+
+This project uses a **hybrid CI/CD approach**:
+- **Builds:** GitHub-hosted runners (`ubuntu-latest`) with Docker pre-installed
+- **Deployments:** Self-hosted runner with native K3s cluster access
+- **Container Registry:** Docker Hub (`megabob70/crypto-*`)
+- **Runtime:** Native K3s with containerd (NO Docker Desktop required)
+
+📖 **Full details:** [CI/CD Architecture Documentation](CI_CD_ARCHITECTURE.md)
+
 ### **4-Node Architecture Integration**
 
 This data collection system is designed to operate as **Node 2** in a 4-node Kubernetes cluster:
