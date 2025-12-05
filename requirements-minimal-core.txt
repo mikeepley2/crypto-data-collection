@@ -1,0 +1,17 @@
+# Minimal Core Dependencies - NO pandas, NO numpy
+# Only what's absolutely required by base_collector_template.py
+
+# Web framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+
+# HTTP client
+aiohttp>=3.9.0
+
+# Database
+mysql-connector-python>=8.2.0
+
+# Monitoring
+prometheus-client>=0.19.0
+structlog>=24.1.0

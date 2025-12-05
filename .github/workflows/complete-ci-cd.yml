@@ -179,140 +179,107 @@ jobs:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
         
-    - name: 🏗️ Build & Push Container Images (Ultra Space-Optimized)
+    - name: 🏗️ Build Optimized Container Images (Tiered Requirements)
       run: |
-        echo "=== Ultra space-optimized Docker build strategy ==="
+        cd ${{ github.workspace }}
         
-        # Function for aggressive cleanup after each image
-        aggressive_cleanup() {
-          echo "🧹 Aggressive cleanup..."
-          # Remove all untagged images immediately
-          docker image prune -f
-          # Remove build cache
-          docker builder prune -f
-          # Check space
+        echo "=== Building optimized images with tiered requirements ==="
+        echo "This build system uses 4 tiers:"
+        echo "  - Ultra-minimal (214MB): schedule, requests, fastapi - 7 collectors"
+        echo "  - With-data (259MB): ultra-minimal + pandas + numpy - 1 collector"  
+        echo "  - Financial (259MB): ultra-minimal + pandas + yfinance - 3 collectors"
+        echo "  - ML (4.4GB): ultra-minimal + torch + transformers - 1 collector"
+        
+        # Check available space
+        AVAILABLE=$(df --output=avail -BG / | tail -n1 | tr -d 'G')
+        echo "Available disk space: ${AVAILABLE}GB"
+        
+        if [ "$AVAILABLE" -lt 25 ]; then
+          echo "⚠️ Warning: Low disk space (${AVAILABLE}GB < 25GB recommended)"
+          echo "Running Docker cleanup..."
+          docker system prune -af
           AVAILABLE=$(df --output=avail -BG / | tail -n1 | tr -d 'G')
-          echo "Available space after cleanup: ${AVAILABLE}GB"
-          if [ "$AVAILABLE" -lt 2 ]; then
-            echo "❌ CRITICAL: Insufficient space (${AVAILABLE}GB)"
+          echo "Available after cleanup: ${AVAILABLE}GB"
+          
+          if [ "$AVAILABLE" -lt 15 ]; then
+            echo "❌ ERROR: Insufficient space (${AVAILABLE}GB < 15GB minimum)"
             exit 1
           fi
-        }
-        
-        # Build-and-push strategy to minimize space usage
-        build_and_push_service() {
-          local target=$1
-          local service_name=$2
-          echo "🔨 Building and immediately pushing: $service_name"
-          
-          # Build only latest tag first
-          docker build --target $target -t ${{ secrets.DOCKER_USERNAME }}/$service_name:latest .
-          docker push ${{ secrets.DOCKER_USERNAME }}/$service_name:latest
-          
-          # Remove the image immediately after push
-          docker rmi ${{ secrets.DOCKER_USERNAME }}/$service_name:latest || true
-          
-          # Build SHA tag
-          docker build --target $target -t ${{ secrets.DOCKER_USERNAME }}/$service_name:${{ github.sha }} .
-          docker push ${{ secrets.DOCKER_USERNAME }}/$service_name:${{ github.sha }}
-          
-          # Remove SHA image immediately
-          docker rmi ${{ secrets.DOCKER_USERNAME }}/$service_name:${{ github.sha }} || true
-          
-          # Aggressive cleanup after each service
-          aggressive_cleanup
-        }
-        
-        # Check initial space and determine strategy
-        INITIAL_SPACE=$(df --output=avail -BG / | tail -n1 | tr -d 'G')
-        echo "Initial available space: ${INITIAL_SPACE}GB"
-        
-        # Build testing image first (keep for compatibility tags)
-        echo "🔨 Building testing base image..."
-        docker build --target testing -t ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest .
-        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest
-        docker build --target testing -t ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-${{ github.sha }} .
-        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-${{ github.sha }}
-        aggressive_cleanup
-        
-        if [ "$INITIAL_SPACE" -gt 8 ]; then
-          echo "✅ FULL BUILD MODE: All services with build-and-push strategy"
-          
-          # Build each service with immediate push and cleanup
-          build_and_push_service "news-collector" "crypto-news-collector"
-          build_and_push_service "onchain-collector-v2" "crypto-onchain-collector-v2"
-          build_and_push_service "macro-collector" "crypto-macro-collector"
-          build_and_push_service "ml-market-collector" "crypto-ml-market-collector"
-          build_and_push_service "price-collector" "crypto-price-collector"
-          build_and_push_service "technical-analysis-collector" "crypto-technical-analysis-collector"
-          build_and_push_service "ohlc-collector" "crypto-ohlc-collector"
-          build_and_push_service "sentiment-analyzer" "crypto-sentiment-analyzer"
-          build_and_push_service "data-validator" "crypto-data-validator"
-          build_and_push_service "gap-detector" "crypto-gap-detector"
-          
-        elif [ "$INITIAL_SPACE" -gt 5 ]; then
-          echo "⚠️ MEDIUM BUILD MODE: Core services only"
-          
-          # Build only essential services
-          build_and_push_service "news-collector" "crypto-news-collector"
-          build_and_push_service "onchain-collector-v2" "crypto-onchain-collector-v2"
-          build_and_push_service "price-collector" "crypto-price-collector"
-          build_and_push_service "sentiment-analyzer" "crypto-sentiment-analyzer"
-          build_and_push_service "data-validator" "crypto-data-validator"
-          
-          # Create lightweight dummy tags for missing services
-          docker tag ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest ${{ secrets.DOCKER_USERNAME }}/crypto-macro-collector:latest
-          docker push ${{ secrets.DOCKER_USERNAME }}/crypto-macro-collector:latest
-          docker tag ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest ${{ secrets.DOCKER_USERNAME }}/crypto-ml-market-collector:latest  
-          docker push ${{ secrets.DOCKER_USERNAME }}/crypto-ml-market-collector:latest
-          docker tag ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest ${{ secrets.DOCKER_USERNAME }}/crypto-technical-analysis-collector:latest
-          docker push ${{ secrets.DOCKER_USERNAME }}/crypto-technical-analysis-collector:latest
-          docker tag ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest ${{ secrets.DOCKER_USERNAME }}/crypto-ohlc-collector:latest
-          docker push ${{ secrets.DOCKER_USERNAME }}/crypto-ohlc-collector:latest
-          docker tag ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest ${{ secrets.DOCKER_USERNAME }}/crypto-gap-detector:latest
-          docker push ${{ secrets.DOCKER_USERNAME }}/crypto-gap-detector:latest
-          aggressive_cleanup
-          
-        else
-          echo "🚨 MINIMAL BUILD MODE: Testing image only"
-          echo "Insufficient space for service builds - creating dummy service tags"
-          
-          # Create all dummy tags from testing image
-          services=("crypto-news-collector" "crypto-onchain-collector-v2" "crypto-macro-collector" "crypto-ml-market-collector" "crypto-price-collector" "crypto-technical-analysis-collector" "crypto-ohlc-collector" "crypto-sentiment-analyzer" "crypto-data-validator" "crypto-gap-detector")
-          
-          for service in "${services[@]}"; do
-            docker tag ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:testing-latest ${{ secrets.DOCKER_USERNAME }}/$service:latest
-            docker push ${{ secrets.DOCKER_USERNAME }}/$service:latest
-            docker rmi ${{ secrets.DOCKER_USERNAME }}/$service:latest || true
-          done
-          aggressive_cleanup
         fi
         
-        # Rebuild testing images for final compatibility tags (they were removed)
-        docker build --target testing -t ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:latest .
-        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:latest
-        docker build --target testing -t ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:${{ github.sha }} .  
-        docker push ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:${{ github.sha }}
+        # Make build script executable
+        chmod +x scripts/build-docker-images.sh
         
-        echo "✅ All builds completed with ultra space optimization"
-        echo "=== Final disk usage ==="
-        df -h
+        # Build all 12 optimized images using tiered requirements
+        echo "🚀 Building all 12 collector images..."
+        ./scripts/build-docker-images.sh
         
-    - name: ✅ Images Pushed Successfully
+        echo "✅ Build complete - verifying images..."
+        docker images | grep crypto-enhanced | head -15
+        
+        # Calculate total size
+        echo "📊 Image size summary:"
+        docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" | grep crypto-enhanced
+        
+        echo "=== Build completed successfully ===" 
+        
+    - name: 🏷️ Tag Images for Registry
       run: |
-        echo "🎉 All container images have been built and pushed successfully!"
-        echo "Images are now available in Docker registry:"
-        echo "- Testing: ${{ secrets.DOCKER_USERNAME }}/crypto-data-collection:latest"
-        echo "- Services: All 10 microservices available (built or dummy-tagged based on space)"
+        echo "Tagging images for Docker Hub registry..."
         
-        # Verify we have space for remaining pipeline steps
+        # Tag all crypto-enhanced images for Docker Hub with username prefix
+        for image in $(docker images --format "{{.Repository}}" | grep "^crypto-enhanced-" | sort -u); do
+          service_name=$(echo $image | sed 's/crypto-enhanced-/crypto-/')
+          
+          echo "Tagging $image as ${{ secrets.DOCKER_USERNAME }}/$service_name"
+          
+          # Tag with latest
+          docker tag $image:latest ${{ secrets.DOCKER_USERNAME }}/$service_name:latest
+          
+          # Tag with commit SHA
+          docker tag $image:latest ${{ secrets.DOCKER_USERNAME }}/$service_name:${{ github.sha }}
+        done
+        
+        echo "✅ All images tagged for registry"
+        docker images | grep ${{ secrets.DOCKER_USERNAME }}/crypto-
+        
+    - name: 📤 Push Images to Docker Hub
+      run: |
+        echo "Pushing images to Docker Hub..."
+        
+        # Push all tagged images
+        for image in $(docker images --format "{{.Repository}}:{{.Tag}}" | grep "${{ secrets.DOCKER_USERNAME }}/crypto-" | grep -v "<none>"); do
+          echo "Pushing $image..."
+          docker push $image
+          
+          # Remove pushed image to save space
+          docker rmi $image || true
+        done
+        
+        echo "✅ All images pushed to Docker Hub"
+        
+        # Final cleanup
+        docker image prune -f
+        docker builder prune -f
+        
+    - name: ✅ Build & Push Summary
+      run: |
+        echo "🎉 Container images built and pushed successfully!"
+        echo ""
+        echo "📦 Image Naming Convention:"
+        echo "  - Local K3d: crypto-enhanced-<service>:latest"
+        echo "  - Docker Hub: ${{ secrets.DOCKER_USERNAME }}/crypto-<service>:latest"
+        echo "  - Docker Hub (SHA): ${{ secrets.DOCKER_USERNAME }}/crypto-<service>:${{ github.sha }}"
+        echo ""
+        echo "🏷️ Available Images:"
+        docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" | grep -E "REPOSITORY|crypto-" | head -15
+        echo ""
+        echo "💾 Final disk usage:"
+        df -h | grep -E "Filesystem|/$"
+        
         AVAILABLE=$(df --output=avail -BG / | tail -n1 | tr -d 'G')
-        echo "Available space for remaining pipeline: ${AVAILABLE}GB"
-        if [ "$AVAILABLE" -lt 1 ]; then
-          echo "⚠️ WARNING: Low space remaining (${AVAILABLE}GB)"
-        else
-          echo "✅ Sufficient space for remaining steps"
-        fi
+        echo ""
+        echo "Available space: ${AVAILABLE}GB"
         
     - name: 🧹 Comprehensive Cleanup for Security Scan
       run: |

@@ -36,8 +36,8 @@ spec:
     spec:
       containers:
       - name: enhanced-news-collector
-        image: crypto-enhanced-news-collector:latest
-        imagePullPolicy: IfNotPresent
+        image: megabob70/crypto-news-collector:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8001
           name: http
@@ -86,8 +86,8 @@ spec:
     spec:
       containers:
       - name: enhanced-sentiment-ml-analysis
-        image: crypto-enhanced-sentiment-ml:latest
-        imagePullPolicy: IfNotPresent
+        image: megabob70/crypto-sentiment-ml:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8002
           name: http
@@ -136,8 +136,8 @@ spec:
     spec:
       containers:
       - name: enhanced-technical-calculator
-        image: crypto-enhanced-technical-calculator:latest
-        imagePullPolicy: IfNotPresent
+        image: megabob70/crypto-technical-calculator:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8003
           name: http
@@ -186,8 +186,8 @@ spec:
     spec:
       containers:
       - name: enhanced-materialized-updater
-        image: crypto-enhanced-materialized-updater:latest
-        imagePullPolicy: IfNotPresent
+        image: megabob70/crypto-materialized-updater:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8004
           name: http
@@ -236,8 +236,8 @@ spec:
     spec:
       containers:
       - name: enhanced-crypto-prices-service
-        image: crypto-enhanced-prices-service:latest
-        imagePullPolicy: IfNotPresent
+        image: megabob70/crypto-prices-service:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8005
           name: http
@@ -286,8 +286,8 @@ spec:
     spec:
       containers:
       - name: enhanced-crypto-news-collector-sub
-        image: crypto-enhanced-news-collector-sub:latest
-        imagePullPolicy: IfNotPresent
+        image: megabob70/crypto-news-collector-sub:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8006
           name: http
@@ -336,8 +336,8 @@ spec:
     spec:
       containers:
       - name: enhanced-onchain-collector
-        image: crypto-enhanced-onchain-collector:latest
-        imagePullPolicy: IfNotPresent
+        image: megabob70/crypto-onchain-collector:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8007
           name: http
@@ -386,8 +386,8 @@ spec:
     spec:
       containers:
       - name: enhanced-technical-indicators-collector
-        image: crypto-enhanced-technical-indicators:latest
-        imagePullPolicy: IfNotPresent
+        image: megabob70/crypto-technical-indicators:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8008
           name: http
@@ -436,8 +436,8 @@ spec:
     spec:
       containers:
       - name: enhanced-macro-collector-v2
-        image: crypto-enhanced-macro-collector-v2:latest
-        imagePullPolicy: IfNotPresent
+        image: megabob70/crypto-macro-collector-v2:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8009
           name: http
@@ -486,8 +486,8 @@ spec:
     spec:
       containers:
       - name: enhanced-crypto-derivatives-collector
-        image: crypto-enhanced-derivatives-collector:latest
-        imagePullPolicy: IfNotPresent
+        image: megabob70/crypto-derivatives-collector:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8010
           name: http
@@ -536,8 +536,8 @@ spec:
     spec:
       containers:
       - name: ml-market-collector
-        image: crypto-ml-market-collector:latest
-        imagePullPolicy: IfNotPresent
+        image: megabob70/crypto-ml-market-collector:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8011
           name: http
@@ -586,8 +586,8 @@ spec:
     spec:
       containers:
       - name: enhanced-ohlc-collector
-        image: crypto-enhanced-ohlc-collector:latest
-        imagePullPolicy: IfNotPresent
+        image: megabob70/crypto-ohlc-collector:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8012
           name: http

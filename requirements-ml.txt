@@ -1,11 +1,14 @@
-# Crypto Data Collection - ML Requirements
-# Machine Learning dependencies for sentiment analysis
+# Machine Learning - Minimal + ML frameworks
+# For: sentiment ML analysis ONLY
+# Expected size: ~8GB (PyTorch with CUDA)
 
-# Base requirements first
--r requirements-base.txt
+# Include ultra minimal
+-r requirements-ultra-minimal.txt
 
-# ML frameworks (large packages)
-scikit-learn>=1.3.0
+# Data processing (required for ML)
+numpy==2.3.5
+
+# ML frameworks
 torch>=2.1.0
 transformers>=4.35.0
 

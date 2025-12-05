@@ -1,0 +1,23 @@
+# News Collector - Minimal Required Dependencies
+# Base web framework
+fastapi==0.123.0
+uvicorn[standard]==0.38.0
+pydantic==2.12.5
+
+# HTTP client
+aiohttp==3.13.2
+
+# Database
+mysql-connector-python==9.5.0
+
+# RSS parsing
+feedparser==6.0.12
+
+# Monitoring
+prometheus-client==0.23.1
+structlog==25.5.0
+
+# Standard library equivalents (already included in Python)
+# - asyncio, logging, os, json, time, uuid, datetime, contextlib
+# - typing, abc, dataclasses, enum, hashlib, signal, functools
+# - collections, threading, re

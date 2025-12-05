@@ -1,0 +1,14 @@
+# Ultra Minimal - Only core web framework + database
+# For: news collectors (2), prices, materialized updater, onchain, derivatives, ml-market
+# Expected size: ~200MB
+
+fastapi==0.123.0
+uvicorn[standard]==0.38.0
+pydantic==2.12.5
+aiohttp==3.13.2
+mysql-connector-python==9.5.0
+prometheus-client==0.23.1
+structlog==25.5.0
+feedparser==6.0.12
+requests==2.32.5
+schedule==1.2.2

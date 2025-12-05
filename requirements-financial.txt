@@ -1,12 +1,11 @@
-# Crypto Data Collection - Financial Analysis Requirements
-# Financial and technical analysis dependencies
+# Financial Analysis - Minimal + data processing
+# For: technical calculator, OHLC, indicators, ml-market
+# Expected size: ~350MB
 
-# Base requirements first
--r requirements-base.txt
+# Include ultra minimal
+-r requirements-ultra-minimal.txt
 
-# Financial data analysis
-ta>=0.10.2
-yfinance>=0.2.28
-
-# Additional financial utilities
-ta-lib>=0.4.28
+# Data processing (required for calculations)
+pandas==2.3.3
+numpy==2.3.5
+yfinance==0.2.50

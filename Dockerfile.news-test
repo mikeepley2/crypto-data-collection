@@ -1,0 +1,17 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install only what's needed
+COPY requirements-news-collector.txt ./
+RUN pip install --no-cache-dir -r requirements-news-collector.txt
+
+# Copy only necessary files
+COPY base_collector_template.py ./
+COPY enhanced_news_collector_template.py ./
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import enhanced_news_collector_template; print('OK')" || exit 1
+
+CMD ["python", "-m", "enhanced_news_collector_template"]

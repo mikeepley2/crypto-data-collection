@@ -63,6 +63,7 @@ Add these secrets to the `k3s-production` environment (same values as repository
 
 ## Step 3: Test Repository Configuration
 
+
 ### 🔧 Quick Validation
 1. Go to **Actions** tab in your repository
 2. You should see these workflows available:

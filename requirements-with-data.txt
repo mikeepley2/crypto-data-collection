@@ -1,0 +1,10 @@
+# With Data Processing - Ultra minimal + pandas/numpy
+# For: macro collector
+# Expected size: ~300MB
+
+# Include ultra minimal
+-r requirements-ultra-minimal.txt
+
+# Data processing
+pandas==2.3.3
+numpy==2.3.5

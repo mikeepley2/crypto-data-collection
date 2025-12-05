@@ -1,0 +1,16 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Minimal dependencies only
+COPY requirements-minimal-core.txt ./
+COPY requirements-news-collector.txt ./
+
+RUN pip install --no-cache-dir -r requirements-minimal-core.txt && \
+    pip install --no-cache-dir feedparser
+
+# Copy only what's needed
+COPY base_collector_template.py ./
+COPY enhanced_news_collector_template.py ./
+
+CMD ["python", "enhanced_news_collector_template.py"]

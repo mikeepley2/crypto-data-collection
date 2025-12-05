@@ -1,7 +1,7 @@
 FROM python:3.11-slim
 
 LABEL maintainer="crypto-data-collection"
-LABEL service="enhanced_crypto_news_collector"
+LABEL service="enhanced_technical_indicators_collector"
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -15,26 +15,26 @@ WORKDIR /app
 
 # Copy requirements and install Python dependencies
 COPY requirements-ultra-minimal.txt ./
-COPY requirements-ultra-minimal.txt ./
+COPY requirements-financial.txt ./
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements-ultra-minimal.txt
+    pip install --no-cache-dir -r requirements-financial.txt
 
 # Copy shared modules first
 COPY shared/ ./shared/
 
 # Copy service-specific code
 # If path is ".", copy only the specific collector files, otherwise copy the directory
-COPY services/news-collection ./
+COPY services/technical-collection ./
 
 # Set Python path
 ENV PYTHONPATH="/app:/app/shared"
 
 # Expose port
-EXPOSE 8001
+EXPOSE 8008
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import enhanced_crypto_news_collector; print('OK')" || exit 1
+    CMD python -c "import enhanced_technical_indicators_collector; print('OK')" || exit 1
 
 # Run the collector
-CMD ["python", "-m", "enhanced_crypto_news_collector"]
+CMD ["python", "-m", "enhanced_technical_indicators_collector"]
