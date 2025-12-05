@@ -3,9 +3,9 @@ name: 🚀 Complete CI/CD Pipeline (KIND + K3s)
 # Hybrid workflow - KIND for testing, K3s for production deployment
 on:
   push:
-    branches: [ main, dev ]
+    branches: [ main, master, dev ]
   pull_request:
-    branches: [ main, dev ]
+    branches: [ main, master, dev ]
   workflow_dispatch:
     inputs:
       deploy_to_production:
