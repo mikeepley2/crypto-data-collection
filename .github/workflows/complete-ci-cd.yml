@@ -185,8 +185,9 @@ jobs:
           echo "❌ ERROR: DOCKER_USERNAME secret not configured"
           exit 1
         fi
+        USERNAME="${{ secrets.DOCKER_USERNAME }}"
         echo "✅ Docker Hub user: ${{ secrets.DOCKER_USERNAME }}"
-        echo "🔍 Username length: ${#{{ secrets.DOCKER_USERNAME }}}"
+        echo "🔍 Username length: ${#USERNAME}"
         docker info | grep Username || echo "⚠️ No Docker Hub username in docker info"
         
     - name: 🏗️ Build Optimized Container Images (Tiered Requirements)
