@@ -186,6 +186,7 @@ jobs:
           exit 1
         fi
         echo "✅ Docker Hub user: ${{ secrets.DOCKER_USERNAME }}"
+        echo "🔍 Username length: ${#{{ secrets.DOCKER_USERNAME }}}"
         docker info | grep Username || echo "⚠️ No Docker Hub username in docker info"
         
     - name: 🏗️ Build Optimized Container Images (Tiered Requirements)
