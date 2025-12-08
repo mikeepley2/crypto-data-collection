@@ -304,6 +304,25 @@ jobs:
         
         echo "✅ All images pushed to Docker Hub successfully"
         
+        # Verify images actually exist on Docker Hub
+        echo "=== Verifying Docker Hub repositories ==="
+        sleep 5  # Give Docker Hub a moment to process
+        
+        REPO_COUNT=$(curl -s "https://hub.docker.com/v2/repositories/${{ secrets.DOCKER_USERNAME }}/?page_size=15" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('count', 0))" 2>/dev/null || echo "0")
+        echo "Docker Hub shows $REPO_COUNT repositories for user ${{ secrets.DOCKER_USERNAME }}"
+        
+        if [ "$REPO_COUNT" -eq "0" ]; then
+          echo "❌ WARNING: No repositories found on Docker Hub after push!"
+          echo "This suggests either:"
+          echo "  1. Wrong Docker Hub username (check DOCKER_USERNAME secret)"
+          echo "  2. Push succeeded locally but failed on Docker Hub"
+          echo "  3. Repositories are private and not visible via API"
+          curl -s "https://hub.docker.com/v2/repositories/${{ secrets.DOCKER_USERNAME }}/?page_size=5" || echo "API call failed"
+        else
+          echo "✅ Verified: Repositories exist on Docker Hub"
+          curl -s "https://hub.docker.com/v2/repositories/${{ secrets.DOCKER_USERNAME }}/?page_size=15" | python3 -c "import sys, json; data=json.load(sys.stdin); [print(f\"  - {r['name']}\") for r in data.get('results', [])]" 2>/dev/null
+        fi
+        
         # Cleanup tagged images (keep base layers)
         docker images --format "{{.Repository}}:{{.Tag}}" | grep "${{ secrets.DOCKER_USERNAME }}/crypto-" | xargs -r docker rmi || true
         docker image prune -f
