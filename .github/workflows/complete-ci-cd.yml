@@ -275,14 +275,11 @@ jobs:
           echo "Pushing $image..."
           if docker push $image; then
             echo "✅ Successfully pushed $image"
-            ((pushed++))
+            pushed=$((pushed + 1))
           else
             echo "❌ Failed to push $image"
-            ((failed++))
+            failed=$((failed + 1))
           fi
-          
-          # Remove pushed image to save space
-          docker rmi $image || true
         done
         
         echo "=== Push Summary ==="
@@ -296,7 +293,8 @@ jobs:
         
         echo "✅ All images pushed to Docker Hub successfully"
         
-        # Final cleanup
+        # Cleanup tagged images (keep base layers)
+        docker images --format "{{.Repository}}:{{.Tag}}" | grep "${{ secrets.DOCKER_USERNAME }}/crypto-" | xargs -r docker rmi || true
         docker image prune -f
         docker builder prune -f
         
