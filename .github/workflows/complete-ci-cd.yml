@@ -659,10 +659,11 @@ jobs:
   k3s-production-deployment:
     name: 🚀 K3s Production Deployment
     runs-on: self-hosted
-    needs: [core-pipeline]
+    needs: [core-pipeline, database-integration]
     if: |
       always() &&
       needs.core-pipeline.result == 'success' &&
+      (needs.database-integration.result == 'success' || needs.database-integration.result == 'skipped') &&
       ((github.ref == 'refs/heads/main' && github.event_name == 'push') || 
        (github.ref == 'refs/heads/master' && github.event_name == 'push') ||
        (github.ref == 'refs/heads/dev' && github.event_name == 'push') ||
