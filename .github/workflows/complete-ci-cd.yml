@@ -235,6 +235,11 @@ jobs:
     - name: 🏷️ Tag Images for Registry
       run: |
         echo "Tagging images for Docker Hub registry..."
+        echo "Docker Hub username: ${{ secrets.DOCKER_USERNAME }}"
+        
+        # List built images
+        echo "=== Built images ==="
+        docker images | grep crypto-enhanced
         
         # Tag all crypto-enhanced images for Docker Hub with username prefix
         for image in $(docker images --format "{{.Repository}}" | grep "^crypto-enhanced-" | sort -u); do
@@ -245,27 +250,51 @@ jobs:
           # Tag with latest
           docker tag $image:latest ${{ secrets.DOCKER_USERNAME }}/$service_name:latest
           
-          # Tag with commit SHA
+          # Tag with commit SHA  
           docker tag $image:latest ${{ secrets.DOCKER_USERNAME }}/$service_name:${{ github.sha }}
         done
         
-        echo "✅ All images tagged for registry"
+        echo "=== Tagged images ==="
         docker images | grep ${{ secrets.DOCKER_USERNAME }}/crypto-
+        
+        echo "✅ All images tagged for registry"
         
     - name: 📤 Push Images to Docker Hub
       run: |
         echo "Pushing images to Docker Hub..."
+        echo "Logged in as: ${{ secrets.DOCKER_USERNAME }}"
+        
+        # Count images to push
+        image_count=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "${{ secrets.DOCKER_USERNAME }}/crypto-" | grep -v "<none>" | wc -l)
+        echo "Found $image_count images to push"
         
         # Push all tagged images
+        pushed=0
+        failed=0
         for image in $(docker images --format "{{.Repository}}:{{.Tag}}" | grep "${{ secrets.DOCKER_USERNAME }}/crypto-" | grep -v "<none>"); do
           echo "Pushing $image..."
-          docker push $image
+          if docker push $image; then
+            echo "✅ Successfully pushed $image"
+            ((pushed++))
+          else
+            echo "❌ Failed to push $image"
+            ((failed++))
+          fi
           
           # Remove pushed image to save space
           docker rmi $image || true
         done
         
-        echo "✅ All images pushed to Docker Hub"
+        echo "=== Push Summary ==="
+        echo "✅ Pushed: $pushed images"
+        echo "❌ Failed: $failed images"
+        
+        if [ $failed -gt 0 ]; then
+          echo "❌ ERROR: Some images failed to push to Docker Hub"
+          exit 1
+        fi
+        
+        echo "✅ All images pushed to Docker Hub successfully"
         
         # Final cleanup
         docker image prune -f
