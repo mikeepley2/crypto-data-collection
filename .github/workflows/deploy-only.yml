@@ -1,0 +1,183 @@
+name: 🚀 Deploy to K3s Only
+
+on:
+  workflow_dispatch:  # Manual trigger only
+  push:
+    branches:
+      - deploy-test
+
+jobs:
+  k3s-deployment:
+    name: 🚀 Deploy to K3s Production
+    runs-on: self-hosted
+    timeout-minutes: 30
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: 🔧 Setup kubectl
+      run: |
+        echo "Setting up kubectl for K3s..."
+        mkdir -p ~/.kube
+        echo "${{ secrets.K3S_KUBECONFIG }}" | base64 -d > ~/.kube/config
+        chmod 600 ~/.kube/config
+        
+        # Test cluster connectivity
+        echo "Testing K3s cluster connectivity..."
+        kubectl cluster-info
+        kubectl get nodes -o wide
+        
+    - name: 🎯 Update Production Configuration
+      run: |
+        echo "Setting up production namespaces and configuration..."
+        
+        # Create namespaces
+        kubectl create namespace crypto-core-production --dry-run=client -o yaml | kubectl apply -f -
+        kubectl create namespace crypto-infrastructure --dry-run=client -o yaml | kubectl apply -f -
+        
+        # Create Docker Hub pull secret for private repositories
+        echo "Creating Docker Hub image pull secret..."
+        kubectl create secret docker-registry dockerhub-secret \
+          --docker-server=https://index.docker.io/v1/ \
+          --docker-username="${{ secrets.DOCKER_USERNAME }}" \
+          --docker-password="${{ secrets.DOCKER_PASSWORD }}" \
+          --docker-email="${{ secrets.DOCKER_EMAIL || 'noreply@example.com' }}" \
+          -n crypto-core-production \
+          --dry-run=client -o yaml | kubectl apply -f -
+        
+        echo "✅ Docker Hub pull secret configured"
+        
+        # Update production configuration
+        kubectl create configmap crypto-core-config \
+          --from-literal=ENVIRONMENT="production" \
+          --from-literal=LOG_LEVEL="INFO" \
+          --from-literal=MYSQL_HOST="172.22.32.1" \
+          --from-literal=MYSQL_PORT="3306" \
+          --from-literal=MYSQL_DATABASE="crypto_data" \
+          --from-literal=REDIS_HOST="redis-service.crypto-infrastructure.svc.cluster.local" \
+          --from-literal=REDIS_PORT="6379" \
+          --from-literal=NEWS_COLLECTION_INTERVAL="300" \
+          --from-literal=SENTIMENT_PROCESSING_INTERVAL="600" \
+          --from-literal=TECHNICAL_CALCULATION_INTERVAL="900" \
+          --from-literal=BACKFILL_ENABLED="true" \
+          --from-literal=PYTHONPATH="/app:/app/shared" \
+          --namespace crypto-core-production \
+          --dry-run=client -o yaml | kubectl apply -f -
+          
+        # Update production secrets
+        kubectl create secret generic crypto-core-secrets \
+          --from-literal=mysql-user="${{ secrets.MYSQL_USER || 'news_collector' }}" \
+          --from-literal=mysql-password="${{ secrets.MYSQL_PASSWORD || '99Rules!' }}" \
+          --from-literal=mysql-root-password="${{ secrets.MYSQL_ROOT_PASSWORD || '99Rules!' }}" \
+          --from-literal=redis-password="${{ secrets.REDIS_PASSWORD || '' }}" \
+          --from-literal=coingecko-api-key="${{ secrets.COINGECKO_API_KEY || '' }}" \
+          --from-literal=newsapi-key="${{ secrets.NEWSAPI_KEY || '' }}" \
+          --from-literal=docker-username="${{ secrets.DOCKER_USERNAME || '' }}" \
+          --namespace crypto-core-production \
+          --dry-run=client -o yaml | kubectl apply -f -
+          
+    - name: 🏗️ Deploy Infrastructure Components  
+      run: |
+        echo "Deploying Redis (MySQL runs on Windows host)..."
+        
+        # Create simple Redis deployment if not exists
+        kubectl create deployment redis --image=redis:7-alpine -n crypto-infrastructure --dry-run=client -o yaml | kubectl apply -f - || echo "Redis deployment exists"
+        kubectl expose deployment redis --port=6379 --name=redis-service -n crypto-infrastructure --dry-run=client -o yaml | kubectl apply -f - || echo "Redis service exists"
+        
+        echo "Waiting for Redis to be ready..."
+        kubectl wait --for=condition=available deployment/redis -n crypto-infrastructure --timeout=120s || echo "⚠️ Redis deployment in progress"
+        
+        echo "✅ Redis deployed"
+        echo "✅ Using external MySQL on Windows host (172.22.32.1)"
+        
+    - name: 🚀 Deploy Application Services
+      run: |
+        echo "Deploying cryptocurrency data collection services..."
+        echo "Using Docker Hub username: ${{ secrets.DOCKER_USERNAME }}"
+        
+        # Use updated deployment with Docker Hub images
+        deployment_file="k8s/k3s-production/services-deployment-updated.yaml"
+        services_file="k8s/k3s-production/services.yaml"
+        
+        if [ -f "$deployment_file" ]; then
+          # Replace hardcoded username with secret value and add imagePullSecrets
+          sed "s|megabob70/|${{ secrets.DOCKER_USERNAME }}/|g" $deployment_file | \
+          sed '/spec:/,/containers:/ {
+            /containers:/i\      imagePullSecrets:\n      - name: dockerhub-secret
+          }' > /tmp/deployment-with-username.yaml
+          
+          echo "📝 Deployment YAML preview (first 30 lines):"
+          head -30 /tmp/deployment-with-username.yaml
+          
+          kubectl apply -f /tmp/deployment-with-username.yaml
+          echo "✅ Services deployment applied with username: ${{ secrets.DOCKER_USERNAME }}"
+        else
+          echo "❌ Deployment file not found: $deployment_file"
+          exit 1
+        fi
+        
+        if [ -f "$services_file" ]; then
+          kubectl apply -f $services_file
+          echo "✅ Services configuration applied"
+        else
+          echo "⚠️ Services file not found - creating default services"
+        fi
+        
+    - name: ⏳ Wait for Service Rollout
+      run: |
+        echo "Waiting for all services to be ready..."
+        
+        # All 12 collector services (must match deployment names in YAML)
+        all_services=(
+          "enhanced-news-collector"
+          "enhanced-crypto-news-collector-sub"
+          "enhanced-crypto-prices-service"
+          "enhanced-onchain-collector"
+          "enhanced-sentiment-ml-analysis"
+          "enhanced-technical-calculator"
+          "enhanced-technical-indicators-collector"
+          "enhanced-macro-collector-v2"
+          "enhanced-crypto-derivatives-collector"
+          "ml-market-collector"
+          "enhanced-ohlc-collector"
+          "enhanced-materialized-updater"
+        )
+        
+        ready_count=0
+        total_count=${#all_services[@]}
+        
+        for service in "${all_services[@]}"; do
+          echo "⏳ Waiting for $service..."
+          if kubectl rollout status deployment/$service -n crypto-core-production --timeout=300s; then
+            echo "✅ $service is ready"
+            ready_count=$((ready_count + 1))
+          else
+            echo "❌ $service failed to deploy within timeout"
+            kubectl describe deployment/$service -n crypto-core-production
+            kubectl logs -l app=$service -n crypto-core-production --tail=20 || true
+          fi
+        done
+        
+        echo "📊 Rollout Summary: $ready_count/$total_count services ready"
+        
+        if [ $ready_count -eq 0 ]; then
+          echo "❌ No services ready - deployment failed"
+          exit 1
+        elif [ $ready_count -lt $total_count ]; then
+          echo "⚠️ Partial deployment success ($ready_count/$total_count services ready)"
+        else
+          echo "🎉 All $total_count services deployed successfully!"
+        fi
+        
+    - name: 📊 Deployment Summary
+      if: always()
+      run: |
+        echo "=== Final Deployment Status ==="
+        kubectl get deployments -n crypto-core-production
+        echo ""
+        echo "=== Pod Status ==="
+        kubectl get pods -n crypto-core-production
+        echo ""
+        echo "=== Services ==="
+        kubectl get services -n crypto-core-production
