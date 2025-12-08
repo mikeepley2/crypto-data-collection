@@ -808,14 +808,21 @@ jobs:
     - name: 🚀 Deploy Application Services
       run: |
         echo "Deploying cryptocurrency data collection services..."
+        echo "Using Docker Hub username: ${{ secrets.DOCKER_USERNAME }}"
         
         # Use updated deployment with Docker Hub images
         deployment_file="k8s/k3s-production/services-deployment-updated.yaml"
         services_file="k8s/k3s-production/services.yaml"
         
         if [ -f "$deployment_file" ]; then
-          kubectl apply -f $deployment_file
-          echo "✅ Services deployment applied"
+          # Replace hardcoded username with secret value
+          sed "s|megabob70/|${{ secrets.DOCKER_USERNAME }}/|g" $deployment_file > /tmp/deployment-with-username.yaml
+          
+          echo "📝 Deployment YAML preview (first 20 lines):"
+          head -20 /tmp/deployment-with-username.yaml
+          
+          kubectl apply -f /tmp/deployment-with-username.yaml
+          echo "✅ Services deployment applied with username: ${{ secrets.DOCKER_USERNAME }}"
         else
           echo "❌ Deployment file not found: $deployment_file"
           exit 1
