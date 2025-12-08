@@ -879,7 +879,7 @@ jobs:
           echo "⏳ Waiting for $service..."
           if kubectl rollout status deployment/$service -n crypto-core-production --timeout=300s; then
             echo "✅ $service is ready"
-            ((ready_count++))
+            ready_count=$((ready_count + 1))
           else
             echo "❌ $service failed to deploy within timeout"
             kubectl describe deployment/$service -n crypto-core-production
