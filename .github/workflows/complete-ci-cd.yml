@@ -797,19 +797,28 @@ jobs:
         
     - name: ⏳ Wait for Service Rollout
       run: |
-        echo "Waiting for core services to be ready..."
+        echo "Waiting for all services to be ready..."
         
-        # Core services from our simple deployment
-        core_services=(
+        # All 12 collector services
+        all_services=(
           "enhanced-news-collector"
+          "enhanced-news-collector-sub"
           "enhanced-crypto-prices-service"
           "enhanced-onchain-collector"
+          "enhanced-sentiment-ml-analysis"
+          "enhanced-technical-calculator"
+          "enhanced-technical-indicators-collector"
+          "enhanced-macro-collector-v2"
+          "enhanced-derivatives-collector"
+          "ml-market-collector"
+          "enhanced-ohlc-collector"
+          "enhanced-materialized-updater"
         )
         
         ready_count=0
-        total_count=${#core_services[@]}
+        total_count=${#all_services[@]}
         
-        for service in "${core_services[@]}"; do
+        for service in "${all_services[@]}"; do
           echo "⏳ Waiting for $service..."
           if kubectl rollout status deployment/$service -n crypto-core-production --timeout=300s; then
             echo "✅ $service is ready"
@@ -828,6 +837,8 @@ jobs:
           exit 1
         elif [ $ready_count -lt $total_count ]; then
           echo "⚠️ Partial deployment success ($ready_count/$total_count services ready)"
+        else
+          echo "🎉 All $total_count services deployed successfully!"
         fi
         
     - name: 🔍 Verify Deployment Health
