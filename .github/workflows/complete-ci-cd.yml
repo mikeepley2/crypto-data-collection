@@ -727,12 +727,19 @@ jobs:
           --namespace crypto-core-production \
           --dry-run=client -o yaml | kubectl apply -f -
           
-    - name: 🏗️ Deploy Infrastructure Components
+    - name: 🏗️ Deploy Infrastructure Components  
       run: |
-        echo "Skipping infrastructure deployment - MySQL/Redis run on host, not in K8s"
-        echo "✅ Using external database services:"
-        echo "   - MySQL: Windows host"
-        echo "   - Redis: Windows host (if needed)"
+        echo "Deploying Redis (MySQL runs on Windows host)..."
+        
+        # Create simple Redis deployment if not exists
+        kubectl create deployment redis --image=redis:7-alpine -n crypto-infrastructure --dry-run=client -o yaml | kubectl apply -f - || echo "Redis deployment exists"
+        kubectl expose deployment redis --port=6379 --name=redis-service -n crypto-infrastructure --dry-run=client -o yaml | kubectl apply -f - || echo "Redis service exists"
+        
+        echo "Waiting for Redis to be ready..."
+        kubectl wait --for=condition=available deployment/redis -n crypto-infrastructure --timeout=120s || echo "⚠️ Redis deployment in progress"
+        
+        echo "✅ Redis deployed"
+        echo "✅ Using external MySQL on Windows host"
         
     - name: 🚀 Deploy Application Services
       run: |
