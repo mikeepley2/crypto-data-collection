@@ -262,11 +262,22 @@ jobs:
     - name: 📤 Push Images to Docker Hub
       run: |
         echo "Pushing images to Docker Hub..."
-        echo "Logged in as: ${{ secrets.DOCKER_USERNAME }}"
+        echo "Docker Hub username from secret: '${{ secrets.DOCKER_USERNAME }}'"
+        
+        # Verify username is not empty
+        if [ -z "${{ secrets.DOCKER_USERNAME }}" ]; then
+          echo "❌ ERROR: DOCKER_USERNAME secret is empty or not set!"
+          exit 1
+        fi
         
         # Count images to push
         image_count=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "${{ secrets.DOCKER_USERNAME }}/crypto-" | grep -v "<none>" | wc -l)
         echo "Found $image_count images to push"
+        echo "Expected format: ${{ secrets.DOCKER_USERNAME }}/crypto-*"
+        
+        # Show what images we found
+        echo "=== Images to push ==="
+        docker images --format "{{.Repository}}:{{.Tag}}" | grep "${{ secrets.DOCKER_USERNAME }}/crypto-" | grep -v "<none>"
         
         # Push all tagged images
         pushed=0
