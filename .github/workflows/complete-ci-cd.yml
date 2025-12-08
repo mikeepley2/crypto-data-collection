@@ -808,17 +808,17 @@ jobs:
       run: |
         echo "Waiting for all services to be ready..."
         
-        # All 12 collector services
+        # All 12 collector services (must match deployment names in YAML)
         all_services=(
           "enhanced-news-collector"
-          "enhanced-news-collector-sub"
+          "enhanced-crypto-news-collector-sub"
           "enhanced-crypto-prices-service"
           "enhanced-onchain-collector"
           "enhanced-sentiment-ml-analysis"
           "enhanced-technical-calculator"
           "enhanced-technical-indicators-collector"
           "enhanced-macro-collector-v2"
-          "enhanced-derivatives-collector"
+          "enhanced-crypto-derivatives-collector"
           "ml-market-collector"
           "enhanced-ohlc-collector"
           "enhanced-materialized-updater"
