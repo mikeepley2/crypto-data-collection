@@ -729,25 +729,17 @@ jobs:
           
     - name: 🏗️ Deploy Infrastructure Components
       run: |
-        echo "Deploying database infrastructure..."
-        
-        # Apply infrastructure if available
-        if [ -f "k8s/k3s-production/infrastructure.yaml" ]; then
-          kubectl apply -f k8s/k3s-production/infrastructure.yaml
-          
-          echo "Waiting for infrastructure to be ready..."
-          kubectl wait --for=condition=ready pod -l app=mysql -n crypto-infrastructure --timeout=300s || echo "⚠️ MySQL not ready"
-          kubectl wait --for=condition=ready pod -l app=redis -n crypto-infrastructure --timeout=300s || echo "⚠️ Redis not ready"
-        else
-          echo "⚠️ Infrastructure file not found - manual setup required"
-        fi
+        echo "Skipping infrastructure deployment - MySQL/Redis run on host, not in K8s"
+        echo "✅ Using external database services:"
+        echo "   - MySQL: Windows host"
+        echo "   - Redis: Windows host (if needed)"
         
     - name: 🚀 Deploy Application Services
       run: |
         echo "Deploying cryptocurrency data collection services..."
         
-        # Use simplified deployment with enhanced configuration
-        deployment_file="k8s/k3s-production/services-deployment-simple.yaml"
+        # Use updated deployment with Docker Hub images
+        deployment_file="k8s/k3s-production/services-deployment-updated.yaml"
         services_file="k8s/k3s-production/services.yaml"
         
         if [ -f "$deployment_file" ]; then
