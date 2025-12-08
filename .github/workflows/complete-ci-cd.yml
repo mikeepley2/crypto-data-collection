@@ -782,7 +782,7 @@ jobs:
           --from-literal=LOG_LEVEL="INFO" \
           --from-literal=MYSQL_HOST="mysql-service.crypto-infrastructure.svc.cluster.local" \
           --from-literal=MYSQL_PORT="3306" \
-          --from-literal=MYSQL_DATABASE="crypto_data" \
+          --from-literal=MYSQL_DATABASE="crypto_prices" \
           --from-literal=REDIS_HOST="redis-service.crypto-infrastructure.svc.cluster.local" \
           --from-literal=REDIS_PORT="6379" \
           --from-literal=NEWS_COLLECTION_INTERVAL="300" \
