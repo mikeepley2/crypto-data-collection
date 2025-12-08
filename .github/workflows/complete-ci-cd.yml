@@ -659,12 +659,14 @@ jobs:
   k3s-production-deployment:
     name: 🚀 K3s Production Deployment
     runs-on: self-hosted
-    needs: [core-pipeline, database-integration]
+    needs: [core-pipeline]
     if: |
-      (github.ref == 'refs/heads/main' && github.event_name == 'push') || 
-      (github.ref == 'refs/heads/master' && github.event_name == 'push') ||
-      (github.ref == 'refs/heads/dev' && github.event_name == 'push') ||
-      (github.event_name == 'workflow_dispatch' && inputs.deploy_to_production == 'true')
+      always() &&
+      needs.core-pipeline.result == 'success' &&
+      ((github.ref == 'refs/heads/main' && github.event_name == 'push') || 
+       (github.ref == 'refs/heads/master' && github.event_name == 'push') ||
+       (github.ref == 'refs/heads/dev' && github.event_name == 'push') ||
+       (github.event_name == 'workflow_dispatch' && inputs.deploy_to_production == 'true'))
     environment: k3s-production
     timeout-minutes: 20
     
