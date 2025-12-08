@@ -308,6 +308,11 @@ jobs:
         echo "=== Verifying Docker Hub repositories ==="
         sleep 5  # Give Docker Hub a moment to process
         
+        # Show actual username (first 3 chars only for security)
+        USERNAME="${{ secrets.DOCKER_USERNAME }}"
+        echo "Checking Docker Hub for username: ${USERNAME:0:3}***${USERNAME: -2}"
+        echo "Full API URL: https://hub.docker.com/v2/repositories/${{ secrets.DOCKER_USERNAME }}/"
+        
         REPO_COUNT=$(curl -s "https://hub.docker.com/v2/repositories/${{ secrets.DOCKER_USERNAME }}/?page_size=15" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('count', 0))" 2>/dev/null || echo "0")
         echo "Docker Hub shows $REPO_COUNT repositories for user ${{ secrets.DOCKER_USERNAME }}"
         
