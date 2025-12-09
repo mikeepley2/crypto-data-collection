@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import math
 
-from base_collector_template import (
+from services.base_collector import (
     BaseCollector, CollectorConfig, DataQualityReport, AlertRequest
 )
 

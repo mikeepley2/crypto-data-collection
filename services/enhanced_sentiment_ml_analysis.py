@@ -13,7 +13,7 @@ from mysql.connector import pooling
 import numpy as np
 import re
 
-from base_collector_template import (
+from services.base_collector import (
     BaseCollector, CollectorConfig, DataQualityReport, AlertRequest
 )
 from shared.smart_model_manager import get_model_manager, ModelSource, ModelLoadingError
