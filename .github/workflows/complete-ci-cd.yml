@@ -419,7 +419,9 @@ jobs:
     name: 🗄️ Database Integration Tests
     runs-on: ubuntu-latest
     needs: core-pipeline
-    if: github.event_name == 'push'
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch'
     timeout-minutes: 25
     
     services:
@@ -731,7 +733,7 @@ jobs:
       ((github.ref == 'refs/heads/main' && github.event_name == 'push') || 
        (github.ref == 'refs/heads/master' && github.event_name == 'push') ||
        (github.ref == 'refs/heads/dev' && github.event_name == 'push') ||
-       (github.event_name == 'workflow_dispatch' && inputs.deploy_to_production == 'true'))
+       (github.event_name == 'workflow_dispatch' && inputs.deploy_to_production == true))
     timeout-minutes: 20
     
     steps:
