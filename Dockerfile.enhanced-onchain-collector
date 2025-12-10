@@ -22,12 +22,17 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy shared modules first
 COPY shared/ ./shared/
 
+# Copy base collector template to root
+COPY base_collector_template.py ./
+
 # Copy service-specific code
-# If path is ".", copy only the specific collector files, otherwise copy the directory
-COPY services/onchain-collection ./
+# Copy the specific service files and directory
+COPY services/onchain-collection ./services/onchain-collection/
+COPY services/__init__.py ./services/
+COPY services/base_collector.py ./services/
 
 # Set Python path
-ENV PYTHONPATH="/app:/app/shared"
+ENV PYTHONPATH="/app:/app/shared:/app/services"
 
 # Expose port
 EXPOSE 8007
